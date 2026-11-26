@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-27
 ---
 
+## 研究小结能读到方向编号（2026-11-27）
+
+`read_ledger` 增加“方向”一节，默认列当轮和仍在做的方向，支持按方向 id 或轮次查询。每个方向附目标、验收、试验结果及未完成的计数，已结束的附结论首行。试验行带所属方向 id。小结传错 id 时，`close_direction` 在有权限的本研究内提示可结束的方向。两轮回归见 `test/studies.test.ts`。
+
 ## 研究的托管克隆跟随代码索引基线（2026-11-27）
 
 托管克隆的方向基线和定方向材料的最近 20 条提交都按代码索引的基线引用读取。引用不可用时取本地 HEAD，在方向确认记录和缺方向基线的交办里写明。本人自己的检出取 HEAD。已有方向仍用确认时记下的提交。回归见 `test/study-workspace.test.ts`。
@@ -320,84 +324,6 @@ Agent 动作新增 `runAs`（`src/rules/types.ts`，只有本人能加人，`sto
 
 `src/remote/browser-guard.ts`：不是本人的浏览器由 `aad mcp` 带守卫环境启动（去掉桌面代理来源，`*_proxy` 指向守卫，`no_proxy=<-loopback>`），守卫复用 `egress-proxy.ts`（新增 TCP 监听、`limits`、`unref`，`Destination` 带 `local` 和 `ip`），拒绝本机和链路本地地址。`sessions.ts` 的 `guarded`、`mayBrowse`；只有守卫下的浏览器能交给成员操作（`grants.ts`），普通会话的操作授权按只看处理。新能力 `remote.browser`；桌面、屏幕、复制本机登录、显示窗口只给本人（`remote/http.ts`）。成员运行带 `OMEM_BROWSER_PROXY`，`browser.mjs` 用它启动，`agent-browser.ts` 核对启动参数。自定义角色可带细分能力（`permissions.ts` 的 `validPermissions`、`capabilities.ts` 的 `presetGrants`），网页分组抽到 `web/src/lib/capability-areas.ts`。
 
-## 文档采集的范围（2026-11-24）
-
-新增 `src/channels/lark-doc-filter.ts`：各人的 `settings.larkDocs`（跳过个人文档库、按链接排除文档 / 知识库页面及子页面 / 整个知识库 / 云空间文件夹）和成员的 `larkCapture.docs` 开关。`captureRecentDocs` 和本人聊天里的文档链接先过 `docSkipper`，`importLarkDocument` 的 `skip` 让跟随的链接和子页面也跳过。接口 `GET/PUT /api/lark/doc-capture`（各人自己的）。登录与连接的 `capture` 参数存在 `kv` 的 `auth_capture:<state>`，回调时写进 `larkCapture`。界面：`LarkDocExclusions.vue` 用在账号页和 设置 → 采集 → 飞书文档 的“你最近打开的文档”（本人）；登录页勾消息或文档时出现“存进 omem”的选择；“以你的身份写文档”只给本人。
-
-## 凭据失效后发起登录、授权后接着做（2026-11-24）
-
-插件凭据加了可选的 `ownerLogin`：本人那份也能在 omem 里走工具自己的官方登录（`startCredentialLogin` 对本人调它，失败不改本人的持有状态）。对话里的命令报没登录或过期时，`credential-outcome.ts` 记下这段对话（`credential-wait.ts`）并当场发起登录，卡片链接直接是官方页，命令垫片的 `[omem]` 行让助手别自己登录或轮询；登录完成或检查看到换了新登录（`checkCredential`）时 `credentialReady` 给对话发 `[授权]` 消息。提醒在能发起登录时链接到 `#/account?login=<种类>`，账号页打开就开始登录。命令报过的过期（`COMMAND_EXPIRED`）不会被只读本机文件的检查改回有效，过期时账号页不再显示续签期限。运行的常驻说明对本人也写明命令登录由 omem 发起（`commandLoginNote`）。
-
-## 运行页的每一步带参数（2026-11-24）
-
-运行页“过程”里每一步可以展开看参数和输出。开始和完成两条事件按调用 id 合并时保留开始时的参数，`omem_call` 那一步按它实际调用的工具显示，参数取那个工具自己的。`read_run` 给下一轮的步骤摘要也写成 `omem_call → 工具名`（`tools.ts` 的 `calledThrough`）。见 `web/src/components/RunActivity.vue`、`src/agents/tools.ts`。
-
-另：`test/credential-execution.test.ts` 的两条兜底用例在能开账号沙箱的机器上会因为假登录立刻成功而走成员自己的登录，改成发出链接后等着；`test/auth.test.ts` 的成员可读设置加上 `credentials.ownerFallback`。
-
-## 成员飞书文档的失败通知与重试隔离（2026-11-24）
-
-成员的飞书文档采集遇到读不到的链接时，保留飞书链接并按读取人排队，本人只收到自己读取失败的汇总。重试使用原读取人的连接，连接停用、缺少文档授权或空间不可访问时跳过。文档更新检查、飞书事件刷新和手动重新读取也沿用原件记录的读取身份。
-
-本人收到的失败卡片直接打开父文档的飞书原文，各失败条目链接到对应文档。正文保留重试信息，移除终端命令。
-
-启动时把旧的共享队列迁到各读取人的队列。父原件记录不足或互相冲突时，仅保留记录，不发起读取。实现和回归测试见 `src/channels/lark-docs.ts`、`src/channels/lark-doc-events.ts`、`test/lark-docs.test.ts`。
-
-## 从空目录构建保留 CLI 执行位（2026-11-24）
-
-`pnpm run build` 在编译后为 `dist/src/cli.js` 设置执行位。npm 或工具链从该文件生成 `omem` 命令时，构建产物可直接执行。
-
-## 对话切换 AI 后接手轮收到切换结果（2026-11-24）
-
-接手的 Agent 以前只看到原始请求，把其中的切换要求重新执行，每轮又开一颗飞书思考气泡。现在 `switch_run_ai` 按会话实际使用的默认值比较后端、模型和强度，等价配置直接返回已设置。旧运行只记录一个接手运行。接手轮的提示带上设置结果和实际使用的 AI，继续回答或处理原消息里的任务。回归测试覆盖省略和显式传入默认值、并发调用、实际更换强度。入口在 `src/agents/tools.ts` 和 `sessions.ts`。
-
-## 成员读飞书文档缺权时预勾「文档与知识库」（2026-11-24）
-
-`lark_doc_fetch` 遇到 CLI 报缺新版只读权限或旧版的创建及编辑权限时，成员收到的链接带 `features=docs`。同一会话拿到 `docx:document:readonly` 就能续跑，六小时内留下的旧版读取等待也认这个权限。测试覆盖新链接、旧等待和仅有编辑权限时继续等待。入口是 `src/channels/lark-auth.ts` 和 `src/auth/connect-wait.ts`。
-
-登录或连接时勾选「文档与知识库」，同时申请 `search:docs:read`（列出最近打开的文档）、知识库细分查询、云空间目录及元数据、文档素材和画板读取。旧版文档权限加搜索已足够继续采集，缺搜索的连接在账号页可补授权。权限清单见 `docs/v2/multi-user.md`，登录授权参数由 `test/connections.test.ts` 核对。
-
-成员完整复制知识库文档前一次检查读节点、读知识库和复制权限。「让助手写文档」补入 `wiki:node:copy`，飞书错误里的旧 `wiki:wiki` 不再带进复制授权链接，旧等待也认细分权限。一个会话同时保留一张授权卡，同一轮多次缺权合并，新增要求更新原卡。测试见 `test/connections.test.ts`、`test/notification-card.test.ts`。
-
-「让助手写文档」单独勾选也会带上读取目标正文、定位知识库与云盘、新建、编辑、复制、跨位置移动和上传文档素材的权限。最近文档搜索和采集仍由「文档与知识库」授权。OAuth 权限清单按 `test/connections.test.ts` 核对。
-
-## 在别的仓库改的交办不再挂到事项的需求点和流程上（2026-11-24）
-
-联调一件需求时查出联调工具的缺陷，助手交办修工具时带上了那件事的 `item_id`。结果交办页顶上显示那件事流程里等本人的段（埋点、验收），评审的需求拆分拿到那件事的几十个需求点，照“上轮状态”给每个点交了已实现 / 部分实现，宿主记成了这次交办的结果，需求点的“最近一次评审”被一次没改业务代码的交办覆盖。现在交办（`delegate_code`、`review_branch`、网页的交办）带了事项而改的仓库不在这件事以前的交办和仓库材料里时，宿主存成 `contextItemId`（`src/items/materials.ts` 的 `workItem`；事项还没有任何仓库记录时照旧算这件事的）：编码和评审的任务里是“背景：事项「…」”，有说明和材料、没有需求点；交办不挂到事项上，评审不按需求点拆分、不写 `req_status`，不跟流程；`GET /api/code-works` 多一个 `background`，交办页写“为事项：…”，没有流程的等待。续轮和按评审修改沿用它。`item_id` 的工具说明和 `skills/omem/references/code.md` 改成只在做这件事要的改动时传。测试 `test/req-work.test.ts`。
-
-## 编码：交办、方案、需求合成左侧一项（2026-11-24）
-
-本人说方案页藏在运行页“编码”列表底部找不到，需求页单独一项又别扭，要合成一个入口。左侧菜单的“需求”换成“编码”（`#/code`），列表列顶上三个标签（`web/src/components/CodeTabs.vue`，按 `code.work.view` / `designs.view` / `requirements.view` 各自显示）：“交办”（`web/src/views/Code.vue`）是原来运行页的“编码”列表和交办对话框（拆成 `components/DelegateDialog.vue`，加了 Esc 关闭和焦点归还）；“方案”（`views/Designs.vue`）改成左边列表、右边方案，`views/Design.vue` 删掉；“需求”（`views/Requirements.vue`）去掉了在树里打开交办的那一套（`?work=`、树上的变更状态、需求外一行），需求点下的编码点开转到“交办”。按需求点看代码挪进交办自己的“需求点”标签：`CodeWork` 去掉 `focus` / `from` / `points`，点一个功能点只看它的变更点和代码；新增 `loaded`、`missing` 两个事件，页面据此在同一交办的各轮之间保留视图、把不是编码的运行转回运行页。运行页去掉“编码 / 全部运行”切换和“交办”按钮，打开编码运行时转到 `#/code/<id>`；`main.ts` 里 `#/reqs/…`（带 `work` 的转到那次交办）、`#/designs`、`#/design/<id>` 都转到新位置，服务端通知、飞书卡片里的链接不用改。`lib/route.ts` 的 `pageParam` 可以传路由模式（`/code/reqs/:id?`），给同在 `/code` 下的几个页面用。验证：网页类型检查、11 个相关测试文件、截图脚本的虚构数据上 1440 / 390 走查；重拍了交办、方案、需求相关的截图。
-
-## 需求页：测试点的行不再撑高，测试结果不再超出卡片（2026-11-24）
-
-需求页详情里测试结果的条目用的类名 `.test` 也命中了树上测试点的行（`node test`），那些行变成上下排列的网格，比别的行高出好几倍；改名为 `.test-result`。详情的各块（`.block`）是单列网格却没限定列宽，测试的文件路径很长时把整列撑宽、超出卡片右边，现在列宽是 `minmax(0, 1fr)`，路径按省略号截断。另外产物里没有预览的文件（日志、文本、报告）在 `RunArtifacts` 里不再占一块 16:10 的空白框，改成一条带类型的窄条。验证：本地预览在 1440 / 390 宽度下测试点的行高与其他行相同（33px），卡片内没有元素超出右边，页面没有横向溢出。`web/src/views/Requirements.vue`、`web/src/components/RunArtifacts.vue`。
-
-## 成员查不到时用本人的登录兜底，问答页不再重复显示后补的回复（2026-11-24）
-
-新设置 `credentials.ownerFallback`（设置 → 安全 → 凭据的出借，默认关，只在出借方式 `auto` 时生效）：成员的只读命令先用他自己的登录；没有，或跑出没登录 / 过期 / 没权限，就提醒他授权（`inviteCredential`：替他发起登录并把链接发给他，没权限时发申请链接，同种凭据每天一次），同时用开放给他的本人登录跑完这条命令，不做发起人权限预检。成员运行借用本人 HOME 时命令照常在本人环境里跑，只多一行 `[omem]` 说明，结果不记到成员名下（`report: false`）。只读声明的子命令匹配跳过前面的全局选项和值（`--site cn log …`）。成员运行的常驻说明加了一行：这些命令用谁的登录由 omem 决定，不要自己换 profile 或发起登录（`commandLoginNote`）。另外，授权完成后接着做的那一轮回复只在 `meta.runId` 里记着运行，问答页和远程会话把它当成没回答，又把运行输出显示了一遍：网页现在也认 `meta.runId`。入口：`src/agents/credential-execution.ts`、`credentials.ts`、`credential-outcome.ts`、`web/src/views/Ask.vue`、`web/src/components/RemoteChat.vue`、`CredentialLending.vue`；回归：`test/credential-execution.test.ts`。
-
-## 云端后端用了之前运行留下的凭据时说清楚（2026-11-24）
-
-豆包 OpenAPI 的云端沙箱在会话之间保留文件，后一次运行会翻到前一次留下的脚本，用里面已作废的凭据调工具，只得到“凭据无效”就停了（课题小结因此没交回结果）。现在已结束运行的凭据被用到时，回复说明这是之前一次运行的、只用本轮给的连接信息；凭据打到别的接口时，403 写明能用的两个接口和请求头；云端工具说明里加了不要沿用沙箱里旧脚本的地址和凭据（`src/agents/cloud-tools.ts`、`src/server/http.ts`、`src/agents/runner.ts`，测试 `test/cloud-http.test.ts`）。
-
-## 豆包命令行长时间编译测试时不再被当成没有反应（2026-11-24）
-
-豆包命令行用 `-p` 跑时整轮结束才输出，编码交办里一次 Rust 编译加测试超过空闲上限（30 分钟）就被停掉，报“豆包 CLI 长时间没有结果”。现在 Linux 上每分钟看一次它的进程树（含已结束的子进程）用掉的 CPU 时间，还在涨就算有动静（`src/agents/spawn.ts` 的 `treeCpuTicks` / `touchWhileBusy`，`src/agents/doubao-cli.ts`，测试 `test/tree-cpu.test.ts`）；别的系统仍只按输出算。
-
-## 数据目录在链接路径下时课题试验能拿到工作区（2026-11-24）
-
-数据目录所在的上级目录是链接（比如 `/home` 指向另一块盘）时，课题的每个试验都被判成“工作区槽位不能指向其他目录”而 blocked。现在只拦槽位本身是链接的情况，链接和槽位按解析后的真实路径比较（`src/studies/workspace.ts` 的 `owned`，测试 `test/study-workspace.test.ts`）。
-
-## 本人的多个账号、Antigravity CLI 按人登录（2026-11-24）
-
-后端卡片“这台机器的登录”下可以“再加一个账号”：生成后端 `<后端>-<n>`，source 为 `<后端>#<n>`，`env` 把目录 `account.env` 的变量指向 `<数据目录>/logins/<id>`，HOME 不变；登录、检查走同一套机器登录，命令带它自己的变量；额度按 source 分开，`catalogEntry` 认 `#` 前的部分。删除时去掉后端、角色 / 档位 / 兜底 / 候选里的引用和目录。Antigravity CLI 加了 `account`：私有的 `XDG_CONFIG_HOME`、`XDG_RUNTIME_DIR`、空的 `DBUS_SESSION_BUS_ADDRESS`（没有总线时 agy 把登录存到 `$XDG_CONFIG_HOME/antigravity`），`acp --login` 贴回授权码，`-p /usage` 作状态检查；新的 `account.cliEnv` 只给登录、检查、退出命令。入口：`src/agents/login-slots.ts`、`machine-login.ts`、`catalog.ts`、`web/src/components/MachineLogin.vue`；回归：`test/login-slots.test.ts`。
-
-## 命令垫片的循环兜底、同一程序的后端合并、不支持清理的会话不再重试（2026-11-24）
-
-常驻服务器上一次运行里，垫片经符号链接别名找到自己，同一条命令两分钟内套了一千八百多层，每层一个进程。除 11-23 按真实路径排除外，再加三道：垫片跳过任何内容是 omem 垫片的文件（另一个数据目录的垫片在 PATH 上时不会互相启动）；经垫片启动的子进程带嵌套层数，被垫片直接再启动或超过 8 层就拒绝，不再请求服务；服务端同一运行、同一命令和参数一分钟内超过 60 次就拒绝并在运行里记一条。凭据代跑的 PATH 按真实路径去掉垫片目录。
-
-设置里保存的后端运行的是内置条目的同一个程序（同名命令或指向它的路径、同样的参数、没有自己的环境变量）时，它顶替内置条目，并以内置条目为来源共用额度、登录和账号目录；内置条目的 id 仍被引用、或程序是从 ACP 注册表下载到数据目录的，两条都保留。后端没有声明 session/delete 也没有归档命令时，会话清理第一次失败就标为失败，不再按间隔重试（可手动重试）。“在做的”任务行没有产出时，状态也落在最后一列。
-
-入口：`src/agents/command-gate.ts`、`credential-execution.ts`、`src/server/http.ts`、`src/core/config.ts`（`allProfiles`）、`src/agents/session-cleanup.ts`、`web/src/styles.css`（`.pg-res`）；回归：`test/command-gate.test.ts`、`test/catalog.test.ts`、`test/acp-cleanup.test.ts`。
+[2026-11-24 的变化](./changes-2026-11-24.md)
 
 [2026-11-23 的变化](./changes-2026-11-23.md)

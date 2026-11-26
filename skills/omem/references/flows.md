@@ -23,11 +23,11 @@
 | --- | --- |
 | `propose_directions` | `item, directions, note?`。方向零到三个，每个有 `goal / approach / acceptance / env? / thirdParty? / estimate? / trials: [{ object, check, features? }]`（1–40 个；features 填它覆盖的功能清单二级标题原文，覆盖次数按它统计，对不上的整份拒绝）。env 留空为本机，否则须用任务列出的登记环境 id 或名字（去空白、不区分大小写）；未知时拒绝并列出可用环境。执行别人仓库的安装或构建脚本须标 `thirdParty: true`，本人选方向时检查环境许可。空数组是正常结果，note 写原因。只能由定方向阶段交；宿主按规范化的对象和检查项去掉已有结果的完全重复试验，保留同对象的新检查并标以前的结论；然后问本人选一个或这一轮不跑。本人附的话带入试验任务。 |
 | `trial_report` | `trial, result, summary, evidence?, findings?, unsure?`。result 是 passed / failed / blocked / unclear；证据是 `$OMEM_ARTIFACTS` 内的文件路径或可读 `src:` 引用。只能由这个试验自己的运行交。候选 findings 为 `{ kind, title, repro }`，不会自动变成正式发现。 |
-| `read_ledger` | `item, direction?, object?, result?, round?, limit?`，读试验摘要、证据和候选，以及已有发现。凡阶段 tools 包含 propose_directions，即使误授了此工具也拒绝读取。 |
+| `read_ledger` | `item, direction?, object?, result?, round?, limit?`。方向一节默认列本轮和仍在做的方向，传 `direction` 或 `round` 时按所给条件筛方向。每个方向列 id、轮次、状态、目标、验收和全部试验的计数，已结束的附结论首行。每个试验带方向 id、摘要、证据和候选，末尾列已有发现。凡阶段 tools 包含 propose_directions，即使误授了此工具也拒绝读取。 |
 | `record_finding` | `item, kind, title, repro, trials, same_as?, distinct_from?`，kind 是 defect / gap / idea。repro 是 Markdown 正文，按“条件 / 现象 / 为什么是问题 / 建议”分节，可放 read_ledger 给出的试验截图。依据至少一条，须是本研究有结果的试验。相近标题会提示先读，same_as 合并依据到已有发现，distinct_from 是已核对且不同的发现 id 数组。拒绝的发现只影响这一条。 |
 | `revise_study_finding` | `item, finding, kind?, title?, repro?, state?, reason?`。本人在对话里要改一条发现时用：重写标题、正文或类型（第一次改时宿主留原文），或改状态 confirmed / rejected / later / fixed（已改好，reason 写提交或交办）；改成别的状态会清掉“已改好”。只有事项本人的运行能用。主助手经 `group:study` 带上它和 read_ledger、record_finding、close_direction，不带 propose_directions、trial_report。 |
 | `queue_study_fixes` | `item, findings, note?`。本人说把哪些发现交给改时用：一次交多条（不限轮次和类型），宿主按交的顺序一次交办一条（同一个研究同时只有一个在改），用研究范围里的 `fixAI.coder` / `fixAI.reviewer` 改代码和评审；评审通过的自动标为已改好，没过的留给本人，队列接着走。研究范围要允许改代码并登记仓库；不算、重复、已改好或正在改的拒绝。note 带进每条交办。不要替本人挑。 |
-| `close_direction` | `direction, state: done / dropped, conclusion`，结论必填，未做的试验跳过。 |
+| `close_direction` | `direction, state: done / dropped, conclusion`。方向 id 在 `read_ledger` 的“方向”一节。结论必填，未做的试验跳过。 |
 
 `by: { object: trials, agent?: assistant, skill?: study-trial }` 按顺序一次跑一个试验，支持 AI、时间段和预算。没交结果可升档重做这个试验一次，后端失败同一试验重试一次；额度用完等原模型，不换后端。试验数或分钟用完时本轮这一段完成，剩下的留给下一轮；有未做完的方向时下一轮跳过定方向。功能清单用已有 write_file 写在事项空间的 `work/studies/<事项 id>/capabilities.md`，不写 Wiki。
 

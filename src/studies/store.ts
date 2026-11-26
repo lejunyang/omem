@@ -15,8 +15,10 @@ export type Finding = { round: number; flow_started_at: string | null; id: strin
 export const directions = (app: App, item: string) => all<Direction>(app.db, "select * from study_directions where item_id=? order by created_at,rowid", item);
 export const trials = (app: App, item: string) => all<Trial>(app.db, "select * from study_trials where item_id=? order by direction_id,seq", item);
 export const findings = (app: App, item: string) => all<Finding>(app.db, "select * from study_findings where item_id=? order by created_at,rowid", item);
+export const findDirection = (app: App, id: string) => one<Direction>(app.db, "select * from study_directions where id=?", id);
+export const isOpenDirection = (d: Direction) => d.state === "confirmed" || d.state === "active";
 export function direction(app: App, id: string) {
-  const d = one<Direction>(app.db, "select * from study_directions where id=?", id);
+  const d = findDirection(app, id);
   if (!d) throw new HttpError(404, "没有这个方向");
   return d;
 }
@@ -61,7 +63,7 @@ export function confirmDirection(app: App, id: string, note: string, baseline: R
   });
 }
 export function continuing(app: App, item: string) {
-  for (const d of directions(app, item).filter((d) => ["confirmed", "active"].includes(d.state))) {
+  for (const d of directions(app, item).filter(isOpenDirection)) {
     const n = one<{ n: number }>(app.db, "select count(*) n from study_trials where item_id=? and direction_id=? and fix_of is null and state in ('queued','running')", item, d.id)!.n;
     if (n) return { direction: d, remaining: n };
   }

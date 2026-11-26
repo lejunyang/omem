@@ -9,9 +9,9 @@ import { artifactInbox, artifactsByIds, attachPath } from "../agents/artifacts.t
 import { getRun } from "../agents/runs.ts";
 import { changeStage, getStage, itemFlow, type FlowActor } from "../flows/store.ts";
 import { studyOperation } from "../flows/engine.ts";
-import { assertOwner, confirmDirection, direction, findings, idleRounds, normalize, saveProposals, trial, trials, directions, type PlannedTrial, type Trial } from "./store.ts";
+import { assertOwner, confirmDirection, direction, findings, idleRounds, isOpenDirection, normalize, saveProposals, trial, trials, directions, type Direction, type PlannedTrial, type Trial } from "./store.ts";
 import { coverage } from "./materials.ts";
-import type { Proposal, TrialReport } from "./schema.ts";
+import { resultSchema, type Proposal, type TrialReport } from "./schema.ts";
 import { studyScope } from "./scope.ts";
 import { checkDirectionChoice, resolveEnv, thirdPartyReason } from "./envs.ts";
 import { captureBaseline } from "./workspace.ts";
@@ -121,14 +121,43 @@ function images(app: App, t: Trial) {
   const shots = artifactsByIds(app, json<string[]>(t.evidence, []).filter((r) => !r.startsWith("src:"))).filter((a) => a.kind === "image");
   return shots.length ? `\n图片（要放进发现正文就原样抄这一行）：${shots.map((a) => `![${(a.caption || a.name).replace(/[[\]]/g, "")}](${a.url})`).join(" ")}` : "";
 }
+function trialCounts(own: Trial[]) {
+  return Object.fromEntries(["queued", "running", "skipped", ...resultSchema.options].map((key) => [key, own.filter((t) => t.state === key || t.result === key).length]));
+}
+function ledgerDirection(d: Direction, history: Trial[]) {
+  const counts = trialCounts(history.filter((t) => t.direction_id === d.id));
+  const tally = resultSchema.options.map((result) => `${result} ${counts[result]}`);
+  tally.push(`未完成 ${counts.queued + counts.running}`);
+  if (counts.skipped) tally.push(`跳过 ${counts.skipped}`);
+  const lines = [`${d.id} 第 ${d.round} 轮（${d.state}）${d.goal}`, `验收：${d.acceptance}`, `试验：${tally.join(" / ")}`];
+  if (d.state === "done" || d.state === "dropped") lines.push(`结论：${d.conclusion.split(/\r?\n/, 1)[0] || "未写"}`);
+  return lines.join("\n");
+}
 export function readLedger(app: App, input: { item: string; direction?: string; object?: string; result?: string; round?: number; limit?: number }, runId: string | null) {
   assertLedgerReader(app, runId);
-  const selected = trials(app, input.item).filter((t) => (!input.direction || t.direction_id === input.direction) && (!input.object || t.object.includes(input.object)) && (!input.result || t.result === input.result) && (!input.round || t.round === input.round)).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, input.limit ?? 200);
-  return ["## 试验", ...selected.map((t) => `${t.id} 第 ${t.round} 轮 ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}${t.peer ? `，在设备 ${t.peer} 上跑` : ""}）\n${t.summary}\n证据：${t.evidence}${images(app, t)}\n候选发现：${t.findings}`), "## 已有发现", ...findings(app, input.item).map((f) => {
-    const fix = findingFix(app, f);
-    const queued = queuePosition(app, input.item, f.id);
-    return `${f.id}（${f.fixed_at ? `已改好：${f.fixed_note || "未写依据"}` : f.state}${queued ? `，排第 ${queued} 个等改` : ""}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${fix?.status ?? "交办记录不可用"}；重跑：${fix?.verified ?? "未验证"}；试验：${fix?.reruns.join("、") || "无"}` : ""}`;
-  })].join("\n\n");
+  const history = trials(app, input.item);
+  const currentRound = !input.direction && input.round === undefined ? itemFlow(app, input.item)?.round : undefined;
+  const related = directions(app, input.item).filter((d) => {
+    if (input.direction && d.id !== input.direction) return false;
+    if (input.round !== undefined) return d.round === input.round;
+    return !!input.direction || d.round === currentRound || isOpenDirection(d);
+  });
+  const selected = history.filter((t) =>
+    (!input.direction || t.direction_id === input.direction) && (!input.object || t.object.includes(input.object)) &&
+    (!input.result || t.result === input.result) && (!input.round || t.round === input.round)
+  ).sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, input.limit ?? 200);
+  return [
+    "## 方向", ...related.map((d) => ledgerDirection(d, history)),
+    "## 试验", ...selected.map((t) => [
+      `${t.id} 第 ${t.round} 轮 方向 ${t.direction_id} ${t.object} × ${t.check}（${t.state}/${t.result ?? "未交"}${t.peer ? `，在设备 ${t.peer} 上跑` : ""}）`,
+      t.summary, `证据：${t.evidence}${images(app, t)}`, `候选发现：${t.findings}`,
+    ].join("\n")),
+    "## 已有发现", ...findings(app, input.item).map((f) => {
+      const fix = findingFix(app, f);
+      const queued = queuePosition(app, input.item, f.id);
+      return `${f.id}（${f.fixed_at ? `已改好：${f.fixed_note || "未写依据"}` : f.state}${queued ? `，排第 ${queued} 个等改` : ""}）${f.title}\n${f.repro}\n本人判定原因：${f.state_reason || "未写"}\n依据：${f.trials}${f.work_id ? `\n已有改动：${fix?.status ?? "交办记录不可用"}；重跑：${fix?.verified ?? "未验证"}；试验：${fix?.reruns.join("、") || "无"}` : ""}`;
+    }),
+  ].join("\n\n");
 }
 /** The owner picks this round's direction on the item page (null: no run this round): the same answer as on the card. */
 export async function chooseDirection(app: App, itemId: string, directionId: string | null, note: string | undefined, by: string, allowCode?: boolean) {
@@ -163,7 +192,7 @@ export function studyView(app: App, itemId: string) {
       const own = history.filter((t) => t.direction_id === d.id);
       return { id: d.id, round: d.round, goal: d.goal, approach: d.approach, acceptance: d.acceptance, env: d.env, estimate: d.estimate, state: d.state, conclusion: d.conclusion, note: d.note,
         allowCode: !!d.allow_code, thirdParty: !!d.third_party, baseline: json<Record<string, string>>(d.baseline, {}), plan: json<PlannedTrial[]>(d.plan, []), removed: json<(PlannedTrial & { prior: string })[]>(d.removed, []),
-        counts: Object.fromEntries(["queued", "running", "skipped", "passed", "failed", "blocked", "unclear"].map((key) => [key, own.filter((t) => t.state === key || t.result === key).length])),
+        counts: trialCounts(own),
         createdAt: d.created_at, updatedAt: d.updated_at };
     }),
     trials: [...history].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id)).slice(0, 200).map(present),

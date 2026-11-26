@@ -2518,7 +2518,7 @@ def({
   },
 });
 def({
-  name: "read_ledger", description: "按研究、方向、对象、结果和轮次读试验摘要、证据、候选与正式发现；定方向阶段禁止读取。", schema: ledgerSchema,
+  name: "read_ledger", description: "读方向编号、目标与试验计数，以及试验摘要、证据、候选与正式发现。可按方向、对象、结果和轮次查询，定方向阶段禁止读取。", schema: ledgerSchema,
   handler: async (ctx, a) => {
     flowItem(ctx, a.item, "read");
     return (await import("../studies/service.ts")).readLedger(ctx.app, a, ctx.runId);
@@ -2555,13 +2555,22 @@ def({
   },
 });
 def({
-  name: "close_direction", description: "结束（done）或放弃（dropped）方向，必须写结论；未做完的试验跳过。", write: true, schema: closeDirectionSchema,
+  name: "close_direction", description: "结束（done）或放弃（dropped）方向。方向 id 来自 read_ledger 的“方向”一节，必须写结论，未做完的试验跳过。", write: true, schema: closeDirectionSchema,
   handler: async (ctx, a) => {
     const store = await import("../studies/store.ts");
-    const d = store.direction(ctx.app, a.direction);
-    flowItem(ctx, d.item_id, "write");
-    (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
-    return (await import("../flows/engine.ts")).studyOperation(ctx.app, d.item_id, async () => { await store.closeDirection(ctx.app, a.direction, a.state, a.conclusion); return "方向已结束，结论已记下。"; });
+    const study = await import("../studies/service.ts");
+    const d = store.findDirection(ctx.app, a.direction);
+    const flow = !d && ctx.runId ? study.runStage(ctx.app, ctx.runId).f : null;
+    const itemId = d?.item_id ?? flow?.itemId;
+    if (!itemId) throw new HttpError(404, "没有这个方向。用 read_ledger 查询这项研究的方向 id。");
+    flowItem(ctx, itemId, "write");
+    study.assertLedgerReader(ctx.app, ctx.runId);
+    if (!d) {
+      const available = store.directions(ctx.app, itemId).filter(store.isOpenDirection);
+      const hint = available.length ? `本轮可结束的方向：\n${available.map((d) => `- ${d.id} ${d.goal}`).join("\n")}` : "本轮没有可结束的方向。";
+      throw new HttpError(404, `没有这个方向。\n${hint}`);
+    }
+    return (await import("../flows/engine.ts")).studyOperation(ctx.app, itemId, async () => { await store.closeDirection(ctx.app, a.direction, a.state, a.conclusion); return "方向已结束，结论已记下。"; });
   },
 });
 async function flowRefs(ctx: ToolContext, list: string[], itemId?: string) {

@@ -201,6 +201,10 @@ describe("试验运行与预算", () => {
     const before = all(f.app.db, "select id from runs where kind='flow-stage'").length;
     await startRound(f.app, f.item.id, owner); expect(f.s("plan")).toMatchObject({ state: "skipped", note: "继续「逐项核验命令」：还剩 2 个试验" }); expect(trials(f.app, f.item.id).filter((t) => t.state === "running")).toHaveLength(1);
     expect(all(f.app.db, "select id from runs where kind='flow-stage'")).toHaveLength(before);
+    const [carried] = directions(f.app, f.item.id);
+    const [section] = readLedger(f.app, { item: f.item.id }, null).split("\n\n## 试验", 1);
+    expect(section).toContain(`${carried.id} 第 1 轮（active）${carried.goal}`);
+    expect(section).toContain("未完成 2");
   });
   it("分钟累计用满完成，不把剩下的标成 skipped", async () => {
     const f = await setup({ budget: { minutes: 1 } }); await select(f, 3);
@@ -332,6 +336,77 @@ describe("记录、发现、证据和权限", () => {
     expect((await callTool(ctx(f, r), "read_ledger", { item: f.item.id })).isError).toBe(true);
     expect(() => readLedger(f.app, { item: f.item.id }, r)).toThrow("定方向");
     await select(f, 1); await result(f); expect((await callTool(ctx(f, f.s("summary").by!), "read_ledger", { item: f.item.id, round: 1 })).text).toContain("passed");
+  });
+  it("小结按轮次或方向读到试验归属和计数，并用读到的编号结束方向", async () => {
+    const f = await setup({ budget: { trials: 2 } });
+    const item = f.item.id;
+    await select(f, 3);
+    await result(f, "passed"); await result(f, "unclear");
+    const [first] = directions(f.app, item);
+    await closeDirection(f.app, first.id, "done", "第一轮验收结束\n第一轮结论的后续说明");
+    await summary(f); await startRound(f.app, item, owner);
+
+    const plan = planned(3);
+    plan.goal = "核验无效参数";
+    plan.acceptance = "覆盖三种无效参数";
+    plan.trials = plan.trials.map((t) => ({ ...t, check: "执行带无效参数的命令" }));
+    await proposeDirections(f.app, { item, directions: [plan] }, f.by());
+    await answerAsk(f.app, f.s("plan").askId!, { choice: 0, by: "owner" });
+    await result(f, "failed"); await result(f, "blocked");
+    const [, second] = directions(f.app, item);
+    const context = ctx(f, f.s("summary").by!);
+    const read = async (filter: Omit<Parameters<typeof readLedger>[1], "item"> = {}) => (await callTool(context, "read_ledger", { item, ...filter })).text;
+    const directionSection = (ledger: string) => ledger.split("\n\n## 试验")[0];
+
+    const ledger = await read();
+    expect(ledger).toContain("## 方向");
+    const current = directionSection(ledger);
+    expect(current).toContain(`${second.id} 第 2 轮（active）${plan.goal}`);
+    expect(current).toContain(`验收：${plan.acceptance}`);
+    expect(current).toContain("passed 0 / failed 1 / blocked 1 / unclear 0 / 未完成 1");
+    expect(current).not.toContain(first.id);
+    for (const t of trials(f.app, item)) {
+      expect(ledger.split("\n").find((line) => line.startsWith(`${t.id} `))).toContain(`方向 ${t.direction_id}`);
+    }
+
+    const byDirection = await read({ direction: first.id });
+    const historical = directionSection(byDirection);
+    expect(historical).toContain(`${first.id} 第 1 轮（done）${first.goal}`);
+    expect(historical).toContain("passed 1 / failed 0 / blocked 0 / unclear 1 / 未完成 0 / 跳过 1");
+    expect(historical).toContain("结论：第一轮验收结束");
+    expect(byDirection).not.toContain("第一轮结论的后续说明");
+    expect(byDirection).not.toContain(second.id);
+    const byRound = await read({ round: 2, result: "failed", limit: 1 });
+    expect(directionSection(byRound)).toBe(current);
+    expect(byRound).not.toContain(first.id);
+    expect(await read({ direction: first.id, round: 2 })).not.toContain(first.id);
+
+    const id = current.match(/^([^\s]+) 第 2 轮/m)?.[1];
+    const conclusion = "已记下失败和阻塞，剩余样本不再执行";
+    const closed = await callTool(context, "close_direction", { direction: id, state: "done", conclusion });
+    expect(closed.isError).toBe(false);
+    expect(direction(f.app, second.id)).toMatchObject({ state: "done", conclusion });
+    expect(directionSection(await read())).toContain(`结论：${conclusion}`);
+    const failed = await callTool(context, "close_direction", { direction: plan.goal, state: "done", conclusion });
+    expect(failed.text).toContain("本轮没有可结束的方向");
+  });
+  it("小结传错方向编号时只提示本研究可结束的方向", async () => {
+    const f = await setup(); await select(f, 1); await result(f);
+    const [d] = directions(f.app, f.item.id);
+    const other = upsertItem(f.app, undefined, { title: "另一个研究", spaceId: "personal" }, "user");
+    const [unrelated] = saveProposals(f.app, { item: other.id, directions: [planned(1)] }, 1);
+    confirmDirection(f.app, unrelated.id, "");
+    const wrong = { direction: trials(f.app, f.item.id)[0].id, state: "done", conclusion: "验收完成" };
+    const context = ctx(f, f.s("summary").by!);
+    const failed = await callTool(context, "close_direction", wrong);
+    expect(failed.isError).toBe(true);
+    expect(failed.text).toContain("没有这个方向");
+    expect(failed.text).toContain(d.id);
+    expect(failed.text).toContain(d.goal);
+    expect(failed.text).not.toContain(unrelated.id);
+    for (const restricted of [{ ...context, writable: [] }, ctx(f)]) {
+      expect((await callTool(restricted, "close_direction", wrong)).text).not.toContain(d.id);
+    }
   });
   it("产物入库，候选发现不自动成为正式发现，视图带试验依据", async () => {
     const f = await setup(); await select(f, 1); const r = f.s("try").by!, t = f.s("try").control.trialId!;
