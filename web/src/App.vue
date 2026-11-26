@@ -329,6 +329,8 @@ nav {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+  /* Room for the scrollbar kept either way: a short page (a tab while it loads) must not shift sideways. */
+  scrollbar-gutter: stable;
   position: relative;
 }
 .err {

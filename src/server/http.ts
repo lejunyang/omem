@@ -69,7 +69,7 @@ import { addRunEvent, cancelRun, countRuns, createRun, getRun, listRuns, reviewR
 import { callTool, contextToolNames, mcpTools, onToolTokenRevoked, toolContextForToken, toolList } from "../agents/tools.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
-import { allProfiles, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
+import { allProfiles, keyBackendsOf, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
 import { credentialExecution, memberExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
@@ -115,7 +115,7 @@ import { MAX_INPUT, parserList, kindList, checkKind } from "../plugins/formats.t
 import { APPEND_ONLY, pageExists, deletePage, listPages, movePages, pageContext, pageVersion, readPage, spaceGuide, staleDetail, syncWiki, wikiNav, writePage, writeSpaceGuide } from "../wiki/store.ts";
 import { upkeepStatus } from "../wiki/upkeep.ts";
 import { mark } from "../core/loop-monitor.ts";
-import { CATEGORY_KINDS, categoryStatus, decisionStatus, decisionStatuses, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider } from "../core/ai-keys.ts";
+import { CATEGORY_KINDS, categoryStatus, decisionStatus, decisionStatuses, findAnthropicUrl, inheritedKeyVars, keyHint, keyOf, MODEL_CACHE_MS, type ModelField, modelChoices, readKeys, readModelCache, refreshModels, setKey, testProvider, tryBackendModel } from "../core/ai-keys.ts";
 
 /** GET /api/share/<token>: exactly this, no query, no other path under it. */
 const SHARE_ROUTE = /^\/api\/share\/[A-Za-z0-9_-]{43}$/;
@@ -3814,7 +3814,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const keys = readKeys(app.home);
     const cache = readModelCache(app.home);
     return {
-      providers: app.config.ai.providers.map((p) => ({ ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id], listed: cache[p.id] ? { at: cache[p.id].at, count: cache[p.id].models.length, error: cache[p.id].error } : null })),
+      providers: app.config.ai.providers.map((p) => ({
+        ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id], offers: keyBackendsOf(p),
+        listed: cache[p.id] ? { at: cache[p.id].at, count: cache[p.id].models.length, models: cache[p.id].models, info: cache[p.id].info ?? {}, error: cache[p.id].error } : null,
+      })),
       decisionModels: decisionStatuses(app.config, app.home),
       status: Object.fromEntries((["voice", "decision", "image"] as const).map((c) => [c, categoryStatus(app.config, c, app.home)])),
       /** Per provider and field: the listed models that fit, and the model an empty field uses. */
@@ -3897,8 +3900,20 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.post("/api/ai/providers/:id/test", async (req) => {
     const p = app.config.ai.providers.find((x) => x.id === (req.params as { id: string }).id);
     if (!p) throw new HttpError(404, "没有这个提供方");
-    const r = await testProvider(p, keyOf(p.id, app.home));
-    if (r.ok) await freshModels(p.id);
+    const key = keyOf(p.id, app.home);
+    const r: { ok: boolean; detail: string; anthropicUrl?: string } = await testProvider(p, key);
+    if (!r.ok) return r;
+    await freshModels(p.id);
+    if (p.kind !== "openai-compatible") return r;
+    // A third party: find its Anthropic-shaped address (Claude Code needs one) and call the backends' model once.
+    if (!p.anthropicUrl && p.baseUrl) {
+      const found = await findAnthropicUrl(p.baseUrl, key);
+      if (found) r.anthropicUrl = found;
+    }
+    if (p.model) {
+      const m = await tryBackendModel({ ...p, anthropicUrl: p.anthropicUrl ?? r.anthropicUrl }, key);
+      return { ...r, ok: m.ok, detail: `${r.detail}；${m.detail}` };
+    }
     return r;
   });
 

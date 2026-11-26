@@ -5,6 +5,13 @@ kind: reference
 updated: 2026-11-26
 ---
 
+## 第三方 API key 也能生成后端（2026-11-26）
+
+- 设置 → 后端与模型 → API key：第三方（OpenAI 兼容，例如火山方舟）的 key 以前只能给语音、图片用，现在和 OpenAI / Anthropic 的 key 一样生成后端：Codex（ACP / 命令行）、OpenCode 走 OpenAI 格式，Claude Code 走 Anthropic 格式地址（检查时自动找，方舟是 `…/api/compatible`）。这一行多了“后端用的模型”（从账号列出的模型里选或手填接入点 ID）；检查时用它发一次 1 个 token 的请求，把服务的报错写出来。OpenAI 和 Anthropic 的 key 也能生成 OpenCode。
+- Codex 0.169 已经不读 `OPENAI_BASE_URL`，改了地址的 OpenAI key 生成的 Codex 其实一直连官方地址；现在非官方地址都配成 Codex 自己的模型提供方（`config.ts` 的 `keyedProfiles`，key 放进 `keyVars` 列出的变量）。
+- 模型列表存下每个模型支持的接口和用途（`ai-keys.ts` 的 `listModelEntries`），“看 N 个模型”可展开筛选。OpenAI 决策只列 `gpt-6-luna`（Decisions API 只接受它）；决策页去掉了各家接口的说明。
+- 界面：key 显示成“key 尾号 xxxx”；页首说明（`HelpText lead`）和其他说明一样只占一行，其余放进 (i)；添加表单的两列不再挤在一起；设置等页面切换时滚动条位置一直留着（`.main` 的 `scrollbar-gutter: stable`），短页面和加载中不再左右跳。
+
 ## 长标题看得到全文（2026-11-26）
 
 - 运行和对话的标题由消息开头生成，以前分别只留 60 字和 40 字、列表里再单行省略，看不到说的是什么。现在运行标题留 200 字、对话标题留 120 字（`src/core/util.ts` 的 `RUN_TITLE_MAX` / `CONVERSATION_TITLE_MAX`）；运行列表和对话列表最多两行，悬停看全；问答运行的详情页把这一轮的提问原文完整列出（接口 `context.question`，超长时折叠，可展开）。

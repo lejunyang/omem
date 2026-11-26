@@ -2634,6 +2634,11 @@ TraeX 与其他 ACP 的清理补验：
 | 把助手的后端换成 `codex@<编号>`，问一句话 | 正常回答；运行页后端是 `codex@<编号>`；OpenAI 后台能看到这次的 API 用量，本机登录的 Codex 额度不变 | 待验 |
 | 同样添加 Anthropic 的 key、生成 `claude@<编号>` 并让助手用它 | 正常回答，按 API 计费 | 待验 |
 | 移除这个提供方 | key 和生成的后端一起消失；之前选了它的角色报“后端不存在” | 测试覆盖 |
+| 添加第三方（OpenAI 兼容）的 key，填火山方舟的 `…/api/v3`，勾 Codex（ACP）和 Claude Code（ACP），点“检查” | 一行显示“key 尾号 xxxx”；“看 N 个模型”展开后每个模型标出 Chat / Responses / Anthropic 和用途，可筛选；Anthropic 格式地址自动填成 `…/api/compatible`，Claude Code 的勾选可用；没填模型时提示要填 | 测试覆盖（假接口），真机待验 |
+| 在这一行的“后端用的模型”选一个只支持 Chat 的模型 | 红字写明 Codex 要 Responses、Claude Code 要 Anthropic 格式 | 待验 |
+| 填上接入点 ID（或允许直接用模型 ID 的模型名），点“检查”，再让助手用 `codex@<编号>`、`claude@<编号>` 各问一句 | 检查写“模型 … 可以调用”（账号不允许用模型 ID 时写出服务的报错 `ModelIDAccessDisabled`）；两个后端都正常回答，请求打到方舟 | codex-acp、claude-agent-acp 对着本地假接口实测请求地址、Bearer、模型；真机待验 |
+| 设置 → 后端与模型 → 决策，提供方选 OpenAI | 模型下拉只有 `gpt-6-luna`（Decisions API 只接受它），页面不再列各家接口说明 | 测试覆盖 |
+| 在 设置 的“通用”和“API key”之间来回切，左侧菜单切换分类（包括刚打开还在加载时） | 页面不左右跳：滚动条的位置一直留着 | 1440 宽度下量过内容宽度不再变化 |
 | 语音 / 决策 / 图片生成 各选 OpenAI 提供方；决策再改选本机 StartLux | 状态分别显示“可用 · gpt-live-1 / gpt-6-luna / gpt-image-2”；StartLux 没装时写明要先 `omem setup` | 测试覆盖，网页待验 |
 
 ## 决策模型（2026-11-07）

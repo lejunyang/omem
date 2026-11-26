@@ -9,7 +9,7 @@ import type { ToolContext } from "./tools.ts";
 export function backendHosts(profile: AgentProfile) {
   const entry = entryForProfile(profile);
   const hosts = new Set(entry?.egressHosts ?? []);
-  for (const key of ["OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "GOOGLE_GEMINI_BASE_URL"]) {
+  for (const key of ["OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "GOOGLE_GEMINI_BASE_URL", "OMEM_AI_BASE_URL"]) {
     const value = profile.env[key];
     if (value) { const url = new URL(value); if (/^https?:$/.test(url.protocol)) hosts.add(url.host); }
   }

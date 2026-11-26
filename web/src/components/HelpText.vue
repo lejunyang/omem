@@ -5,7 +5,8 @@ import Icon from "./Icon.vue";
 /**
  * An explanation that takes one line: its beginning says what the setting is, the rest waits behind
  * an (i) — shown while the pointer is on it or it has focus, pinned by a click (touch). A text that
- * fits on the line has no (i). `lead`: a page's opening paragraph, two lines.
+ * fits on the line has no (i). `lead`: a page's opening paragraph, in the body size: one line too,
+ * since two clipped lines and an (i) that repeats them read as the same thing twice.
  */
 defineProps<{ lead?: boolean }>();
 const brief = ref<HTMLElement>();
@@ -59,10 +60,6 @@ onBeforeUnmount(() => {
   -webkit-line-clamp: 1;
   line-clamp: 1;
   overflow: hidden;
-}
-.lead .brief {
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
 }
 .more {
   flex: none;

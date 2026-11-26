@@ -68,10 +68,30 @@ const networkPoliciesSchema = z.array(networkPolicySchema).max(50).default([]).s
   }
 });
 
-/** Agents that can run with an API key of their vendor instead of the login on this machine. */
-export const AI_KEY_BACKENDS = ["claude", "claude-cli", "codex", "codex-cli"] as const;
-/** Which provider kind can drive which of them. */
-export const KEY_BACKENDS_OF: Record<string, readonly (typeof AI_KEY_BACKENDS)[number][]> = { anthropic: ["claude", "claude-cli"], openai: ["codex", "codex-cli"] };
+/** Agents that can run with an API key (`ai.providers`) instead of the login on this machine. */
+export const AI_KEY_BACKENDS = ["claude", "claude-cli", "codex", "codex-cli", "opencode"] as const;
+export type KeyBackend = (typeof AI_KEY_BACKENDS)[number];
+type ApiFormat = "openai" | "anthropic";
+/** The API format each of them speaks: OpenCode either (OpenAI's first). */
+const BACKEND_FORMATS: Record<KeyBackend, ApiFormat[]> = { claude: ["anthropic"], "claude-cli": ["anthropic"], codex: ["openai"], "codex-cli": ["openai"], opencode: ["openai", "anthropic"] };
+type ProviderAddr = { url: string; official: boolean };
+/**
+ * Where a provider takes each API format: OpenAI and Anthropic keys their own vendor's (official
+ * unless `baseUrl` says otherwise); a third-party (`openai-compatible`) key its OpenAI-shaped
+ * `baseUrl` and, when known, its Anthropic-shaped `anthropicUrl`. Other kinds run no backend.
+ */
+export function providerFormats(pr: { kind: string; baseUrl?: string; anthropicUrl?: string }): Partial<Record<ApiFormat, ProviderAddr>> {
+  const trim = (u: string) => u.replace(/\/+$/, "");
+  if (pr.kind === "openai") return { openai: { url: trim(pr.baseUrl ?? "https://api.openai.com/v1"), official: !pr.baseUrl } };
+  if (pr.kind === "anthropic") return { anthropic: { url: trim(pr.baseUrl ?? "https://api.anthropic.com"), official: !pr.baseUrl } };
+  if (pr.kind === "openai-compatible") return { ...(pr.baseUrl ? { openai: { url: trim(pr.baseUrl), official: false } } : {}), ...(pr.anthropicUrl ? { anthropic: { url: trim(pr.anthropicUrl), official: false } } : {}) };
+  return {};
+}
+/** The backends a provider's key can run: those speaking a format it has an address for. */
+export function keyBackendsOf(pr: { kind: string; baseUrl?: string; anthropicUrl?: string }): KeyBackend[] {
+  const formats = providerFormats(pr);
+  return AI_KEY_BACKENDS.filter((b) => BACKEND_FORMATS[b].some((f) => formats[f]));
+}
 
 /** A folder under the account folder: relative, no `..`, no placeholder. */
 const accountRel = z.string().min(1).max(200).refine((s) => !/^([\\/]|~|[A-Za-z]:)/.test(s) && !s.split(/[\\/]/).includes("..") && !s.includes("{home}") && !s.includes("$"), "写账号目录下的相对路径（不能以 / 或 ~ 开头，不能有 .. 和 {home}）");
@@ -137,6 +157,8 @@ export const agentProfileSchema = z.object({
   peer: z.object({ id: z.string().min(1), agent: z.string().min(1) }).optional(),
   /** Runs with the API key of this AI provider (`ai.providers`, key in secrets/ai-keys.json; core/ai-keys.ts). */
   keyRef: z.string().optional(),
+  /** The environment variables that key goes in at launch (set by `keyedProfiles`). */
+  keyVars: z.array(z.string()).optional(),
   /** Another login of the owner's (agents/login-slots.ts): the folder its `env` points the backend's login at. */
   loginDir: z.string().optional(),
   /**
@@ -825,6 +847,10 @@ export const configSchema = z.object({
          */
         kind: z.enum(["openai", "anthropic", "typesafe", "openrouter", "cloudflare", "openai-compatible"]),
         baseUrl: z.string().url().optional(),
+        /** openai-compatible: the same service's Anthropic-shaped address (Claude Code goes there), when it has one. */
+        anthropicUrl: z.string().url().optional(),
+        /** The model the backends made from this key run on (a third party's own model or endpoint name); empty: the backend's default. */
+        model: z.string().trim().max(200).optional(),
         /** cloudflare: the account whose Workers AI is called (not secret; the API token is the key). */
         accountId: z.string().trim().regex(/^[0-9a-f]{32}$/i, "Cloudflare 账号 ID 是 32 位十六进制").optional(),
         backends: z.array(z.enum(AI_KEY_BACKENDS)).default([]),
@@ -1619,20 +1645,65 @@ function sameProgramBuiltin(p: AgentProfile): AgentProfile | undefined {
 }
 
 /**
- * Codex / Claude Code with an API key: one backend per chosen agent of each provider, named
- * `<agent>@<provider>`. Its own source, so its quota and capacity are apart from the logged-in one.
- * The key is added to the environment at launch (core/ai-keys.ts), never stored in the profile.
+ * Backends run with an API key: one per chosen agent of each provider, named `<agent>@<provider>`.
+ * Its own source, so its quota and capacity are apart from the logged-in one. The key is added to
+ * the environment at launch (core/ai-keys.ts `keyEnv`, into the variables `keyVars` names), never
+ * stored in the profile. How each agent is pointed at another address and model:
+ *
+ * - Claude Code: `ANTHROPIC_BASE_URL`; a third party's key goes in `ANTHROPIC_AUTH_TOKEN` (sent as
+ *   Bearer, which those services want) and its model in `ANTHROPIC_MODEL` and the per-tier defaults.
+ * - Codex: the official API with `CODEX_API_KEY`; any other address as a model provider of its own
+ *   (`omem-key`, Responses API), since Codex no longer reads `OPENAI_BASE_URL`.
+ * - OpenCode: an inline config (`OPENCODE_CONFIG_CONTENT`) with one provider and the model.
+ *
+ * `OMEM_AI_BASE_URL` carries the address for the egress allowance (agents/egress-policy.ts).
  */
 export function keyedProfiles(config: Config): AgentProfile[] {
   const out: AgentProfile[] = [];
   for (const pr of config.ai?.providers ?? []) {
+    const formats = providerFormats(pr);
+    const offered = keyBackendsOf(pr);
     for (const b of pr.backends) {
-      if (!KEY_BACKENDS_OF[pr.kind]?.includes(b)) continue;
+      if (!offered.includes(b)) continue;
       const base = builtinProfiles.find((p) => p.id === b);
       if (!base) continue;
       const label = (base.name ?? base.id).replace(/\)$/, ` · ${pr.name || pr.id})`);
-      const env = pr.baseUrl ? { [pr.kind === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL"]: pr.baseUrl } : {};
-      out.push({ ...base, id: `${b}@${pr.id}`, name: label, env: { ...base.env, ...env }, keyRef: pr.id, source: `key:${pr.id}` });
+      const fmt = BACKEND_FORMATS[b].find((f) => formats[f])!;
+      const at = formats[fmt]!;
+      const model = pr.model || undefined;
+      let env: Record<string, string> = {};
+      let args = base.args;
+      let keyVars: string[];
+      let profileModel = base.model;
+      if (b === "claude" || b === "claude-cli") {
+        keyVars = [at.official || pr.kind === "anthropic" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"];
+        if (!at.official) env.ANTHROPIC_BASE_URL = at.url;
+        if (model) {
+          env.ANTHROPIC_MODEL = model;
+          if (pr.kind !== "anthropic") Object.assign(env, { ANTHROPIC_DEFAULT_OPUS_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model, CLAUDE_CODE_SUBAGENT_MODEL: model });
+        }
+        if (pr.kind !== "anthropic") env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+      } else if (b === "codex" || b === "codex-cli") {
+        if (model) profileModel = model;
+        if (at.official) keyVars = ["CODEX_API_KEY", "OPENAI_API_KEY"];
+        else {
+          keyVars = ["OMEM_AI_KEY"];
+          const provider = { name: pr.name || pr.id, base_url: at.url, env_key: "OMEM_AI_KEY", wire_api: "responses" };
+          env.OMEM_AI_BASE_URL = at.url;
+          if (b === "codex") Object.assign(env, { MODEL_PROVIDER: "omem-key", CODEX_CONFIG: JSON.stringify({ model_provider: "omem-key", model_providers: { "omem-key": provider } }) });
+          else args = [...base.args, "-c", `model_provider="omem-key"`, "-c", `model_providers.omem-key={${Object.entries(provider).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(",")}}`];
+        }
+      } else {
+        // OpenCode: one provider of its own and the model, nothing written to its config files.
+        keyVars = ["OMEM_AI_KEY"];
+        const name = model || (fmt === "openai" && at.official ? builtinProfiles.find((p) => p.id === "codex")?.model : undefined);
+        if (!name) continue;
+        const npm = fmt === "anthropic" ? "@ai-sdk/anthropic" : at.official ? "@ai-sdk/openai" : "@ai-sdk/openai-compatible";
+        const baseURL = fmt === "anthropic" ? `${at.url}/v1` : at.url;
+        env.OMEM_AI_BASE_URL = at.url;
+        env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ model: `omem-key/${name}`, provider: { "omem-key": { npm, name: pr.name || pr.id, options: { baseURL, apiKey: "{env:OMEM_AI_KEY}" }, models: { [name]: {} } } } });
+      }
+      out.push({ ...base, id: `${b}@${pr.id}`, name: label, args, model: profileModel, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, source: `key:${pr.id}` });
     }
   }
   return out;

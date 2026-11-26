@@ -6,39 +6,48 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 ## API key 与提供方
 
-`config.ai.providers`：编号、名称、类型、接口地址（可选）、要生成的后端。key 不进 config.json，存在 `secrets/ai-keys.json`（权限 600，不随快照和拉取同步），网页只拿到后 4 位（`src/core/ai-keys.ts`）。删掉提供方时一起删掉它的 key。
+`config.ai.providers`：编号、名称、类型、接口地址（可选）、要生成的后端；第三方的 key 另有 Anthropic 格式地址（`anthropicUrl`）和后端用的模型（`model`）。key 不进 config.json，存在 `secrets/ai-keys.json`（权限 600，不随快照和拉取同步），网页只拿到后 4 位（`src/core/ai-keys.ts`）。删掉提供方时一起删掉它的 key。
 
 | 类型 | 默认地址 | 能用于 |
 | --- | --- | --- |
-| `openai` | `https://api.openai.com/v1` | Codex 后端、语音、决策、图片（向量模型仍按 `embeddings.apiKeyEnv` 读环境变量） |
-| `anthropic` | `https://api.anthropic.com` | Claude Code 后端 |
+| `openai` | `https://api.openai.com/v1` | Codex、OpenCode 后端，语音、决策、图片（向量模型仍按 `embeddings.apiKeyEnv` 读环境变量） |
+| `anthropic` | `https://api.anthropic.com` | Claude Code、OpenCode 后端 |
 | `typesafe` | `https://api.typesafe.ai` | 决策（Jev） |
 | `openrouter` | `https://openrouter.ai/api` | 决策（Jev 等） |
 | `cloudflare` | `https://api.cloudflare.com/client/v4/accounts/<账号 ID>/ai`（要填账号 ID；填了接口地址就替换这一整段） | 决策（Clef） |
-| `openai-compatible` | 必须填写 | 语音、图片 |
+| `openai-compatible`（页面上叫“第三方（OpenAI 兼容）”，例如火山方舟、各家代理） | 必须填写 OpenAI 格式地址；Anthropic 格式地址可选 | Codex、OpenCode 后端；填了 Anthropic 格式地址时还有 Claude Code。服务也实现了 OpenAI 的图片、语音接口时，图片和语音也能选它 |
 
 “检查”只发不花钱的请求：OpenAI 和兼容接口用 `GET /models`，Anthropic 用 `GET /v1/models`，OpenRouter 用 `GET /v1/key`，Cloudflare 用 `GET …/ai/models/search`（同时确认 token 和账号）。TypeSafe 没有已知的免费检查接口，只看 key 是否填写。
 
+第三方的 key 检查通过后再做两件事（`/api/ai/providers/:id/test`）：
+
+- 没填 Anthropic 格式地址时，按顺序试 `GET <候选>/v1/models`（带 Bearer 和 `x-api-key`），返回模型列表的就是（`findAnthropicUrl`）：OpenAI 地址去掉末尾 `/v数字` 后加 `/compatible`（火山方舟：`…/api/v3` → `…/api/compatible`）、加 `/anthropic`、去掉后的根地址。找到后网页存进 `anthropicUrl`，Claude Code 后端随之出现。都不应时手填。
+- 填了后端用的模型时，用它在每种格式各发一次最多 1 个 token 的请求（`tryBackendModel`），把服务的报错原样写出来。火山方舟有的账号不允许直接用模型 ID，只能用接入点 ID（`ep-…`），这一步会看到 `ModelIDAccessDisabled`。
+
 ### 用 API key 生成后端
 
-`openai` 可以生成 `codex@<编号>`、`codex-cli@<编号>`，`anthropic` 可以生成 `claude@<编号>`、`claude-cli@<编号>`（`config.ts` 的 `keyedProfiles`）。它们和内置的同名后端用同一个程序，区别是：
+每个 key 按它有的 API 格式生成后端（`config.ts` 的 `providerFormats`、`keyBackendsOf`、`keyedProfiles`）：OpenAI 格式给 `codex@<编号>`、`codex-cli@<编号>`、`opencode@<编号>`，Anthropic 格式给 `claude@<编号>`、`claude-cli@<编号>`（OpenCode 两种都行，有 OpenAI 格式时用它）。`openai` 只有 OpenAI 格式，`anthropic` 只有 Anthropic 格式，第三方有 OpenAI 格式，填了（或检查时找到）Anthropic 格式地址后两种都有。它们和内置的同名后端用同一个程序，区别是：
 
-- 启动时把 key 放进环境变量（`keyEnv`）：Claude Code 用 `ANTHROPIC_API_KEY`；Codex 同时设 `CODEX_API_KEY` 和 `OPENAI_API_KEY`（codex-acp 先读前者，`codex exec` 读前者）。key 不写进后端配置，也不出现在设置接口的返回里。
-- 自定义接口地址写在后端的 `env` 里（`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`）。
+- 启动时把 key 放进后端配置 `keyVars` 列出的环境变量（`keyEnv`），key 不写进后端配置，也不出现在设置接口的返回里：
+  - Claude Code：官方或 Anthropic 的 key 用 `ANTHROPIC_API_KEY`；第三方用 `ANTHROPIC_AUTH_TOKEN`（按 Bearer 发，方舟这类服务要这样），另设 `ANTHROPIC_BASE_URL`、`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`，填了模型时 `ANTHROPIC_MODEL` 和 `ANTHROPIC_DEFAULT_OPUS/SONNET/HAIKU_MODEL`、`CLAUDE_CODE_SUBAGENT_MODEL` 都设成它。
+  - Codex：官方地址同时设 `CODEX_API_KEY` 和 `OPENAI_API_KEY`（codex-acp 先读前者，`codex exec` 读前者）。其他地址（第三方，或改了地址的 OpenAI key）配成 Codex 自己的模型提供方 `omem-key`（Responses 接口，key 在 `OMEM_AI_KEY`）：ACP 版经 `CODEX_CONFIG` 和 `MODEL_PROVIDER`，命令行版经 `-c model_provider=… -c model_providers.omem-key={…}`。Codex 0.169 已经不读 `OPENAI_BASE_URL`（2026-11-26 实测仍发往 api.openai.com），以前写这个变量的做法不起作用。模型用后端配置的 `model`。
+  - OpenCode：`OPENCODE_CONFIG_CONTENT` 里写一个提供方 `omem-key`（第三方用 `@ai-sdk/openai-compatible`，OpenAI 官方 `@ai-sdk/openai`，Anthropic `@ai-sdk/anthropic`）和模型，`apiKey` 写成 `{env:OMEM_AI_KEY}`，不动它自己的配置文件。没有模型时（第三方没填、Anthropic 的 key）不生成；OpenAI 的 key 默认用内置 Codex 的模型。
+- 地址写在后端的 `env` 里（`ANTHROPIC_BASE_URL`，Codex 和 OpenCode 的另写 `OMEM_AI_BASE_URL`），出网策略据此放行后端自己的地址（`egress-policy.ts` 的 `backendHosts`）。
+- 第三方的模型名在 API key 页那一行的“后端用的模型”里选（从列表里挑或手填）；列表写明了模型支持的格式时，选了不支持 Responses 的模型又勾了 Codex、或不支持 Anthropic 格式又勾了 Claude Code，页面直接提示。
 - 来源是 `key:<编号>`：额度、并发和“额度用完”跟本机登录的那个分开算；它没有套餐额度，设置 → 后端与模型 → 并行 的“账号额度”只列本机登录的 Codex、Claude Code。
 - key 被删掉时这个后端算“未安装”，选了它的运行直接报错，不会悄悄改用本机登录。
 
 服务的环境里本来就有 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `CODEX_API_KEY` 时，所有 Agent 都会继承它，API key 页会提示。
 
-其他支持自带 key 的 Agent（OpenCode、goose、Cline、Kilo、pi、DeepAgents、Factory Droid）各有各的配置方式，暂不自动生成，可以在通用页编辑后端配置的 `env`。Copilot、Cursor、Amp、Junie、Devin、Gemini CLI、Qwen Code 用自家账号或自家的 key。
+其他支持自带 key 的 Agent（goose、Cline、Kilo、pi、DeepAgents、Factory Droid）各有各的配置方式，还没核对过启动方式，暂不自动生成，可以在通用页编辑后端配置的 `env`。Copilot、Cursor、Amp、Junie、Devin、Gemini CLI、Qwen Code 用自家账号或自家的 key。
 
 ## 三类模型
 
 每类一个设置（`config.ai.voice` / `decision` / `image`）：提供方、模型（留空用默认），加上各自的参数。`categoryStatus` 判断能不能用：提供方存在、类型对得上、有 key、模型能确定。不能用时各页写明缺什么。
 
-**检测账号里的模型**：添加或更换 key、点“检查”通过、或列表超过一天时，omem 读提供方的模型列表（OpenAI 和兼容接口 `GET /models`，OpenRouter `GET /v1/models`，Cloudflare `GET …/ai/models/search?search=clef`；TypeSafe、Anthropic 没有），只存模型名到数据目录的 `cache/ai-models.json`（`refreshModels`）。读失败时保留旧列表，API key 页那一行写“模型列表读取失败”。各模型字段（图片、语音 Live / Realtime、转写、委托、决策）按名字筛出合用的（`modelChoices`：图片 `gpt-image-*`，Live `gpt-live*`，Realtime `gpt-realtime*` 去掉 whisper / translate，转写含 transcribe / whisper，委托和 OpenAI 决策是 `gpt-数字` 开头的文字模型，Cloudflare 是 `clef*`），设置页给下拉选，列表里没有的可以“手填其他…”。
+**检测账号里的模型**：添加或更换 key、点“检查”通过、或列表超过一天时，omem 读提供方的模型列表（OpenAI 和兼容接口 `GET /models`，OpenRouter `GET /v1/models`，Cloudflare `GET …/ai/models/search?search=clef`；TypeSafe、Anthropic 没有），存模型名到数据目录的 `cache/ai-models.json`（`refreshModels`）；列表写了模型支持哪些接口（火山方舟这类服务的 `api_supported`、`domain`、`features.tools`）时一并存下（`info`：`chat` / `responses` / `anthropic`、用途、能否调用工具）。API key 页那一行点“看 N 个模型”展开列表，可按名字筛选，每个模型标出支持的格式和用途。读失败时保留旧列表，API key 页那一行写“模型列表读取失败”。各模型字段（图片、语音 Live / Realtime、转写、委托、决策）按名字筛出合用的（`modelChoices`：图片 `gpt-image-*`，Live `gpt-live*`，Realtime `gpt-realtime*` 去掉 whisper / translate，转写含 transcribe / whisper，委托是 `gpt-数字` 开头的文字模型，OpenAI 决策只有 `gpt-6-luna`（Decisions API 只接受它，2026-11），Cloudflare 是 `clef*`），设置页给下拉选，列表里没有的可以“手填其他…”。
 
-**留空 = 默认**：用这个字段列表里最新的模型（`newestOf`：名字里版本号最大的，带日期的快照不算；版本相同的几个，比如 `gpt-image-2.6-flare` 和 `-sunburst`、`clef` 和 `clef-flash`，取和内置默认同款的那个，再不行按名字排第一个）。列表为空或提供方没有列表时用内置默认（图片 `gpt-image-2.6-flare`、Live `gpt-live-1`、Realtime `gpt-realtime-2.1`、转写 `gpt-transcribe`、委托和 OpenAI 决策 `gpt-6-luna`、Jev `jev-latest`、Clef `clef-flash`）。OpenAI 的委托和决策字段列的是全部文字模型，留空会用版本号最大的那个，要固定用便宜的就在下拉里选定。
+**留空 = 默认**：用这个字段列表里最新的模型（`newestOf`：名字里版本号最大的，带日期的快照不算；版本相同的几个，比如 `gpt-image-2.6-flare` 和 `-sunburst`、`clef` 和 `clef-flash`，取和内置默认同款的那个，再不行按名字排第一个）。列表为空或提供方没有列表时用内置默认（图片 `gpt-image-2.6-flare`、Live `gpt-live-1`、Realtime `gpt-realtime-2.1`、转写 `gpt-transcribe`、委托和 OpenAI 决策 `gpt-6-luna`、Jev `jev-latest`、Clef `clef-flash`）。OpenAI 的委托字段列的是全部文字模型，留空会用版本号最大的那个，要固定用便宜的就在下拉里选定。
 
 ### 语音
 

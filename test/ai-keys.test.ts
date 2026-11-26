@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { boot } from "../src/main.ts";
-import { categoryStatus, defaultFor, keyEnv, modelChoices, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
+import { categoryStatus, defaultFor, findAnthropicUrl, keyEnv, listModelEntries, modelChoices, tryBackendModel, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
 import { allProfiles, configSchema, keyedProfiles } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
+import { backendHosts } from "../src/agents/egress-policy.ts";
 
 const servers: { close(): Promise<unknown> }[] = [];
 afterAll(async () => {
@@ -26,8 +27,63 @@ describe("API-key providers", () => {
     expect(keyed[0]).toMatchObject({ transport: "acp", command: "codex-acp", keyRef: "team", source: "key:team", name: "Codex (ACP · 团队)" });
     expect(keyed[2].env).toMatchObject({ ANTHROPIC_BASE_URL: "https://proxy.example.com" });
     expect(allProfiles(config).some((p) => p.id === "claude@mine")).toBe(true);
-    // The key itself is never part of a profile.
-    expect(JSON.stringify(keyed)).not.toMatch(/API_KEY/);
+    // The key itself is never part of a profile: only the names of the variables it goes in.
+    expect(keyed.every((p) => !Object.keys(p.env).some((k) => /KEY|TOKEN/.test(k)))).toBe(true);
+    expect(keyed[2].keyVars).toEqual(["ANTHROPIC_API_KEY"]);
+  });
+
+  it("runs Codex, Claude Code and OpenCode on a third party's key, its addresses and model", () => {
+    const home = mkdtempSync(join(tmpdir(), "omem-keys-"));
+    useKeyHome(home);
+    setKey(home, "ark", "ark-key-1");
+    const providers = [{ id: "ark", name: "方舟", kind: "openai-compatible", baseUrl: "https://ark.example.com/api/v3/", model: "ep-123", backends: ["codex", "codex-cli", "claude", "claude-cli", "opencode"] }];
+    // No Anthropic address yet: Claude Code is not made.
+    expect(keyedProfiles(withProviders(providers)).map((p) => p.id)).toEqual(["codex@ark", "codex-cli@ark", "opencode@ark"]);
+    const keyed = keyedProfiles(withProviders([{ ...providers[0], anthropicUrl: "https://ark.example.com/api/compatible" }]));
+    const by = Object.fromEntries(keyed.map((p) => [p.id, p]));
+    expect(Object.keys(by)).toEqual(["codex@ark", "codex-cli@ark", "claude@ark", "claude-cli@ark", "opencode@ark"]);
+    // Codex no longer reads OPENAI_BASE_URL: a model provider of its own, the key in its env_key.
+    expect(by["codex@ark"].model).toBe("ep-123");
+    expect(by["codex@ark"].env.MODEL_PROVIDER).toBe("omem-key");
+    expect(JSON.parse(by["codex@ark"].env.CODEX_CONFIG)).toEqual({ model_provider: "omem-key", model_providers: { "omem-key": { name: "方舟", base_url: "https://ark.example.com/api/v3", env_key: "OMEM_AI_KEY", wire_api: "responses" } } });
+    expect(by["codex-cli@ark"].args).toEqual(expect.arrayContaining(["-c", 'model_provider="omem-key"', 'model_providers.omem-key={name="方舟",base_url="https://ark.example.com/api/v3",env_key="OMEM_AI_KEY",wire_api="responses"}']));
+    expect(keyEnv(by["codex@ark"])).toEqual({ OMEM_AI_KEY: "ark-key-1" });
+    // Claude Code: Bearer token, the model for every tier.
+    expect(by["claude@ark"].env).toMatchObject({ ANTHROPIC_BASE_URL: "https://ark.example.com/api/compatible", ANTHROPIC_MODEL: "ep-123", ANTHROPIC_DEFAULT_SONNET_MODEL: "ep-123", CLAUDE_CODE_SUBAGENT_MODEL: "ep-123" });
+    expect(keyEnv(by["claude@ark"])).toEqual({ ANTHROPIC_AUTH_TOKEN: "ark-key-1" });
+    // OpenCode: an inline config naming the key by variable, not the key.
+    const oc = JSON.parse(by["opencode@ark"].env.OPENCODE_CONFIG_CONTENT);
+    expect(oc).toEqual({ model: "omem-key/ep-123", provider: { "omem-key": { npm: "@ai-sdk/openai-compatible", name: "方舟", options: { baseURL: "https://ark.example.com/api/v3", apiKey: "{env:OMEM_AI_KEY}" }, models: { "ep-123": {} } } } });
+    expect([...backendHosts(by["opencode@ark"])]).toContain("ark.example.com");
+    expect([...backendHosts(by["codex@ark"])]).toContain("ark.example.com");
+    // An OpenAI key at another address goes the same way; at the official one, Codex's own key variables.
+    const [custom, official] = keyedProfiles(withProviders([{ id: "p", kind: "openai", baseUrl: "https://proxy.example.com/v1", backends: ["codex"] }, { id: "o", kind: "openai", backends: ["codex"] }]));
+    expect(custom.env.MODEL_PROVIDER).toBe("omem-key");
+    expect(custom.keyVars).toEqual(["OMEM_AI_KEY"]);
+    expect(official.keyVars).toEqual(["CODEX_API_KEY", "OPENAI_API_KEY"]);
+    expect(official.env.CODEX_CONFIG).toBeUndefined();
+  });
+
+  it("reads what a listing says about each model, finds the Anthropic address and calls the model once", async () => {
+    const p = { id: "ark", name: "", kind: "openai-compatible" as const, baseUrl: "https://ark.example.com/api/v3", backends: [] };
+    const listing = (async () => Response.json({ data: [
+      { id: "glm-5", domain: "LLM", api_supported: { "chat/completions": true, responses: true, messages: true }, features: { tools: { function_calling: true } } },
+      { id: "seedream", domain: "ImageGeneration" },
+      { id: "plain" },
+    ] })) as unknown as typeof fetch;
+    expect(await listModelEntries(p, "k", listing)).toEqual({ models: ["glm-5", "plain", "seedream"], info: { "glm-5": { formats: ["chat", "responses", "anthropic"], type: "LLM", tools: true }, seedream: { type: "ImageGeneration" } } });
+    const asked: string[] = [];
+    const probe = (async (url: string, init: { headers: Record<string, string> }) => {
+      asked.push(url);
+      expect(init.headers.authorization).toBe("Bearer k");
+      return url === "https://ark.example.com/api/compatible/v1/models" ? Response.json({ data: [] }) : new Response("no", { status: 404 });
+    }) as unknown as typeof fetch;
+    expect(await findAnthropicUrl(p.baseUrl, "k", probe)).toBe("https://ark.example.com/api/compatible");
+    expect(asked[0]).toBe("https://ark.example.com/api/compatible/v1/models");
+    expect(await findAnthropicUrl("https://other.example.com/v1", "k", (async () => new Response("", { status: 404 })) as unknown as typeof fetch)).toBeNull();
+    const refuse = (async () => Response.json({ error: { code: "ModelIDAccessDisabled", message: "use an endpoint ID. Request id: 42" } }, { status: 404 })) as unknown as typeof fetch;
+    expect(await tryBackendModel({ ...p, model: "glm-5" }, "k", refuse)).toEqual({ ok: false, detail: "模型 glm-5 调不通（OpenAI 格式 404：ModelIDAccessDisabled：use an endpoint ID.）" });
+    expect(await tryBackendModel({ ...p, model: "ep-1", anthropicUrl: "https://ark.example.com/api/compatible" }, "k", (async () => Response.json({})) as unknown as typeof fetch)).toEqual({ ok: true, detail: "模型 ep-1 可以调用" });
   });
 
   it("adds the key at launch and refuses a keyed profile without one", () => {
@@ -105,7 +161,8 @@ describe("API-key providers", () => {
     expect(modelChoices(home, p, "voice.live").default).toBe("gpt-live-1.1");
     expect(modelChoices(home, p, "voice.realtime").models).toEqual(["gpt-realtime-2.1"]);
     expect(modelChoices(home, p, "voice.transcribe")).toEqual({ default: "gpt-transcribe", models: ["gpt-realtime-whisper", "gpt-transcribe"] });
-    expect(modelChoices(home, p, "decision")).toEqual({ default: "gpt-6.1-sol", models: ["gpt-6-luna", "gpt-6.1-sol"] });
+    // The Decisions API takes gpt-6-luna only: the other text models are not offered.
+    expect(modelChoices(home, p, "decision")).toEqual({ default: "gpt-6-luna", models: ["gpt-6-luna"] });
     const config = configSchema.parse({ ai: { providers: [p], image: { provider: "o" }, voice: { provider: "o" } } });
     expect(categoryStatus(config, "image", home)).toMatchObject({ ready: true, model: "gpt-image-2.6-flare" });
     expect(categoryStatus(config, "voice", home).model).toBe("gpt-live-1.1");

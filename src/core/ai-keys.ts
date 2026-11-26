@@ -55,13 +55,15 @@ export function keyVars(kind: string, key: string, baseUrl?: string): Record<str
 
 /**
  * Extra environment for launching a profile: its provider's key, or nothing. A keyed profile whose
- * key is gone fails here rather than silently falling back to the login on this machine. (A custom
- * base URL is not secret and is already in the profile's env: config.ts `keyedProfiles`.)
+ * key is gone fails here rather than silently falling back to the login on this machine. (Addresses
+ * and models are not secret and are already in the profile's env: config.ts `keyedProfiles`, which
+ * also names the variables the key goes in.)
  */
-export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command">): Record<string, string> {
+export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> & { keyVars?: string[] }): Record<string, string> {
   if (!profile.keyRef) return {};
   const key = keyOf(profile.keyRef);
   if (!key) throw new Error(`后端 ${profile.id} 用的 API key（${profile.keyRef}）还没有填写：设置 → 后端与模型 → API key`);
+  if (profile.keyVars?.length) return Object.fromEntries(profile.keyVars.map((v) => [v, key]));
   const s = `${profile.id} ${profile.command}`;
   return keyVars(/claude/.test(s) ? "anthropic" : /codex/.test(s) ? "openai" : "", key);
 }
@@ -117,6 +119,55 @@ export async function testProvider(p: Provider, key: string, fetcher: typeof fet
   } catch (e) {
     return { ok: false, detail: `连不上 ${new URL(url).host}：${(e as Error).message}` };
   }
+}
+
+/**
+ * A third-party service's Anthropic-shaped address, when it answers a model listing there (free):
+ * Volcengine Ark's sits beside its OpenAI one (`…/api/v3` → `…/api/compatible`), others under
+ * `/anthropic` or at the same root. Null when none answers; it can still be filled in by hand.
+ */
+export async function findAnthropicUrl(baseUrl: string, key: string, fetcher: typeof fetch = fetch): Promise<string | null> {
+  const base = baseUrl.replace(/\/+$/, "");
+  const root = base.replace(/\/v\d+$/, "");
+  const candidates = [...new Set([...(root !== base ? [`${root}/compatible`] : []), `${root}/anthropic`, root])];
+  for (const c of candidates) {
+    try {
+      const r = await fetcher(`${c}/v1/models`, { headers: { authorization: `Bearer ${key}`, "x-api-key": key, "anthropic-version": "2023-06-01" }, signal: AbortSignal.timeout(8_000) });
+      if (!r.ok) continue;
+      const body = (await r.json().catch(() => null)) as { data?: unknown } | null;
+      if (body && Array.isArray(body.data)) return c;
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Whether the model the backends of a third-party key run on answers, in each format they use: one
+ * reply of at most one token. Services often list models the account cannot call by that name (Ark
+ * accounts that must use an endpoint ID): this is where that shows.
+ */
+export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUrl" | "model">, key: string, fetcher: typeof fetch = fetch): Promise<{ ok: boolean; detail: string }> {
+  if (!p.model) return { ok: false, detail: "还没有填写后端用的模型" };
+  const calls: [string, string, Record<string, string>, unknown][] = [];
+  if (p.baseUrl) calls.push(["OpenAI 格式", `${p.baseUrl.replace(/\/+$/, "")}/chat/completions`, { authorization: `Bearer ${key}` }, { model: p.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }]);
+  if (p.anthropicUrl) calls.push(["Anthropic 格式", `${p.anthropicUrl.replace(/\/+$/, "")}/v1/messages`, { authorization: `Bearer ${key}`, "x-api-key": key, "anthropic-version": "2023-06-01" }, { model: p.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }]);
+  const bad: string[] = [];
+  for (const [label, url, headers, body] of calls) {
+    try {
+      const r = await fetcher(url, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });
+      if (r.ok) continue;
+      const text = await r.text().catch(() => "");
+      let msg = text.slice(0, 300);
+      try {
+        const e = (JSON.parse(text) as { error?: { message?: string; code?: string } }).error;
+        if (e?.message) msg = `${e.code ? `${e.code}：` : ""}${e.message}`.replace(/\s*Request id:.*$/i, "").slice(0, 300);
+      } catch {}
+      bad.push(`${label} ${r.status}${msg ? `：${msg}` : ""}`);
+    } catch (e) {
+      bad.push(`${label}连不上：${(e as Error).message}`);
+    }
+  }
+  return bad.length ? { ok: false, detail: `模型 ${p.model} 调不通（${bad.join("；")}）` } : { ok: true, detail: `模型 ${p.model} 可以调用` };
 }
 
 export type Category = "voice" | "decision" | "image";
@@ -224,7 +275,13 @@ function statusOf(config: Config, cat: Category, c: { provider: string; model: s
  * the built-in default only when nothing fitting is listed.
  */
 export type ModelField = "image" | "voice.live" | "voice.realtime" | "voice.transcribe" | "voice.delegate" | "decision";
-type ModelCache = Record<string, { at: number; models: string[]; error?: string }>;
+/**
+ * What a listing says about one model, when it says anything (Volcengine Ark and the like do, OpenAI
+ * does not): the API formats it answers (`chat` = Chat Completions, `responses`, `anthropic` =
+ * Messages), what it is for (`LLM`, `ImageGeneration`…), and whether it calls tools.
+ */
+export type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean };
+type ModelCache = Record<string, { at: number; models: string[]; info?: Record<string, ModelInfo>; error?: string }>;
 const cacheFile = (home: string) => join(home, "cache", "ai-models.json");
 export function readModelCache(home: string): ModelCache {
   try {
@@ -246,8 +303,11 @@ export function setModelListFetchForTests(f: typeof fetch | null) {
   listFetch = f ?? ((...a) => fetch(...a));
 }
 
-/** Models a provider lists; null when it has no listing we know of (TypeSafe, Anthropic here). */
-export async function listModels(p: Provider, key: string, fetcher: typeof fetch = listFetch): Promise<string[] | null> {
+type Listed = { id?: string; name?: string; domain?: string; api_supported?: Record<string, boolean>; features?: { tools?: { function_calling?: boolean } } };
+const FORMAT_OF: Record<string, "chat" | "responses" | "anthropic"> = { "chat/completions": "chat", responses: "responses", messages: "anthropic" };
+
+/** Models a provider lists, with what the listing says about each; null when it has no listing we know of (TypeSafe, Anthropic here). */
+export async function listModelEntries(p: Provider, key: string, fetcher: typeof fetch = listFetch): Promise<{ models: string[]; info: Record<string, ModelInfo> } | null> {
   const base = baseOf(p);
   let url: string;
   if (p.kind === "openai" || p.kind === "openai-compatible") url = `${base}/models`;
@@ -257,9 +317,20 @@ export async function listModels(p: Provider, key: string, fetcher: typeof fetch
   if (!base || !key) return null;
   const r = await fetcher(url, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) });
   if (!r.ok) throw new Error(`${r.status}：${(await r.text().catch(() => "")).slice(0, 200)}`);
-  const body = (await r.json()) as { data?: { id?: string }[]; result?: { name?: string }[] };
-  const ids = p.kind === "cloudflare" ? (body.result ?? []).map((m) => clefModel(String(m.name ?? ""))) : (body.data ?? []).map((m) => String(m.id ?? ""));
-  return [...new Set(ids.filter(Boolean))].sort();
+  const body = (await r.json()) as { data?: Listed[]; result?: { name?: string }[] };
+  if (p.kind === "cloudflare") return { models: [...new Set((body.result ?? []).map((m) => clefModel(String(m.name ?? ""))).filter(Boolean))].sort(), info: {} };
+  const info: Record<string, ModelInfo> = {};
+  for (const m of body.data ?? []) {
+    const id = String(m.id ?? "");
+    if (!id) continue;
+    const formats = m.api_supported ? Object.entries(m.api_supported).flatMap(([k, on]) => (on && FORMAT_OF[k] ? [FORMAT_OF[k]] : [])) : [];
+    const one: ModelInfo = { ...(formats.length ? { formats } : {}), ...(m.domain ? { type: m.domain } : {}), ...(m.features?.tools?.function_calling !== undefined ? { tools: !!m.features.tools.function_calling } : {}) };
+    if (Object.keys(one).length) info[id] = one;
+  }
+  return { models: [...new Set((body.data ?? []).map((m) => String(m.id ?? "")).filter(Boolean))].sort(), info };
+}
+export async function listModels(p: Provider, key: string, fetcher: typeof fetch = listFetch): Promise<string[] | null> {
+  return (await listModelEntries(p, key, fetcher))?.models ?? null;
 }
 
 /** Refresh one provider's cached list; failures are kept (with the old list) for the settings page. */
@@ -268,10 +339,10 @@ export async function refreshModels(home: string, p: Provider, fetcher: typeof f
   const old = readModelCache(home)[p.id];
   let entry: ModelCache[string] | null;
   try {
-    const models = await listModels(p, key, fetcher);
-    entry = models ? { at: Date.now(), models } : null;
+    const listed = await listModelEntries(p, key, fetcher);
+    entry = listed ? { at: Date.now(), models: listed.models, ...(Object.keys(listed.info).length ? { info: listed.info } : {}) } : null;
   } catch (e) {
-    entry = { at: Date.now(), models: old?.models ?? [], error: (e as Error).message.slice(0, 200) };
+    entry = { at: Date.now(), models: old?.models ?? [], ...(old?.info ? { info: old.info } : {}), error: (e as Error).message.slice(0, 200) };
   }
   const c = readModelCache(home);
   if (entry) c[p.id] = entry;
@@ -286,7 +357,8 @@ const FIELD_FILTER: Record<ModelField, (m: string, kind: string) => boolean> = {
   "voice.realtime": (m) => /^gpt-realtime/.test(m) && !/whisper|translat|transcri/.test(m),
   "voice.transcribe": (m) => /transcri|whisper/.test(m),
   "voice.delegate": (m) => isTextModel(m),
-  decision: (m, kind) => (kind === "cloudflare" ? /^clef/.test(m) : kind === "openrouter" ? /jev|clef/i.test(m) : isTextModel(m)),
+  // OpenAI's Decisions API takes gpt-6-luna only (2026-11), not its other text models.
+  decision: (m, kind) => (kind === "cloudflare" ? /^clef/.test(m) : kind === "openrouter" ? /jev|clef/i.test(m) : kind === "openai" ? /^gpt-6-luna(?:-|$)/.test(m) : isTextModel(m)),
 };
 const isTextModel = (m: string) => /^(gpt-\d|o\d)/.test(m) && !/image|realtime|live|audio|tts|transcri|whisper|search|embed|translat/.test(m);
 
