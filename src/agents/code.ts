@@ -486,7 +486,10 @@ ${input.task}
     const { identity } = await import("./code-branch.ts");
     // What the owner (or anyone) changed on the branch since the last round: a checkpoint of its own, kept by the coder.
     const before = one<{ status: string }>(app.db, "select status from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) and id != ? order by created_at desc limit 1", rootRunId, rootRunId, run.id);
-    const outside = continueFrom ? tasks.recordOutsideChanges(app, rootRunId, run.id, worktrees, identity, { previousEnded: before?.status === "done", round: Number((input as { round?: number }).round ?? 1) }) : null;
+    const outside = continueFrom ? tasks.recordOutsideChanges(app, rootRunId, run.id, worktrees, identity, {
+      captureOwnerEdits: before?.status === "done" && !run.output.coderStartedAt && !ranBefore,
+      round: Number((input as { round?: number }).round ?? 1),
+    }) : null;
     if (outside) ctx.event("status", { text: `检查点 ${outside.checkpoint.seq}：${outside.checkpoint.label}，${outside.files.length} 个文件` });
     if (!savedLessonBases) {
       for (const wt of worktrees) lessonBases[wt.space] = git(workDirOf(wt), ["rev-parse", "HEAD"]).stdout.trim();

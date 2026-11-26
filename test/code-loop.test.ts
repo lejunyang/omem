@@ -309,10 +309,10 @@ describe("a delegation driven by tasks", () => {
     const worktrees = [{ space: "shop-api", path: dir, branch: "main", base, start: base }];
     recordCheckpoint(app, r.id, worktrees, r.id, [], "第 1 轮");
     // Nothing happened since: no checkpoint.
-    expect(recordOutsideChanges(app, r.id, "r2", worktrees, identity, { previousEnded: true, round: 2 })).toBeNull();
+    expect(recordOutsideChanges(app, r.id, "r2", worktrees, identity, { captureOwnerEdits: true, round: 2 })).toBeNull();
     // The owner edits in the worktree between rounds, and leaves it uncommitted.
     writeFileSync(join(dir, "note.md"), "本人加的说明\n");
-    const outside = recordOutsideChanges(app, r.id, "r2", worktrees, identity, { previousEnded: true, round: 2 })!;
+    const outside = recordOutsideChanges(app, r.id, "r2", worktrees, identity, { captureOwnerEdits: true, round: 2 })!;
     expect(outside).toMatchObject({ owner: true, files: ["note.md"], checkpoint: { seq: 2, by: "owner" } });
     expect(git("log", "--format=%B", "-n", "1")).toContain("Omem-By: owner");
     // The round codes its one task: only the coder's commit is the task's, not the owner's.
@@ -326,7 +326,7 @@ describe("a delegation driven by tasks", () => {
     expect(git("log", "--format=%s", "-n", "1", mine[0]).trim()).toBe("改退款");
     // After a round that failed, uncommitted changes are its unfinished work: left as they are.
     writeFileSync(join(dir, "refund.ts"), "export const refund = 2;\n");
-    expect(recordOutsideChanges(app, r.id, "r3", worktrees, identity, { previousEnded: false, round: 3 })).toBeNull();
+    expect(recordOutsideChanges(app, r.id, "r3", worktrees, identity, { captureOwnerEdits: false, round: 3 })).toBeNull();
     expect(git("status", "--porcelain").trim()).toBe("M refund.ts");
     app.db.close();
   });

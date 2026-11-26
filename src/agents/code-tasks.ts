@@ -539,14 +539,14 @@ export function recordCheckpoint(app: App, rootId: string, worktrees: WorktreeRe
  * Before a round codes: what changed on the work branch since the last checkpoint without a round
  * doing it — the owner's edits left in the worktree (committed as theirs, `Omem-By: owner`), commits
  * made on the branch elsewhere, what came in from origin — becomes a checkpoint of its own. It is
- * never counted as a task's change, and the coder is told to keep it. Uncommitted changes after a
- * round that failed are that round's unfinished work and stay as they are.
+ * never counted as a task's change, and the coder is told to keep it. Uncommitted changes from a
+ * failed round or an earlier attempt of this round are unfinished work and stay as they are.
  */
-export function recordOutsideChanges(app: App, rootId: string, runId: string, worktrees: WorktreeRef[], identity: (dir: string) => string[], opts: { previousEnded: boolean; round: number }): { checkpoint: Checkpoint; files: string[]; owner: boolean } | null {
+export function recordOutsideChanges(app: App, rootId: string, runId: string, worktrees: WorktreeRef[], identity: (dir: string) => string[], opts: { captureOwnerEdits: boolean; round: number }): { checkpoint: Checkpoint; files: string[]; owner: boolean } | null {
   const last = listCheckpoints(app, rootId).at(-1);
   if (!last) return null;
   let owner = false;
-  if (opts.previousEnded) for (const wt of worktrees) {
+  if (opts.captureOwnerEdits) for (const wt of worktrees) {
     if (!existsSync(wt.path) || !git(wt.path, ["status", "--porcelain"]).stdout.trim()) continue;
     git(wt.path, ["add", "-A"]);
     if (git(wt.path, [...identity(wt.path), "commit", "-q", "--no-verify", "-m", `本人的修改（第 ${opts.round} 轮开始前在工作区里改的）\n\nOmem-By: owner`]).ok) owner = true;
