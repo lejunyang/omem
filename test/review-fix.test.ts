@@ -15,9 +15,13 @@ it("continues a standalone branch-review fix in the same workspace, preserving e
     expect(first.parentId).toBeNull();
     setRunOutput(app, first.id, { worktrees: [{ space: "project-a", path: app.home, branch: "omem/example", base: "abc" }], coderSessionId: "session-one" });
     run(app.db, "update runs set status='done' where id=?", first.id);
-    run(app.db, "update runs set input=json_set(input,'$.execution',json(?),'$.checks',json(?)) where id=?", JSON.stringify({ profile: "codex", model: "test-model" }), JSON.stringify({ "project-a": "npm test" }), first.id);
+    run(app.db, "update runs set input=json_patch(input,json(?)) where id=?", JSON.stringify({
+      execution: { profile: "codex", model: "test-model" }, checks: { "project-a": "npm test" },
+      syncResume: true, syncResumeFrom: review.id, lessonBases: { "project-a": "abc" }, aiLoginWait: { ready: true },
+    }), first.id);
     const next = await startFix(app, first.id, { findingIds: [], text: "再处理空值" }, "owner");
     expect(next.input).toMatchObject({ continueFrom: first.id, resumeSessionId: "session-one", round: 2, repos: ["project-a"], fromReview: review.id, reviewTier: "full", readSpaces: ["personal"], checks: { "project-a": "npm test" }, execution: { profile: "codex", model: "test-model" } });
+    for (const key of ["syncResume", "syncResumeFrom", "lessonBases", "aiLoginWait"]) expect(next.input).not.toHaveProperty(key);
     await expect(startFix(app, first.id, { findingIds: [], text: "重复点击" }, "owner")).rejects.toThrow(/已有修改轮次/);
     run(app.db, "update runs set status='done' where id=?", next.id);
     setRunOutput(app, next.id, { coderSessionId: "session-two" });

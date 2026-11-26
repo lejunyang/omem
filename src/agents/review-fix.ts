@@ -475,8 +475,21 @@ export function queueStandaloneFix(app: App, rootId: string, expectedLastId: str
     const next = createRun(app, {
       kind: "code", spaceId: last.spaceId, userId: workOwner(app, rootId, userId),
       title: truncate(`交办第 ${rounds.length + 1} 轮：${task.split("\n")[0]}`, 80),
-      // The last round's Git work is its own; this round does only what it is asked.
-      input: { ...last.input, sync: undefined, syncOnly: undefined, syncResume: undefined, moveToTarget: undefined, moveToTargetMode: undefined, reviewOnly: undefined, peerFinished: undefined, roundNotes, ...extraInput, task: roundNotes && !last.input.taskMode ? `${task}\n\n${roundNotes}` : task, continueFrom: rootId, resumeSessionId: sessionId, round: rounds.length + 1 },
+      input: {
+        ...last.input,
+        // The caller supplies this round's Git operations, review filters and peer handoff.
+        sync: undefined, syncOnly: undefined, syncResume: undefined, syncResumeFrom: undefined,
+        moveToTarget: undefined, moveToTargetMode: undefined,
+        reviewOnly: undefined, peerFinished: undefined, lessonBases: undefined,
+        roundNotes,
+        ...extraInput,
+        // A new round starts with its own recovery and login state.
+        retryOf: undefined, restarted: undefined, aiLoginWait: undefined,
+        task: roundNotes && !last.input.taskMode ? `${task}\n\n${roundNotes}` : task,
+        continueFrom: rootId,
+        resumeSessionId: sessionId,
+        round: rounds.length + 1,
+      },
       parentId: last.parentId,
     });
     if (notes.length) markNotesDelivered(app, last.id, notes);

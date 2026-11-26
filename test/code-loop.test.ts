@@ -12,13 +12,16 @@ import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQues
 import { advanceWork, reconcileWaiting, reviewAgain, settleTask, taskReview } from "../src/agents/code-loop.ts";
 import * as agentTools from "../src/agents/tools.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { retryRun } from "../src/agents/retry.ts";
 import { recordReview, roundFindings } from "../src/agents/review.ts";
 import { identity } from "../src/agents/code-branch.ts";
 import { snapshot } from "../src/channels/lark-code-progress.ts";
 import type { CodeChain } from "../src/agents/code-chain.ts";
-import { __testHandlers, addRunEvent, createRun, getRun, runEvents, setRunOutput } from "../src/agents/runs.ts";
+import { __testHandlers, addRunEvent, createRun, getRun, ResumeRunAt, runEvents, setRunOutput } from "../src/agents/runs.ts";
+import * as runner from "../src/agents/runner.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { all, run } from "../src/core/db.ts";
+import { git as repoGit } from "../src/core/git.ts";
 import { createSpace, updateSpace } from "../src/core/spaces.ts";
 import { createUser, addMember, OWNER } from "../src/core/users.ts";
 import { startServer } from "../src/server/http.ts";
@@ -246,6 +249,63 @@ describe("a delegation driven by tasks", () => {
       app.db.close();
     }
   }, 120_000);
+
+  it.each(["standalone", "conversation"])("codes the next %s task round after retrying a round that stopped in review", async (entry) => {
+    const app = testApp();
+    const dir = mkdtempSync(join(tmpdir(), "omem-loop-retry-"));
+    const stopped = new Error("评审中断");
+    const review = vi.spyOn(await import("../src/agents/code-loop.ts"), "taskReview").mockRejectedValueOnce(stopped);
+    const nextCoder = new ResumeRunAt(Date.now());
+    const coder = vi.spyOn(runner, "runRole").mockRejectedValue(nextCoder);
+    try {
+      expect(repoGit(dir, ["init", "-q", "-b", "main"]).ok).toBe(true);
+      writeFileSync(join(dir, "refund.ts"), "export const refund = 0;\n");
+      expect(repoGit(dir, ["add", "-A"]).ok).toBe(true);
+      expect(repoGit(dir, ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "init"]).ok).toBe(true);
+      createSpace(app, { id: "shop-api", name: "订单服务", kind: "repo", rootPath: dir });
+      let parentId: string | undefined;
+      if (entry === "conversation") {
+        const thread = createThread(app, { channel: "web", spaceId: "shop-api", userId: OWNER });
+        parentId = createRun(app, { kind: "ask", spaceId: "shop-api", title: "编码交办", input: { conversationId: thread.id }, userId: OWNER }).id;
+      }
+      const first = createRun(app, { kind: "code", spaceId: "shop-api", title: "退款金额", input: { task: "退款只按未发货的行计算", taskMode: true, maxRounds: 4, design: "never" }, parentId, userId: OWNER });
+      const initial = addTask(app, first.id, { title: "退款只算未发货的行", kind: "build" }, "coder");
+      coder.mockImplementationOnce(async (_app, input) => {
+        writeFileSync(join(input.cwd!, "refund.ts"), "export const refund = 1;\n");
+        updateTask(app, first.id, initial.seq, { state: "done" });
+        return { text: "改好了退款金额", stopReason: "end_turn", agent: "fake", profileId: "fake", ai: { profile: "fake" }, sessionId: "coder-session" };
+      });
+      await expect(work(app, first.id)).rejects.toBe(stopped);
+      expect(getRun(app, first.id).output).toMatchObject({ coderSummary: expect.any(String), coderAI: expect.any(Object) });
+      run(app.db, "update runs set status = 'failed', error = ? where id = ?", stopped.message, first.id);
+      addTask(app, first.id, { title: "补退款说明", kind: "owner" }, OWNER);
+      const retry = await retryRun(app, first.id);
+      expect(retry.input.retryOf).toBe(first.id);
+      // The service restarted while running the retry.
+      run(app.db, "update runs set input = json_set(input, '$.restarted', json(?)) where id = ?", JSON.stringify({ at: new Date().toISOString(), writes: [] }), retry.id);
+      const skipMessage = "上一次尝试已经写完代码，这次从检查和评审接着做";
+      const statuses = (id: string) => runEvents(app, id).filter(e => e.type === "status").map(e => (e.data as { text?: string }).text);
+      const result = await work(app, retry.id);
+      expect(statuses(retry.id)).toContain(skipMessage);
+      expect(coder).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ verdict: "continuing", continuedRunId: expect.any(String) });
+
+      const next = getRun(app, result.continuedRunId!);
+      expect(next.input).toMatchObject({ continueFrom: first.id, round: 3, taskMode: true });
+      expect.soft(next.input).not.toHaveProperty("retryOf");
+      expect.soft(next.input).not.toHaveProperty("restarted");
+      await work(app, next.id).catch((error) => { if (error !== nextCoder) throw error; });
+      expect.soft(statuses(next.id)).not.toContain(skipMessage);
+      const called = coder.mock.lastCall?.[1];
+      expect(called?.runId).toBe(next.id);
+      expect(called?.role).toBe("coder");
+      expect(called?.task).toContain("补退款说明");
+    } finally {
+      coder.mockRestore();
+      review.mockRestore();
+      app.db.close();
+    }
+  });
 
   it("takes back a file or a hunk as a commit of its own, and hands a hunk that no longer applies to the coder", async () => {
     const app = testApp();
