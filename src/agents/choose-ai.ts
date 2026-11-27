@@ -324,7 +324,7 @@ export async function fallbackOrder(
   const scope = "scope" in o ? o.scope : policyScope(app, o.scene === "conversation" ? "ask" : undefined, o.who);
   o = { ...o, options: o.options.filter(p => !policyReason(scope, p)) };
   const keep = (reason: string) => ({ order: o.options, by: "static" as const, reason });
-  if (scope && (scope.order === "fixed" || scope.use.length || scope.deny.length || app.config.agents.groups.some(g => g.items.length))) return keep("按组的先后");
+  if (scope && (scope.order === "fixed" || scope.use.length || scope.deny.length || unrestrictedGroups(app, scope, o.from).length)) return keep("按组的先后");
   if (o.options.length < 2) return keep("只剩一个可换的");
   const guidance = memberAi(app, o.userId).guidance;
   const candidates = routingCandidates(app);

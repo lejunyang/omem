@@ -2699,6 +2699,7 @@ TraeX 与其他 ACP 的清理补验：
 | DEC8 | 在日常整理允许的五个组中排除一个。触发 ingest，让决策桩分别选第二组、给低置信答案、触发限流；再把顺序设为固定 | 判断只收到三个合规组和任务开头 1500 字。达标时首选失败由排序第二的组接手；低置信、差距不足和限流按规则顺序，固定顺序跳过判断。运行 status 和 decisions 记录可用运行编号对照 | `test/policy-routing.test.ts` |
 | DEC9 | 自定义后端用 Antigravity 的 source 或 agy 启动命令，分别指定 Gemini 模型或留空；再给 Claude 配置 key 和 peer | 后端别名和模型族均命中自定义 Antigravity，Claude 的 key 与 peer 都命中后端规则；未知程序不推断模型族 | `test/ai-policy.test.ts` |
 | DEC10 | 给自定义 Antigravity 后端保存别名“谷歌”，用别名、agy 和 gemini 点名，再试图保存 help 或同名组。选带本机和远端登录的 Claude | 三个命令均选自定义后端；不可用时直接回复安装提示；拒绝重名且说明冲突对象；本机优先并可按设备名改选 | `test/ai-spec.test.ts` |
+| DEC11 | 从只有旧流程档位的配置升级并触发日常整理，再加入旧任务候选重试 | 只有档位时沿用角色 AI。有旧候选时，默认顺序以角色 AI 开头；决策明确选择候选组时才让候选接手 | `test/policy-routing.test.ts` |
 
 ## 图片与语音（2026-11-07）
 
