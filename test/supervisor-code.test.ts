@@ -4,16 +4,17 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { all, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
-import { createAsk, describeAnswer, getAsk, listAsks, waitForAnswer } from "../src/agents/asks.ts";
+import { answerAsk, createAsk, describeAnswer, getAsk, listAsks, waitForAnswer } from "../src/agents/asks.ts";
 import { codeChainFor, queueNextCodeRound, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { queueCodeWork } from "../src/agents/code-delegate.ts";
 import { addTask, getTask, recordCheckpoint, toDecide, updateTask } from "../src/agents/code-tasks.ts";
-import { getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
+import { confirmLongTaskBrief, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
 import { queueSupervisedAgent, onWorkRunSettled } from "../src/agents/agent-work.ts";
 import { checkTaskDuration } from "../src/agents/drift.ts";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { answerWorkerQuestion, checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "../src/agents/supervisor-code.ts";
 import { testApp } from "./helpers.ts";
+import { submitSupervisorReport } from "../src/agents/supervisor-report.ts";
 
 async function setup(rounds = 5) {
   const app = testApp();
@@ -133,6 +134,42 @@ describe("监工的编码交办", () => {
     trySettleCodeChain(app, worker.id);
     expect(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
     expect(getRun(app, worker.id).output.codeResultHandedOff).toBe(true);
+  });
+
+  it.each([1, 2])("监工已重做两次，本人回答汇总卡后按总预算 %i 续轮", async rounds => {
+    const { app, task, lead, delegate } = await setup(rounds);
+    confirmLongTaskBrief(app, task.id, { doneWhen: ["说明已校对"] });
+    const worker = delegate();
+    codeChainFor(app, worker);
+    const item = addTask(app, worker.id, { kind: "build", title: "核对示例" }, "coder");
+    const question = { question: "示例怎么处理？", options: ["保留", "替换"], why: "需要确定示例" };
+    const askAgain = () => {
+      const pending = toDecide(app, worker.id, item.seq, question);
+      return `task:${item.id}:${pending.origin.questionId}`;
+    };
+    await answerWorkerQuestion(app, task.id, askAgain(), "保留");
+    await answerWorkerQuestion(app, task.id, askAgain(), "保留");
+    const questionId = askAgain();
+    await expect(answerWorkerQuestion(app, task.id, questionId, "替换")).rejects.toThrow(/重做过 2 次/);
+
+    run(app.db, "update runs set status='done' where id=?", worker.id);
+    run(app.db, "update runs set status='running' where id=?", lead.id);
+    await submitSupervisorReport(app, lead.id, {
+      stage: "校对", status: "needs-owner", goalCheck: [], progress: { done: [], doing: [], next: [] },
+      decisions: [], actions: [], askOwner: [{ ...question, questionId, prefer: "保留" }],
+    });
+    const [card] = listAsks(app, { conversationId: task.threadId, status: "pending" });
+    const value = { q0: "替换" };
+    await expect(answerAsk(app, card.id, { by: "another", value })).rejects.toThrow(/只有/);
+    await answerAsk(app, card.id, { by: task.userId, value });
+
+    const decided = getTask(app, worker.id, item.seq);
+    expect(decided).toMatchObject({ state: "todo", answer: "替换" });
+    expect(decided.notes.at(-1)).toMatchObject({ kind: "owner", by: task.userId, text: "本人决定：替换" });
+    expect(getLongTask(app, task.id).supplements.at(-1)?.text).toBe("示例怎么处理？：替换");
+    const next = all<{ id: string }>(app.db, "select id from runs where kind='code' and json_extract(input,'$.continueFrom')=?", worker.id);
+    expect(next).toHaveLength(rounds - 1);
+    if (next.length) expect(getRun(app, next[0].id)).toMatchObject({ status: "queued", input: { longTaskId: task.id } });
   });
 
   it("检查点按路径边界识别范围外文件", async () => {

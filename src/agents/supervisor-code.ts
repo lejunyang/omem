@@ -95,21 +95,22 @@ export function createWorkerAsk(app: App, input: Parameters<typeof createAsk>[1]
 }
 
 /** Only the question routed by the host (never approvals or another task's asks) may be answered here. */
-export async function answerWorkerQuestion(app: App, taskId: string, questionId: string, answer: string) {
+export async function answerWorkerQuestion(app: App, taskId: string, questionId: string, answer: string, ownerId?: string) {
   const taskQuestion = /^task:(\d+):(.+)$/.exec(questionId);
   if (taskQuestion) {
-    const { settleTask } = await import("./code-loop.ts");
+    const { answerTask, settleTask } = await import("./code-loop.ts");
     const { getTask } = await import("./code-tasks.ts");
     const row = one<{ work_id: string; seq: number }>(app.db, "select work_id,seq from code_tasks where id=?", Number(taskQuestion[1]));
     if (!row || longTaskForRun(app, row.work_id)?.id !== taskId) throw new HttpError(404, "这个长任务没有该修改项");
     const task = getTask(app, row.work_id, row.seq);
     if (task.origin.questionId !== taskQuestion[2]) throw new HttpError(409, "修改项或问题已经变化，请重新核对");
     if (task.state !== "assistant") {
-      if (task.notes.some(n => n.by === "supervisor" && n.text === "重做：" + answer.trim())) return;
+      if (!ownerId && task.notes.some(n => n.by === "supervisor" && n.text === "重做：" + answer.trim())) return;
       throw new HttpError(409, "修改项已经处理");
     }
     if (!answer.trim()) throw new HttpError(400, "回答不能为空");
-    settleTask(app, row.work_id, row.seq, { action: "retry", text: answer.trim(), ownerWords: false }, "supervisor");
+    if (ownerId) answerTask(app, row.work_id, row.seq, { choice: answer.trim() }, ownerId);
+    else settleTask(app, row.work_id, row.seq, { action: "retry", text: answer.trim(), ownerWords: false }, "supervisor");
     return;
   }
   const routed = one(app.db, `select 1 from asks where id=? and kind='question' and json_extract(context,'$.supervisorTaskId')=?`, questionId, taskId);

@@ -92,7 +92,7 @@ registerAskHandler("supervisor-questions", async (app, ask, context) => {
   for (const [i,q] of qs.entries()) {
     const picked = ask.value?.[`q${i}`];
     if (typeof picked !== "string" || !q.options.includes(picked)) throw new HttpError(400, "请在卡片上逐项选择");
-    if (q.questionId) await answerWorkerQuestion(app, task.id, q.questionId, picked);
+    if (q.questionId) await answerWorkerQuestion(app, task.id, q.questionId, picked, ask.answeredBy!);
     choices.push(q.question + "：" + picked);
   }
   await changeLongTask(app, task.id, { action: "supplement", text: choices.join("\n") });
