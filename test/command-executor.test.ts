@@ -37,16 +37,17 @@ it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取
   const app = testApp();
   const root = mkdtempSync(join(tmpdir(), "gate-integration-"));
   const home = join(root, "account"), cwd = join(root, "work"), bin = join(root, "bin");
-  for (const dir of [join(home, ".fixture"), cwd, bin]) mkdirSync(dir, { recursive: true });
+  for (const dir of [join(home, ".fixture"), join(home, ".other"), cwd, bin]) mkdirSync(dir, { recursive: true });
   writeFileSync(join(home, ".fixture", "value"), "ready");
+  writeFileSync(join(home, ".other", "login"), "other");
   const file = join(bin, "samplecli");
-  writeFileSync(file, '#!/bin/sh\ncat "$HOME/.fixture/value" || exit 2\nprintf "\\n"\nif test "$1" = hold; then sleep 2; touch late; exit; fi\nread line\nprintf "%s" "$line" >&2\nexit 17\n', { mode: 0o755 });
+  writeFileSync(file, '#!/bin/sh\ntest ! -e "$HOME/.backend/session" && test ! -e "$HOME/.other/login" || exit 3\ncat "$HOME/.fixture/value" || exit 2\nprintf "\\n"\nif test "$1" = hold; then sleep 2; touch late; exit; fi\nread line\nprintf "%s" "$line" >&2\nexit 17\n', { mode: 0o755 });
   vi.stubEnv("HOME", home); vi.stubEnv("OMEM_DESKTOP_TOOLS", "off"); vi.stubEnv("PATH", bin + ":" + process.env.PATH);
   const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh",
-    account: { dirs: [".fixture", ".backend"], owns: [".fixture", ".backend"] } });
+    account: { dirs: [".backend"], owns: [".backend"] } });
   app.config.agents.profiles = [profile];
   const unregister = registerCredential("fixture", { id: "sample", name: "示例", login: async () => ({ user: "example" }),
-    provides: { backends: [profile.id], commands: [{ name: "samplecli", state: [".fixture"] }] } }, undefined, app);
+    provides: { backends: [profile.id], commands: [{ name: "samplecli", state: [".fixture"] }, { name: "othercli", state: [".other"] }] } }, undefined, app);
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
   app.config.agents.ownSandbox.mode = "require";
   if (proxy) app.config.security.egress.mode = "all-sandboxed";

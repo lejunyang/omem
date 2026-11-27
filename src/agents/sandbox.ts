@@ -1,3 +1,4 @@
+import { checkBackendCommandState } from "./credential-registry.ts";
 import { commandMounts, sandboxGate } from "./command-mounts.ts";
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
@@ -27,6 +28,7 @@ export type SandboxAccount = {
   guarded?: string;
   /** In a borrowed HOME, bind only shared state and create the other required directories privately. */
   borrowed?: { state: string[]; dirs: string[] };
+  backendState?: string[];
   masked?: string[];
   network?: SandboxNetwork;
   userId: string;
@@ -293,6 +295,7 @@ export function omemInstallDir() {
 export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, registryFile?: string) {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
+  if (acct.backendState) checkBackendCommandState(acct.backend, acct.home, acct.backendState.map(rel => join(acct.home, rel)));
   const hide = [...new Set([...acct.hide, homedir(), "/tmp"].filter((p) => isAbsolute(p) && existsSync(p)).map(real))];
   const nodeBin = dirname(process.execPath);
   const ro = new Set(acct.ro);

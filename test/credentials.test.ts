@@ -10,6 +10,7 @@ import { closeVault, connectionSecrets, listConnections } from "../src/auth/vaul
 import { accountHome, accountRun, accountState, checkAccount, ensureAccountHome, loggedIn, removeAccount, saveToken, withAccount } from "../src/agents/accounts.ts";
 import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
+import { openAcp } from "../src/agents/acp.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { allCredentials, checkCredential, credentialHold, credentialInstallDirs, expireCommandCredential, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
@@ -382,7 +383,13 @@ posixIt.each([".example", ".example/backend", ".example/backend/login"])("沙箱
   await startCredentialLogin(app, "ann", "sample:sso");
   await until(() => loggedIn(app, "ann", "demo"));
   expect(readFileSync(join(accountHome(app, "ann"), path, "session"), "utf8")).toBe("demo");
-  expect(selectedCredential(withAccount(app, "ann", profile))?.holder).toBe("ann");
+  setCredentialSharing(app, "owner", "sample:sso", { scope: "self" });
+  setCredentialSharing(app, "ann", "sample:sso", { scope: "all" });
+  for (const user of ["ann", "bob"]) {
+    const selected = withAccount(app, user, { ...profile, command: process.execPath });
+    expect(selectedCredential(selected)?.holder).toBe("ann");
+    await expect(openAcp(selected, { cwd: app.home })).rejects.toThrow(/后端 demo.*与命令 example-cli.*分开目录/);
+  }
 });
 
 it("登录排队时按该次请求拦截退出，即使插件再次重新登记", async () => {

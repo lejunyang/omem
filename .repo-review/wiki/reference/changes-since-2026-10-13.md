@@ -5,9 +5,13 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 沙箱在启动前报告后端与命令的登录目录冲突（2026-11-28）
+
+从 `src/agents/credential-registry.ts` 的 `checkBackendCommandState` 读起。本人、成员及借用账号启动 Linux 沙箱时检查两个路径是否相同或互相包含。冲突时提示分开供给独立凭据或改用其他后端。
+
 ## 登录目录重合的凭据插件可注册（2026-11-28）
 
-从 `src/agents/credential-registry.ts` 读起。注册接受后端与命令的状态目录相同或互为父子。启用沙箱时，执行器按命令声明挂载状态，Agent 与本地后端共用的文件视图仍遮住命令登录。
+从 `src/agents/credential-registry.ts` 读起。注册接受后端与命令的状态目录相同或互为父子。本人关闭沙箱时可照常使用这类登录。
 
 ## 按运行类型分批启用沙箱，分开后端与命令登录（2026-11-28）
 

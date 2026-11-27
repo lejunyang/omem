@@ -174,6 +174,8 @@ Agent 执行受保护的命令时，审批人收到一张飞书卡片（目标�
 
 Linux 沙箱默认遮住 Chrome、Chromium、Edge、Firefox 的个人资料目录、飞书 CLI、SSH、Git、容器和常见云工具的登录文件，以及容器、systemd、系统 D-Bus 的常见宿主套接字。接口返回的 `defaults.loginPaths` 是内置清单。通过 `agents.ownSandbox.loginPaths` 可以替换整份清单，空数组表示取消内置清单。SSH agent 套接字和启用的凭据插件声明的状态目录单独遮住。飞书 `lark-cli` 通过同身份执行器读取、更新 `~/.lark-cli` 和 `~/.local/share/lark-cli`。
 
+Linux 后端和它启动的工具使用同一套挂载。若后端的状态路径与插件命令的登录目录重合，启动时会显示具体的后端、命令和目录。「能用就用」也会拒绝该组合。可选择其他后端，或让插件分开存放权限独立的凭据。同一令牌分开存放仍有相同的权限。
+
 分批启用时，将首批类型写入 `agents.ownSandbox.includeKinds`（例如 `["thread-summary", "memory-organize"]`）。非空时只选这些类型，新增类型与无类型的本人运行留在沙箱外。省略或设为 `[]` 时选全部类型。`excludeKinds` 的排除优先。可在 `/api/security/sandbox` 读取（GET）或保存（PUT）这两份清单。需要在沙箱外执行的本人运行类型可以加入 `agents.ownSandbox.excludeKinds`，默认空。排除的运行沿用后端按角色设置的权限。
 
 用户的 `~/.npmrc` 默认保留源、作用域源、代理和 CA 设置，只读挂回并去掉登录字段。`~/.pypirc` 保持隐藏。私有 npm 源需要身份时，可为 npm 或 pnpm 设置命令规则，让执行器使用本身份的完整配置。配置里引用的 `${NPM_TOKEN}` 或 `${NODE_AUTH_TOKEN}` 也会在执行器内取值。

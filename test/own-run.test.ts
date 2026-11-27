@@ -19,6 +19,21 @@ import { testApp } from "./helpers.ts";
 
 afterEach(() => { vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); });
 
+it("仅在本机本人运行按模式处理沙箱不可用", () => {
+  const app = testApp();
+  const profile = agentProfileSchema.parse({ id: "demo", transport: "acp", command: "fixture" });
+  setSandboxSupportForTests({ ok: false, reason: "不可用" });
+  try {
+    app.config.agents.ownSandbox.mode = "prefer";
+    expect(ownRun(app, profile, app.home, true).note).toContain("不可用");
+    app.config.agents.ownSandbox.mode = "require";
+    expect(() => ownRun(app, profile, app.home, true)).toThrow("不可用");
+    expect(ownRun(app, { ...profile, peer: { id: "device", agent: "demo" } }, app.home, true).box).toBeUndefined();
+    const member = { ...profile, ownAccount: { userId: "member" } };
+    expect(ownRun(app, member, app.home, true).box).toBeUndefined();
+  } finally { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
+});
+
 it("沙箱状态只给本人主目录与完全访问授权清单，规则查询走索引", async () => {
   const app=testApp();
   const home=mkdtempSync(join(tmpdir(),"sandbox-status-"));

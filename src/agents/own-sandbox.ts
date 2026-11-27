@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, posix } from "node:path";
 import type { Config } from "../core/config.ts";
-import { stripCommandLogin, installRoot, type SandboxNetwork, type SandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
+import { stripCommandLogin, installRoot, type SandboxNetwork, type WorkspaceMounts } from "./sandbox.ts";
 
 type Settings = Config["agents"]["ownSandbox"];
 export const under = (path: string, root: string) => path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
@@ -60,16 +60,6 @@ export type OwnMountConfig = {
 };
 type Program = { file: string; prefix: string[] };
 export type OwnSandbox = OwnMountConfig & { guarded?: string; plan: ReturnType<typeof ownMounts> };
-
-export function selectOwnSandbox(mode: Settings["mode"], local: boolean, memberAccount: boolean, probe: () => SandboxSupport) {
-  if (mode === "off" || memberAccount) return { active: false };
-  if (!local) return { active: false, reason: "云端或其他设备上的运行不在这台的沙箱里" };
-  const support = probe();
-  if (support.ok) return { active: true };
-  const reason = "这台机器不能隔离本次运行：" + support.reason;
-  if (mode === "require") throw new Error(reason);
-  return { active: false, reason };
-}
 
 /** Inputs are host-selected canonical paths. Extra hidden directories take precedence over every grant. */
 export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: WorkspaceMounts, artifacts?: string, program?: Program | null): WorkspaceMounts & { hide: string[]; masked?: string[]; work: WorkspaceMounts } {

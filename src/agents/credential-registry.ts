@@ -70,6 +70,22 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
   return { state: writable, install };
 }
 
+/** The backend starts its own tools in the same mount namespace. Check only when starting a sandbox. */
+export function checkBackendCommandState(backend: string, home: string, backendPaths: string[]) {
+  const paths = [...new Set(backendPaths.map(canonical))];
+  for (const method of credentialMethods()) {
+    for (const command of method.provides.commands) {
+      for (const rel of command.state ?? []) {
+        const login = canonical(join(home, rel));
+        const conflict = paths.find(path => under(path, login) || under(login, path));
+        if (conflict) throw new Error(
+          `后端 ${backend} 的状态路径 ${conflict} 与命令 ${command.name} 的登录路径 ~/${rel} 重合。后端和工具共用文件视图，已拒绝启动沙箱。请为后端和命令分别供给独立凭据并分开目录，或改用其他后端。`,
+        );
+      }
+    }
+  }
+}
+
 export const defaultSharingScope = (id: string) => id === OWNER ? "all" : "self";
 
 export function registerCredential(plugin: string, def: CredentialDef, settings = () => ({} as Record<string, string | number | boolean>), app?: App) {

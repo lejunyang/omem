@@ -186,6 +186,7 @@ export function accountRun(app: App, userId: string, entry: AccountEntry, native
     .map(canonical).filter(path => path.startsWith(home + sep));
   return {
     ...base,
+    backendState: spec.owns,
     masked: [...base.masked!, ...kubeconfig],
     env,
     ro: [...base.ro, ...(spec.mounts ?? []).map((m) => expandPath(m))],
