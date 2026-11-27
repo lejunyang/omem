@@ -106,7 +106,7 @@ describe("choosing the AI before a run", () => {
     const kept: AgentEvent[] = [];
     expect((await runRole(app, { role: "summarizer", spaceId: "personal", runId: null, task: "总结", onEvent: (e) => kept.push(e) })).profileId).toBe("slow");
     const rec = choices(kept)[0] as unknown as { text: string; choice: { outcome: string; options: string[]; left: string[] } };
-    expect(rec.text).toMatch(/^自动选 AI：按原来的设置用 slow · m1（决策模型/);
+    expect(rec.text).toMatch(/日常整理 · 范围：全部 AI\n自动选 AI：按原来的设置用 slow · m1（决策模型/);
     expect(rec.choice.outcome).toBe("kept");
     expect(rec.choice.left.join()).toContain("flaky · m1：刚出过故障");
     expect(bodies[0].questions[0].choices.map((c: { value: string }) => c.value)).toEqual(["keep", "c1"]);
@@ -287,3 +287,25 @@ describe("moving on when a backend breaks down", () => {
     }
   }, 60_000);
 });
+
+it("本人用 /agent 给当前会话点名时照用，并记录越过的规则", async () => {
+  const home = mkdtempSync(join(tmpdir(), "omem-named-policy-"));
+  writeFileSync(join(home, "config.json"), JSON.stringify({
+    agents: {
+      default: "normal", profiles: [fakeAgent("normal"), fakeAgent("named")],
+      policy: { classes: { chat: { deny: ["backend:named"] } } }
+    }
+  }));
+  const { app, server } = await boot(home, { port: 0, quiet: true, background: false });
+  try {
+    await receive(app, { channel: "web", chatId: "named", text: "/agent named", mergeMs: 0 });
+    const { runId } = await receive(app, { channel: "web", chatId: "named", text: "你好", mergeMs: 0 });
+    const result = await waitForRun(app, runId!);
+    expect(result.error).toBeNull();
+    expect(result.ai?.profile).toBe("named");
+    expect(runEvents(app, runId!).some(e => String((e.data as { text?: string }).text).includes("本人点名，越过了「对话 不用 backend:named」"))).toBe(true);
+  } finally {
+    releaseAll();
+    await server.close();
+  }
+}, 60000);

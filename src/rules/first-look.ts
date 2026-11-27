@@ -1,3 +1,4 @@
+import { groupPick, policyScope } from "../agents/ai-policy.ts";
 import type { App } from "../core/app.ts";
 import { one, run as sql } from "../core/db.ts";
 import { noteHandling } from "../core/handling.ts";
@@ -88,7 +89,7 @@ export async function firstLookAI(app: App): Promise<{ profileId: string; model?
   const { cachedProbe, effortsFor } = await import("../agents/probe.ts");
   const a = app.config.agents;
   if (a.roles["first-look"] || a.roleModels["first-look"]) return { profileId: profileFor(app, "first-look").id, why: "按设置里给“先看一眼”指定的 AI" };
-  const cheap = a.tiers.cheap;
+  const cheap = groupPick(app, "cheap", policyScope(app, "first-look"));
   if (cheap) {
     const efforts = effortsFor(cachedProbe(app, cheap.profile), cheap.model);
     const effort = efforts.includes("low") ? "low" : cheap.effort ?? (efforts.length ? lowest(efforts) : undefined);

@@ -1,3 +1,4 @@
+import { policyScope } from "../agents/ai-policy.ts";
 import type { App } from "../core/app.ts";
 import { getSpace } from "../core/spaces.ts";
 import { getThread } from "../agents/threads.ts";
@@ -222,7 +223,7 @@ export function persistRule(app: App, input: RuleSaveInput, by: "user" | "agent"
     if (a.type === "agent" || a.type === "watch") {
       if (a.type === "agent" && a.space) getSpace(app, a.space);
       // The backend must exist and offer the model and effort (checked against its last detection).
-      if (a.type === "agent" && a.ai) validateExecution(app, { ...a.ai, source: "user", reason: `规则「${r.name}」指定` });
+      if (a.type === "agent" && a.ai) validateExecution(app, { ...a.ai, source: "user", reason: `规则「${r.name}」指定` }, undefined, false, policyScope(app, "agent", undefined, a.spec === "assistant" ? undefined : readAgentSpec(app, a.spec)));
       if (a.type === "agent" && a.runAs) {
         if (a.runAs.includes(OWNER)) throw new HttpError(400, "以谁的身份运行只列成员：本人的身份不用列");
         for (const u of a.runAs) if (!findUser(app, u)) throw new HttpError(400, `没有这个成员：${u}`);

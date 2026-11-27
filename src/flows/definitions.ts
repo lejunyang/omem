@@ -1,3 +1,6 @@
+import { policyScope, groupItems } from "../agents/ai-policy.ts";
+import { findAgentSpec } from "../agents/specs.ts";
+import { validateExecution } from "../agents/execution.ts";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -20,7 +23,7 @@ const providerId = z.string().regex(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]{0,47}$/);
 const providerParams = z.record(z.string(), z.unknown()).optional();
 const slug = z.string({ error: "id 必须是文字" }).regex(/^[a-z0-9][a-z0-9-]{0,47}$/, "id 只能用小写字母、数字和连字符，最长 48 字符");
 const text = (max: number) => z.string({ error: "必须填写文字" }).trim().min(1, "文字不能为空").max(max, `文字不能超过 ${max} 字符`);
-export const tierSchema = z.enum(["strong", "standard", "cheap"]);
+export const tierSchema = z.string().min(1);
 const aiChoice = z.object({ profile: text(200), model: text(200).optional(), effort: text(100).optional() }).strict();
 export const budgetSchema = z.object({ minutes: z.number().positive("分钟预算必须大于 0").max(525600).optional(), fixes: z.number().int().min(0).max(20).optional(), trials: z.number().int().nonnegative("试验预算不能小于 0").max(100000).optional() }).strict();
 const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "时刻必须写成 HH:mm（00:00–23:59）");
@@ -162,7 +165,19 @@ export function parseFlowForSave(app: App, raw: string) {
   const next = parseFlow(raw, false);
   const path = file(app, next.id);
   const previous = existsSync(path) ? parseFlow(readFileSync(path, "utf8"), false) : undefined;
-  return parseFlow(raw, true, previous);
+  const parsed = parseFlow(raw, true, previous);
+  for (const stage of parsed.stages) {
+    const name = typeof stage.by === "object" && "run" in stage.by ? stage.by.run.agent : typeof stage.by === "object" && "agent" in stage.by ? stage.by.agent : undefined;
+    const scope = policyScope(app, "flow-stage", name, name ? findAgentSpec(app, name) ?? undefined : undefined);
+    for (const choice of [stage.ai, stage.escalate?.to]) {
+      if (!choice) continue;
+      if (typeof choice === "string" && !app.config.agents.groups.some(g => g.id === choice)) throw new HttpError(400, "不认识的 AI 组：" + choice);
+      if (!scope?.use.length && !scope?.deny.length) continue;
+      if (typeof choice === "string" && !groupItems(app, choice).length) continue;
+      validateExecution(app, { ...(typeof choice === "string" ? { profile: choice } : choice), source: "flow", reason: stage.name }, undefined, false, scope);
+    }
+  }
+  return parsed;
 }
 
 export function unavailableFlowReferences(f: FlowDefinition) {

@@ -61,3 +61,17 @@ it("accepts a search API on localhost or the LAN and only http(s)", () => {
   for (const ok of ["http://localhost:11434/v1", "http://127.0.0.1:8080/v1", "http://192.168.1.5/v1", "https://api.example.com/v1"]) expect(url(ok), ok).toBe(true);
   for (const bad of ["ftp://example.com/v1", "javascript:alert(1)", "api.example.com/v1"]) expect(url(bad), bad).toBe(false);
 });
+
+it("旧档位与任务候选原样迁入有序组，重新加载保留新组", () => {
+  const home = mkdtempSync(join(tmpdir(), "omem-ai-policy-"));
+  const ai = { profile: "example", model: "small", effort: "low" };
+  writeFileSync(join(home, "config.json"), JSON.stringify({ agents: { tiers: { cheap: ai }, routing: { candidates: [{ ...ai, when: "短任务" }] } } }));
+  const config = loadConfig(home);
+  expect(config.agents.groups.map(g => [g.id, g.items])).toEqual([
+    ["strong", []], ["standard", []], ["cheap", [ai]], ["candidates", [{ ...ai, note: "短任务" }]],
+  ]);
+  config.agents.groups[2].items.push({ profile: "second" });
+  saveConfig(config, home);
+  expect(loadConfig(home).agents.groups).toEqual(config.agents.groups);
+  expect(config.agents.policy).toEqual({ deny: [], classes: {} });
+});

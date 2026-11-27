@@ -1,3 +1,5 @@
+import { groupItems, policyScope, policyReason, scopedProfiles, pickOf, type PolicyScope } from "./ai-policy.ts";
+import { runClasses, type RunClass } from "./run-classes.ts";
 import { modelDisplayName } from "../core/ai-keys.ts";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
@@ -42,6 +44,12 @@ export type ChooseResult = { pick: AiChoice | null; order: AgentProfile[]; by: O
  * all — so the owner can see whether the setting does anything.
  */
 export type ChoiceRecord = {
+  class?: RunClass;
+  ai?: AiPick;
+  scope?: string[];
+  excluded?: string[];
+  deny?: string[];
+  said?: string[];
   scene: ChooseScene;
   /** chosen: another AI; kept: the chooser kept the run's own; skipped: choosing did not run; failed: the chooser failed. */
   outcome: "chosen" | "kept" | "skipped" | "failed";
@@ -69,18 +77,23 @@ export function candidateWhen(list: Candidate[], c: Candidate) {
   return backend ? `${backend}；${c.model}：${c.when}` : c.when;
 }
 
+export function routingCandidates(app: App): Candidate[] {
+  return groupItems(app, "candidates").map(({ note, ...p }) => ({ ...p, when: note ?? "" }));
+}
+
 /** The owner's candidates as profiles, installed and not left out (limit 0, quota spent, daily cap); why the others were left out goes to `left`. */
 export function candidateProfiles(app: App, left?: string[], userId?: string): (AgentProfile & { when: string })[] {
   const r = app.config.agents.routing;
   if (!r.automatic) return [];
   const usable = new Set(choosableProfiles(app).map((p) => p.id));
   const specs = allProfiles(app.config);
-  return r.candidates.flatMap((c) => {
+  const candidates = routingCandidates(app);
+  return candidates.flatMap((c) => {
     const p = specs.find((x) => x.id === c.profile);
     if (!p || !usable.has(p.id)) return [];
     // An empty model or effort in the settings means the backend's own (not a model named "").
     const model = c.model || undefined;
-    const out = { ...p, model: model ?? p.model, effort: c.effort || (model && model !== p.model ? undefined : p.effort), when: candidateWhen(r.candidates, c) };
+    const out = { ...p, model: model ?? p.model, effort: c.effort || (model && model !== p.model ? undefined : p.effort), when: candidateWhen(candidates, c) };
     const plan = userId ? memberAccountPlan(app, userId, out) : null;
     const reason = plan && plan.kind !== "ready" ? plan.reason : excludedReason(app, plan?.profile ?? out);
     if (!reason) return [out];
@@ -118,19 +131,36 @@ function ranked(keys: string[], probabilities: Record<string, number>, first?: s
  */
 export async function chooseAI(
   app: App,
-  o: { scene: ChooseScene; task: string; who: string; current: AgentProfile; accepts?: (profile: AgentProfile) => boolean; userId?: string; signal?: AbortSignal; onStatus?: (text: string) => void; onRecord?: (r: ChoiceRecord) => void },
+  o: { scope?: PolicyScope; runId?: string; scene: ChooseScene; task: string; who: string; current: AgentProfile; accepts?: (profile: AgentProfile) => boolean; userId?: string; signal?: AbortSignal; onStatus?: (text: string) => void; onRecord?: (r: ChoiceRecord) => void },
 ): Promise<ChooseResult | null> {
   const r = app.config.agents.routing;
   const current = label({ profile: o.current.id, model: o.current.model, effort: o.current.effort });
-  const record = (x: Omit<ChoiceRecord, "scene" | "current">) => o.onRecord?.({ scene: o.scene, current, ...x });
+  const scope = "scope" in o ? o.scope : policyScope(app, o.scene === "conversation" ? "ask" : undefined, o.who);
+  const rejected: string[] = [];
+  const accept = (p: AgentProfile) => {
+    const why = policyReason(scope, p);
+    if (why) rejected.push(label(pickOf(p)) + "（" + why + "）");
+    return !why && (!o.accepts || o.accepts(p));
+  };
+  const record = (x: Omit<ChoiceRecord, "scene" | "current">) => o.onRecord?.({ scene: o.scene, current, ai: pickOf(o.current), ...(scope && { class: scope.classId, scope: scope.groups.map(g => g.name), deny: scope.deny.map(d => d.selector), said: scope.said, excluded: [...new Set(rejected)] }), ...x });
   const skip = (reason: string) => {
     record({ outcome: "skipped", reason });
     return null;
   };
+  if (scope && (scope.use.length || scope.deny.length || scope.order === "fixed" || ["coding", "review"].includes(scope.classId))) {
+    const candidates = [o.current, ...candidateProfiles(app, undefined, o.userId)];
+    candidates.forEach(accept);
+    const order = scopedProfiles(app, scope, candidates, true).filter(accept);
+    if (!order.length) return skip("没有符合范围的 AI");
+    const reason = scope.use.length ? "按组的先后" : "按范围内的默认先后";
+    const pick = pickOf(order[0]);
+    record({ outcome: "chosen", ai: pick, picked: label(pick), by: "设置", reason, order: order.map(p => label(pickOf(p))) });
+    return { pick: { ...pick, reason }, order, reason, by: "static" };
+  }
   if (!r.automatic) return skip("设置里关了“允许按任务自动选择 AI”");
   const mode = r.choose[o.scene];
   if (mode === "off") return skip(`这类运行（${SCENE[o.scene]}）设成了“不选”`);
-  if (!r.candidates.length) return skip("任务选型里没有候选");
+  if (!routingCandidates(app).length) return skip("任务选型里没有候选");
   const useDecision = decisionReady(app);
   if (!useDecision && mode !== "always") return skip("没有配置决策模型（设置 → 后端与模型 → 决策），这类运行只在有决策模型时选");
   const same = (p: AiPick) => p.profile === o.current.id && (p.model ?? "") === (o.current.model ?? "") && (p.effort ?? "") === (o.current.effort ?? "");
@@ -193,7 +223,7 @@ export async function chooseAI(
   const nameOf = (k: string) => (opts[k].pick ? label(opts[k].pick!) : `原来的 ${current}`);
   const done = (order: string[], reason: string, by: OrderSource): ChooseResult => {
     const pick = opts[order[0]].pick;
-    record({ outcome: pick ? "chosen" : "kept", ...(pick ? { picked: label(pick) } : {}), by: by === "decision" ? "决策模型" : "通用模型", reason, options, order: order.map(nameOf), ...(left.length ? { left } : {}) });
+    record({ outcome: pick ? "chosen" : "kept", ...(pick ? { ai: pick, picked: label(pick) } : {}), by: by === "decision" ? "决策模型" : "通用模型", reason, options, order: order.map(nameOf), ...(left.length ? { left } : {}) });
     return { pick: pick ? { ...pick, reason } : null, order: order.map((k) => opts[k].profile), by, reason };
   };
   if (useDecision) {
@@ -242,13 +272,17 @@ const ORDER_TTL = 10 * 60_000;
 const orders = new WeakMap<App, Map<string, { at: number; keys: string[]; reason: string }>>();
 export async function fallbackOrder(
   app: App,
-  o: { scene: ChooseScene; who: string; from: AgentProfile; why: string; options: AgentProfile[]; userId?: string; signal?: AbortSignal; now?: number },
+  o: { scope?: PolicyScope; scene: ChooseScene; who: string; from: AgentProfile; why: string; options: AgentProfile[]; userId?: string; signal?: AbortSignal; now?: number },
 ): Promise<{ order: AgentProfile[]; by: OrderSource; reason: string }> {
   const r = app.config.agents.routing;
+  const scope = "scope" in o ? o.scope : policyScope(app, o.scene === "conversation" ? "ask" : undefined, o.who);
+  o = { ...o, options: o.options.filter(p => !policyReason(scope, p)) };
   const keep = (reason: string) => ({ order: o.options, by: "static" as const, reason });
+  if (scope?.order === "fixed" || scope?.use.length) return keep("按组的先后");
   if (o.options.length < 2) return keep("只剩一个可换的");
   const guidance = memberAi(app, o.userId).guidance;
-  if (!r.automatic || (!guidance && !r.guidance.trim() && !r.candidates.some((c) => c.when.trim()))) return keep("没有选型说明");
+  const candidates = routingCandidates(app);
+  if (!r.automatic || (!guidance && !r.guidance.trim() && !candidates.some((c) => c.when.trim()))) return keep("没有选型说明");
   if (!decisionReady(app)) return keep("没有配置决策模型");
   const names = o.options.map((p) => label({ profile: p.id, model: p.model, effort: p.effort }));
   const key = JSON.stringify([o.scene, o.who, names, o.userId, guidance]);
@@ -261,8 +295,8 @@ export async function fallbackOrder(
   const when = (p: AgentProfile) => {
     const fits = (c: Candidate) => c.profile === p.id && (!c.effort || c.effort === p.effort);
     // The model's own line before the backend's.
-    const c = r.candidates.find((c) => fits(c) && c.model === p.model) ?? r.candidates.find((c) => fits(c) && !c.model);
-    return c ? candidateWhen(r.candidates, c) : "（不在候选里：档案的其他后端或兜底）";
+    const c = candidates.find((c) => fits(c) && c.model === p.model) ?? candidates.find((c) => fits(c) && !c.model);
+    return c ? candidateWhen(candidates, c) : "（不在候选里：档案的其他后端或兜底）";
   };
   const opts = Object.fromEntries(o.options.map((p, i) => [`o${i}`, `${names[i]}：${when(p)}（${state(app, p)}）`]));
   const material = {
@@ -289,6 +323,15 @@ const SCENE: Record<ChooseScene, string> = { conversation: "和助手的对话",
 
 /** One line for the run page: what the choice was, or why there was none. */
 export function choiceText(r: ChoiceRecord): string {
+  if (r.class) {
+    const range = r.scope?.length ? r.scope.join("、") : "全部 AI";
+    const scope = range + (r.deny?.length ? "（不用 " + r.deny.join("、") + "）" : "") + (r.said?.length ? "，依据「" + r.said.at(-1) + "」" : "");
+    const next = r.order?.slice(1) ?? [];
+    const detail = !r.scope?.length && !r.excluded?.length ? choiceText({ ...r, class: undefined }) :
+      "用 " + (r.picked ?? r.current) + "（" + r.reason + "）" + (next.length ? "；用不了依次换 " + next.join("、") : "");
+    return [runClasses[r.class].name + " · 范围：" + scope, detail,
+    r.excluded?.length && "没进范围的：" + r.excluded.join("、")].filter(Boolean).join("\n");
+  }
   const then = r.order && r.order.length > 1 ? `；用不了时依次换 ${r.order.slice(1).join("、")}` : "";
   if (r.outcome === "chosen") return `自动选 AI：${r.picked}（${r.reason}）${then}`;
   if (r.outcome === "kept") return `自动选 AI：按原来的设置用 ${r.current}（${r.reason}）${then}`;

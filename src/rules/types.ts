@@ -164,6 +164,7 @@ export const actionSchema = z.discriminatedUnion("type", [
     ai: z
       .object({ profile: z.string().trim().min(1), model: z.string().trim().optional(), effort: z.string().trim().optional() })
       .transform((v) => ({ profile: v.profile, ...(v.model ? { model: v.model } : {}), ...(v.effort ? { effort: v.effort } : {}) }))
+      .or(z.string().min(1).transform(profile => ({ profile } as { profile: string; model?: string; effort?: string })))
       .optional(),
     /** The owner's 完全访问 for these runs: commands outside the backend's sandbox, no approvals. Only the owner sets it, on the rules page. */
     fullAccess: z.boolean().optional(),

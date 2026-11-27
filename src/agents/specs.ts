@@ -1,3 +1,5 @@
+import { validatePolicy } from "./ai-policy.ts";
+import { classPolicySchema, classSchema, specAiSchema } from "../core/ai-policy-schema.ts";
 import { toolSections } from "./instruction-sections.ts";
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -42,6 +44,8 @@ export const agentSpecSchema = z.object({
   description: z.string().min(1).describe("做什么、什么时候该用它"),
   status: z.enum(["active", "draft"]).default("active"),
   /** Backend agent profile id (codex, claude, …); empty = the assistant's. */
+  class: classSchema.optional(),
+  ai: specAiSchema.optional(),
   agent: z.string().optional(),
   model: z.string().optional(),
   effort: z.string().optional(),
@@ -148,6 +152,10 @@ export function saveAgentSpec(app: App, input: Partial<z.input<typeof agentSpecS
   const { prompt, ...rest } = input;
   const merged = agentSpecSchema.parse({ ...(prev ?? {}), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) });
   // `group:<id>` is expanded when the profile runs (tool-help.ts expandTools): a group that does not exist would silently give nothing.
+  if (merged.ai) {
+    const classId = merged.class ?? "agents";
+    validatePolicy(app, { deny: [], classes: { [classId]: classPolicySchema.parse(merged.ai) } });
+  }
   const noGroup = unknownGroups(merged.tools);
   if (noGroup.length) throw new HttpError(400, `没有这些工具分组：${noGroup.join("、")}；可用 ${TOOL_GROUPS.map((g) => `group:${g.id}`).join("、")}`);
   // An agent editing a profile (save_agent) keeps whatever the owner chose.

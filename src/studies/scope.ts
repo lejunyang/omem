@@ -1,3 +1,4 @@
+import { policyScope } from "../agents/ai-policy.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { getItem, type Item } from "../items/store.ts";
@@ -45,7 +46,9 @@ export function putScope(app: App, itemId: string, patch: { repos?: string[]; al
   }))) throw new HttpError(400, "远端必须已配置在范围内的每个仓库里");
   const fixAI = patch.fixAI ?? current.fixAI;
   // Checked like any AI the owner names: the backend exists and the model is one it offers.
-  for (const e of Object.values(fixExecutions({ fixAI }))) if (e) validateExecution(app, e, user);
+  const picks = fixExecutions({ fixAI });
+  validateExecution(app, picks.execution, user, false, policyScope(app, "code"));
+  validateExecution(app, picks.reviewExecution, user, false, policyScope(app, "review"));
   run(app.db, `insert into study_scopes(item_id,repos,allow_code,third_party,push_remote,push_prefix,fix_ai,updated_at) values(?,?,?,?,?,?,?,?)
     on conflict(item_id) do update set repos=excluded.repos,allow_code=excluded.allow_code,third_party=excluded.third_party,push_remote=excluded.push_remote,push_prefix=excluded.push_prefix,fix_ai=excluded.fix_ai,updated_at=excluded.updated_at`,
     itemId, JSON.stringify(repos), (patch.allowCode ?? current.allowCode) ? 1 : 0, (patch.thirdParty ?? current.thirdParty) ? 1 : 0, remote, prefix, JSON.stringify(fixAI), now());

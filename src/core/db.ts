@@ -2514,6 +2514,7 @@ export const migrations: readonly string[] = [
      where user_id!='owner' and state='logged-in' and refresh_at=expires_at-600000;
    update credential_holds set state='logged-in', refresh_at=0, error='正在重试续签：先前续签或供给失败'
      where user_id!='owner' and state='expired' and error='续签或供给失败，请重新授权';`,
+  `create index ai_choice_at on run_events(at) where type='status' and json_type(data,'$.choice')='object';`,
 ];
 
 export type Db = DatabaseSync;
