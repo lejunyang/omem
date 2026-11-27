@@ -309,12 +309,13 @@ const kindOptions = computed(() => [
         <UiSegmented v-model="statusFilter" class="status-filter" size="sm" aria-label="状态" :options="statusOptions" />
         <div v-if="filtersOpen" id="run-filters" class="more-filters">
           <UiSegmented v-model="scope" size="sm" aria-label="范围" :options="[{ value: 'space', label: '当前空间' }, { value: 'all', label: '所有空间' }]" />
-          <!-- Two columns of the same widths: 类型 · 后端 above, 触发人 · 触发方式 below. -->
+          <!-- 触发人 · 触发方式 side by side, then 后端 and 类型 across both columns: the picked types wrap
+               along the row and only grow downwards, so they never push the selects around. -->
           <div class="filter-grid">
-            <ChipPicker v-model="kindFilter" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
-            <UiSelect v-model="aiFilter" size="sm" width="100%" aria-label="后端或模型" :options="aiOptions" :search-at="8" :title="aiFilter ? `后端或模型：${aiFilter}` : '按运行用的 AI 后端筛选，后端下面缩进的是它用过的模型'" />
             <UiSelect v-model="byFilter" size="sm" width="100%" aria-label="触发人" :options="byOptions" :search-at="8" title="按触发人筛选：私聊或 @ 机器人提问的人、找你的人、成员、你自己" />
             <UiSelect v-model="viaFilter" size="sm" width="100%" aria-label="触发方式" :options="viaOptions" title="按触发方式筛选：找助手（@ 或私聊机器人）、有人找你……" />
+            <div class="wide"><UiSelect v-model="aiFilter" size="sm" width="100%" aria-label="后端或模型" :options="aiOptions" :search-at="8" :title="aiFilter ? `后端或模型：${aiFilter}` : '按运行用的 AI 后端筛选，后端下面缩进的是它用过的模型'" /></div>
+            <ChipPicker v-model="kindFilter" class="wide" :options="kindOptions" labels :add-label="kindFilter.length ? '＋ 类型' : '全部类型 ＋'" />
           </div>
           <UiCheckbox v-model="showQuiet" size="sm" class="small muted" title="后台任务（巡检、检查页面、筛选群、复盘…）没发现要处理的事时以 QUIET 结束，这些运行默认不显示；勾选后一起显示">含无事可报</UiCheckbox>
         </div>
@@ -516,6 +517,7 @@ const kindOptions = computed(() => [
 .head .status-filter { grid-area: status; justify-self: start; }
 .head .filter-grid { display: grid; grid-template-columns: 132px 124px; gap: 6px; align-items: start; }
 .head .filter-grid > * { min-width: 0; }
+.head .filter-grid > .wide { grid-column: 1 / -1; }
 .run .by { display: flex; align-items: center; gap: 4px; }
 .linkish { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .linkish:hover { text-decoration: underline; }
