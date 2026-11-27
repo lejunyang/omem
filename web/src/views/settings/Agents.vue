@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { get, post } from "../../api";
 import { state, toast } from "../../store";
 import { confirmDialog } from "../../lib/dialog";
 import { followAdapterJob, jobElapsed, lastLine, type AdapterJob } from "../../lib/adapter-job";
+import { aiPolicy, aiText, effectiveGroups, loadAiPolicy, proposalText } from "../../lib/ai-policy";
 import { network } from "../../lib/network-status";
 import { useBackends, useSettings, type Profile } from "./ctx";
 import AiBackend, { type AgentLoad } from "../../components/AiBackend.vue";
 import AiCapacity from "../../components/AiCapacity.vue";
-import AiDefaults from "../../components/AiDefaults.vue";
 import AiModels from "../../components/AiModels.vue";
 import AiNetworkConditions from "../../components/AiNetworkConditions.vue";
 import AiRouting from "../../components/AiRouting.vue";
+import AiRules from "../../components/AiRules.vue";
 import HelpText from "../../components/HelpText.vue";
 import Icon from "../../components/Icon.vue";
 import MonoLine from "../../components/MonoLine.vue";
@@ -22,25 +23,35 @@ import Skeleton from "../../components/Skeleton.vue";
 import UiSegmented from "../../components/UiSegmented.vue";
 import UiSelect from "../../components/UiSelect.vue";
 
-/** 设置 → 后端与模型: the backends, the default AI and tiers, task routing, capacity, fallbacks, adding a backend. */
-const { config, profiles, unavailableBackends, load, saveConfig } = useSettings();
+/** 设置 → 后端与模型: the backends, the default AI, task routing, capacity, fallbacks, adding a backend; the rules and AI groups (规则). */
+const { config, profiles, load, saveConfig } = useSettings();
 const { installedProfiles, profileOptions, modelOptionsFor, loadProbes } = useBackends(profiles);
 
-// Split by category: the agents (general), the models omem calls itself, and the API keys.
-type AiSection = "general" | "voice" | "decision" | "image" | "keys";
+// Split by category: the agents (general), the rules and groups, the models omem calls itself, and the API keys.
+type AiSection = "general" | "rules" | "voice" | "decision" | "image" | "keys";
 const AI_SECTIONS: { value: AiSection; label: string }[] = [
   { value: "general", label: "通用" },
+  { value: "rules", label: "规则" },
   { value: "voice", label: "语音" },
   { value: "decision", label: "决策" },
   { value: "image", label: "图片生成" },
   { value: "keys", label: "API key" },
 ];
+/** Cards of the 规则 sub-page: a link to one opens it (`tiers` is the old card the groups took over). */
+const RULE_CARDS = ["ai-say", "ai-rules", "ai-groups", "tiers"];
 const route = useRoute();
-const sectionOf = (v: unknown): AiSection => (AI_SECTIONS.some((s) => s.value === v) ? (v as AiSection) : "general");
-const aiSection = ref<AiSection>(sectionOf(route.query.section));
-watch(() => route.query.section, (v) => {
-  if (v !== undefined) aiSection.value = sectionOf(v);
+const router = useRouter();
+const sectionOf = (v: unknown, card?: unknown): AiSection => (RULE_CARDS.includes(String(card)) ? "rules" : AI_SECTIONS.some((s) => s.value === v) ? (v as AiSection) : "general");
+const aiSection = ref<AiSection>(sectionOf(route.query.section, route.query.card));
+watch(() => [route.query.section, route.query.card], ([v, card]) => {
+  if (v !== undefined || RULE_CARDS.includes(String(card))) aiSection.value = sectionOf(v, card);
 });
+// The sub-page is in the address, so a link to a card of another sub-page opens it from here too.
+watch(aiSection, (v) => {
+  if (route.query.section !== v && sectionOf(route.query.section, route.query.card) !== v) void router.replace({ query: { tab: "agents", section: v } });
+});
+// The backend blocks say which groups each backend is in.
+onMounted(() => void loadAiPolicy());
 
 watch(() => profiles.value.length, (n) => { if (n) void loadProbes(); }, { immediate: true });
 
@@ -80,14 +91,23 @@ async function saveQueueMinutes(v: string) {
   await saveConfig({ agents: { ...config.value.agents, queueTimeoutMinutes: Number(v) } }, `排队最多等待 ${v} 分钟`);
   void load();
 }
-const TIERS = [{ id: "strong", label: "好的" }, { id: "standard", label: "中档" }, { id: "cheap", label: "省的" }] as const;
-/** Which backend, model and effort a tier stands for; null leaves the tier unset (the role's own AI is used). */
-async function saveTier(id: (typeof TIERS)[number]["id"], v: { agent?: string; model?: string; effort?: string } | null) {
-  const tiers = { ...(config.value.agents.tiers ?? {}) };
-  if (!v?.agent) delete tiers[id];
-  else tiers[id] = { profile: v.agent, ...(v.model ? { model: v.model } : {}), ...(v.effort ? { effort: v.effort } : {}) };
-  await saveConfig({ agents: { ...config.value.agents, tiers } }, v?.agent ? `“${TIERS.find((t) => t.id === id)!.label}”这一档已设置` : "这一档不配了");
-  void load();
+/** The groups as runs see them now, one line each: the old three tiers are edited there (规则 → AI 组). */
+const groupLines = computed(() => {
+  const backends = aiPolicy.data?.backends ?? [];
+  return effectiveGroups(aiPolicy.data?.groups, config.value?.agents.tiers, config.value?.agents.routing?.candidates)
+    .map((g) => ({ id: g.id, name: g.name, text: g.items.length ? g.items.slice(0, 2).map((i) => aiText(i, backends)).join("、") + (g.items.length > 2 ? ` 等 ${g.items.length} 个` : "") : "空着" }));
+});
+const toGroups = () => void router.replace({ query: { tab: "agents", section: "rules", card: "ai-groups" } });
+// 总体偏好 with “别用 / 只用” in it: the server says so, and the sentence can go to the rules.
+const guidanceWarning = ref("");
+async function saveRouting(routing: Record<string, unknown>) {
+  const r = await saveConfig({ agents: { ...config.value.agents, routing } }, "已保存任务选型");
+  guidanceWarning.value = r?.guidanceWarning ?? "";
+}
+function toRule(text: string) {
+  proposalText.value = text.trim();
+  guidanceWarning.value = "";
+  void router.replace({ query: { tab: "agents", section: "rules", card: "ai-say" } });
 }
 function saveCapacity(v: { concurrency: number; interactiveConcurrency: number; perModel: number; quotaAvoidAbove: number; quotaPerDayBelow: number }) {
   const capacity = { ...config.value.agents.capacity, perModel: v.perModel, quotaAvoidAbove: v.quotaAvoidAbove, quotaPerDayBelow: v.quotaPerDayBelow };
@@ -220,9 +240,10 @@ async function saveEdit() {
   <Skeleton v-if="!config" :rows="6" />
   <div v-else class="stack">
     <UiSegmented v-model="aiSection" size="sm" aria-label="AI 分类" :options="AI_SECTIONS" />
-    <AiModels v-if="aiSection !== 'general'" :section="aiSection" :config="config" @save="(ai, note) => saveConfig({ ai }, note)" @changed="load" />
+    <AiRules v-if="aiSection === 'rules'" />
+    <AiModels v-else-if="aiSection !== 'general'" :section="aiSection" :config="config" @save="(ai, note) => saveConfig({ ai }, note)" @changed="load" />
     <template v-else>
-      <HelpText lead>理解、写作和编码交给 Agent：你已安装并登录的，或用 API key 生成的（在“API key”里添加）。同一个账号的 ACP 和命令行合在一起，点开设置默认模型、适合做什么、网络条件和用量。</HelpText>
+      <HelpText lead>理解、写作和编码交给 Agent：你已安装并登录的，或用 API key 生成的（在“API key”里添加）。同一个账号的 ACP 和命令行合在一起，点开设置默认模型、命令别名、网络条件和用量。</HelpText>
       <section id="set-backends" class="card set-card backends">
         <header class="set-card-head"><h3 class="set-title">后端</h3></header>
         <div class="set-card-body">
@@ -258,22 +279,23 @@ async function saveEdit() {
         </div>
       </section>
 
-      <SetCard id="set-tiers" title="默认 AI 与档位">
+      <SetCard id="set-default-ai" title="默认 AI 与组">
         <SetRow label="默认 Agent">
           <template #hint>各角色用哪个 AI 在 <RouterLink to="/agents">Agent 档案</RouterLink> 里设</template>
           <UiSelect v-model="defaultProfile" size="sm" width="240px" aria-label="默认 Agent" :options="[{ value: '', label: '自动（第一个已安装的）' }, ...profileOptions]" />
         </SetRow>
-        <div class="set-pad">
-          <HelpText>流程的阶段可以写用哪一档（<code>ai: strong</code> / <code>standard</code> / <code>cheap</code>），这里定每一档是哪个后端、模型和强度。要判断的事用好的，没人看着时反复去试的用省的。没配的档位用那个角色自己的 AI；流程指定了档位时不会换到别的后端，额度用完就等。</HelpText>
-          <div v-for="t in TIERS" :key="t.id" class="tier">
-            <div class="tier-name"><span>{{ t.label }}</span><code class="muted">{{ t.id }}</code></div>
-            <AiDefaults :model-value="{ agent: config.agents.tiers?.[t.id]?.profile, model: config.agents.tiers?.[t.id]?.model, effort: config.agents.tiers?.[t.id]?.effort }" :backends="profiles.map((b) => ({ ...b, name: b.name || b.id }))" :unavailable-backends="unavailableBackends" default-backend="" @update:model-value="(v) => saveTier(t.id, v)" />
-            <button v-if="config.agents.tiers?.[t.id]" class="btn ghost sm" @click="saveTier(t.id, null)">不配</button>
-          </div>
+        <SetRow label="AI 组" hint="流程阶段写的强 / 标准 / 省，和规则、档案用到的组">
+          <button class="btn ghost sm" @click="toGroups">在规则里改</button>
+        </SetRow>
+        <div v-if="groupLines.length" class="set-pad groups">
+          <template v-for="g in groupLines" :key="g.id">
+            <span class="group-name">{{ g.name }}</span>
+            <span class="group-items" :title="g.text">{{ g.text }}</span>
+          </template>
         </div>
       </SetCard>
 
-      <AiRouting :value="config.agents.routing" :backends="profiles" @save="(routing) => saveConfig({ agents: { ...config.agents, routing } }, '已保存任务选型')" />
+      <AiRouting :value="config.agents.routing" :backends="profiles" :warning="guidanceWarning" @save="saveRouting" @to-rule="toRule" />
       <AiCapacity :value="{ concurrency: config.concurrency, interactiveConcurrency: config.interactiveConcurrency, perModel: config.agents.capacity?.perModel ?? 3, quotaAvoidAbove: config.agents.capacity?.quotaAvoidAbove ?? 90, quotaPerDayBelow: config.agents.capacity?.quotaPerDayBelow ?? 0 }" @save="saveCapacity" />
 
       <SetCard id="set-fallback" title="排队与兜底">
@@ -379,21 +401,20 @@ async function saveEdit() {
 .edit-box {
   padding: 8px 0;
 }
-.tier {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 0;
-  border-top: 1px solid var(--line);
+.groups {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
+  font-size: 13px;
+}
+.group-name {
+  color: var(--ink-2);
+}
+.group-items {
   min-width: 0;
-}
-.tier-name {
-  display: grid;
-  font-size: 14px;
-}
-.tier-name code {
-  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
 }
 .fb-row {
   display: flex;
@@ -435,13 +456,6 @@ async function saveEdit() {
   flex: none;
 }
 @media (max-width: 640px) {
-  .tier {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  .tier > :nth-child(2) {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
   .miss-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }

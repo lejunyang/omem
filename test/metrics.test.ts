@@ -67,6 +67,18 @@ describe("metrics", () => {
     expect(await collectDue(app)).toHaveLength(0);
   });
 
+  it("waits a full period after a collection round that recorded nothing", async () => {
+    const app = testApp();
+    const m = defineMetric(app, { name: "新端有效活跃", query: "数仓：新端去重 UID（还没有读权限）", schedule: "daily" });
+    const start = Date.now();
+    expect(await collectDue(app, start)).toHaveLength(1);
+    // The round ends without a value: no permission yet.
+    run(app.db, "update runs set status = 'done' where kind = 'agent'");
+    expect(getMetric(app, m.id)).toMatchObject({ lastAt: null, lastAttemptAt: new Date(start).toISOString() });
+    for (const later of [15 * 60_000, 6 * 3600_000, 20 * 3600_000]) expect(await collectDue(app, start + later)).toEqual([]);
+    expect(await collectDue(app, start + 86400_000)).toHaveLength(1);
+  });
+
   it("configures a provider through the tool and HTTP and batches queries separately from agent runs", async () => {
     const app = testApp();
     const providerId = "sample:requests";

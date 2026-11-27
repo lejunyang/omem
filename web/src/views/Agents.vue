@@ -6,6 +6,8 @@ import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { del, get, post, put } from "../api";
 import McpServices, { type McpServer } from "../components/McpServices.vue";
 import AiDefaults, { type PluginBackend, type UnavailableBackend } from "../components/AiDefaults.vue";
+import AgentAiScope from "../components/AgentAiScope.vue";
+import { aiOld, aiPolicy, aiText, effectiveGroups, loadAiOld, loadAiPolicy, refText, scopeReason, selectorText } from "../lib/ai-policy";
 import VirtualList from "../components/VirtualList.vue";
 import ChipPicker from "../components/ChipPicker.vue";
 import Icon from "../components/Icon.vue";
@@ -31,7 +33,7 @@ import { state, toast } from "../store";
  * reset / merge when the source changes) and skills. A profile shows who it is (a form, or the
  * raw file), what it has learned and how it is evolving.
  */
-type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
+type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; class?: string; ai?: { use?: string[]; deny?: string[]; strict?: boolean }; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
 type RoleRow = Pick<RoleState, "name" | "description"> & Partial<Pick<RoleState, "customized" | "sourceChanged">>;
 /** `canEdit` / `canDelete`: what the reader may do with it (`GET /api/agents`, `GET /api/skills`); older servers send neither. */
@@ -144,11 +146,16 @@ async function saveSpec() {
     } else if (rawMode.value && !creating.value) await put(`/api/library-files/agent/${encodeURIComponent(name)}`, { raw: raw.value });
     else {
       const f = form.value;
+      // A category once written cannot be emptied (the file keeps its last value): the default one is written instead.
+      const savedClass = fullSpec.value?.class;
+      const cls = f.class && f.class !== "agents" ? f.class : savedClass ? "agents" : undefined;
       await put(`/api/agents/${encodeURIComponent(name)}`, {
         description: f.description.trim(),
         agent: f.agent ?? "",
         model: f.model?.trim() ?? "",
         effort: f.effort ?? "",
+        ...(cls ? { class: cls } : {}),
+        ai: f.ai ?? {},
         tools: f.tools,
         mcpServers: f.mcpServers,
         writes: f.writes,
@@ -241,6 +248,24 @@ async function setRoleFullAccess(on: boolean) {
     toast((e as Error).message, "error");
   }
 }
+/**
+ * The category a built-in role's runs count as and what its rule allows; its default AI is its first
+ * choice inside that, and a default the rule leaves out is said (those runs skip it).
+ */
+const roleScope = computed(() => {
+  const name = roleName.value, view = aiPolicy.data;
+  if (!name || !view || !owner.value) return null;
+  const id = Object.keys(view.classes).find((c) => view.classes[c].roles.includes(name));
+  if (!id) return null;
+  const c = view.classes[id], rule = view.policy.classes[id];
+  const groups = effectiveGroups(view.groups, aiOld.data?.tiers, aiOld.data?.candidates);
+  const scope = rule?.use.length ? rule.use.map((r) => refText(r, groups, view.backends)).join(" → ") : "全部 AI";
+  const deny = [...view.policy.deny.map((selector) => ({ selector, rule: "所有类别都" })), ...(rule?.deny ?? []).map((selector) => ({ selector, rule: c.name }))];
+  const out = deny.map((d) => selectorText(d.selector, view.backends));
+  const pick = { profile: roleAi.value.agent || options.value.globalDefaultBackend, ...(roleAi.value.model ? { model: roleAi.value.model } : {}), ...(roleAi.value.effort ? { effort: roleAi.value.effort } : {}) };
+  const why = pick.profile ? scopeReason(pick, { name: c.name, use: rule?.use ?? [], deny }, groups, view.backends, options.value.backends) : undefined;
+  return { line: `算“${c.name}”：能用 ${scope}${out.length ? `，不用 ${out.join("、")}` : ""}`, conflict: why ? `${aiText(pick, view.backends)}：${why}，运行时跳过它，换用范围里的` : "" };
+});
 const roleAiDirty = ref(false);
 function updateRoleAi(v: { agent?: string; model?: string; effort?: string }) {
   if (v.agent !== roleAi.value.agent) {
@@ -460,6 +485,8 @@ async function loadCurrent() {
 }
 onMounted(async () => {
   if (!hasPerm("agents.manage")) return;
+  // What the categories allow, beside each role's default AI and in a profile's “能用的 AI”.
+  if (owner.value) { void loadAiPolicy(); void loadAiOld(); }
   await Promise.all([loadLists(), get<Options>("/api/profile-options").then((o) => (options.value = o)).catch(() => {})]);
   await loadCurrent();
 });
@@ -582,7 +609,10 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <p v-if="form.agent || form.model || form.effort" class="muted small">默认 AI · {{ [form.agent, form.model, form.effort].filter(Boolean).join(" · ") }}</p>
           </template>
           <template v-else>
-            <AiDefaults :model-value="form" :backends="options.backends" :unavailable-backends="options.unavailableBackends" :default-backend="options.defaultBackend" @update:model-value="(v) => Object.assign(form, v)" @change="dirty = true" />
+            <div class="field">
+              <span>能用的 AI</span>
+              <AgentAiScope :value="form" :backends="options.backends" :unavailable-backends="options.unavailableBackends" :default-backend="options.defaultBackend" @change="(patch) => { Object.assign(form, patch); dirty = true; }" />
+            </div>
             <div class="grid">
               <div class="field">
                 <span>空间</span>
@@ -660,6 +690,8 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
           <p class="muted small">这个角色平时用的 AI。助手为某个任务临时换用时不改这里。</p>
           <p v-if="roleDetail.notice" class="small role-notice">{{ roleDetail.notice }}</p>
           <AiDefaults :model-value="roleAi" :backends="options.backends" :unavailable-backends="options.unavailableBackends" :default-backend="options.globalDefaultBackend" @update:model-value="updateRoleAi" />
+          <p v-if="roleScope" class="small muted">这个角色的运行{{ roleScope.line }}。<RouterLink :to="{ path: '/settings', query: { tab: 'agents', section: 'rules', card: 'ai-rules' } }">改类别规则</RouterLink></p>
+          <p v-if="roleScope?.conflict" class="small warn-text">{{ roleScope.conflict }}</p>
           <div v-if="!['guest', 'gatekeeper'].includes(roleName!)" class="field">
             <UiCheckbox :model-value="!!roleDetail.role.overlay?.fullAccess" switch @change="setRoleFullAccess">完全访问：命令不进沙箱、不经审批</UiCheckbox>
             <small class="muted">只对你自己的运行生效（你的对话、后台任务）；别的用户和访客不受影响，规则里的运行看规则上的开关。{{ accessHint(roleAi.agent || options.globalDefaultBackend) }}</small>

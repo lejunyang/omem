@@ -5,6 +5,7 @@ import { followAdapterJob, jobElapsed, lastLine, type AdapterJob } from "../lib/
 import { confirmDialog } from "../lib/dialog";
 import { detectProbe, modelName, probes } from "../lib/probes";
 import { networkBlock } from "../lib/network-status";
+import { aiPolicy, effectiveGroups } from "../lib/ai-policy";
 import { state, toast } from "../store";
 import { fmt } from "../lib/time";
 import Icon from "./Icon.vue";
@@ -15,8 +16,8 @@ import MachineLogin from "./MachineLogin.vue";
 
 /**
  * One backend in settings → AI: its ACP agent and CLI fallback together (one account, `source`), with
- * everything set per backend: the default model, what it suits (routing candidates), its network
- * condition, how many runs at once, and its account's plan quota.
+ * everything set per backend: the default model, its command words, the AI groups it is in (edited
+ * under 规则), its network condition, how many runs at once, and its account's plan quota.
  */
 export type Profile = { id: string; name?: string; transport: string; command: string; args: string[]; model?: string; effort?: string; installed: boolean; install?: string; networkReason?: string | null; peer?: unknown; source?: string; pluginBackend?: { plugin: string; name: string; available: boolean; reason?: string }; canProbe?: boolean };
 export type AgentLoad = {
@@ -26,7 +27,6 @@ export type AgentLoad = {
   quota?: { profile: string; name: string; source: string; plan: string | null; readAt: string | null; windows: { name: string; used: number; model?: string; resetsIn?: string; perDayLeft?: number }[]; avoid?: string; error?: string }[];
   daily?: { profile: string; model: string; perDay: number; used: number }[];
 };
-type Candidate = { profile: string; model?: string; effort?: string; when: string };
 type Limit = { profile: string; model?: string; max: number; perDay?: number };
 
 const props = defineProps<{ source: string; profiles: Profile[]; all: Profile[]; config: any; load: AgentLoad | null }>();
@@ -141,39 +141,42 @@ function saveEdit() {
   }
 }
 
-// ---- what it suits: one line for the backend, optional lines for its models (routing candidates)
+// ---- the AI groups it is in (and what each entry is for): edited in 规则 → AI 组, one place for them
 const routing = computed(() => props.config.agents.routing);
-const when = ref(""), modelWhens = ref<{ model: string; when: string }[]>([]);
-function savedRouting() {
-  const mine = (routing.value.candidates as Candidate[]).filter((c) => ids.value.includes(c.profile));
-  const byModel = new Map<string, string[]>();
-  for (const c of mine) if (c.model) byModel.set(c.model, [...(byModel.get(c.model) ?? []), c.when]);
-  return { when: mine.filter((c) => !c.model).map((c) => c.when).join("\n"), models: [...byModel].map(([model, w]) => ({ model, when: w.join("\n") })) };
+const groups = computed(() => effectiveGroups(aiPolicy.data?.groups, props.config.agents.tiers, routing.value?.candidates));
+const memberOf = computed(() => groups.value.flatMap((g) => g.items.flatMap((it, i) => (ids.value.includes(it.profile) ? [{ group: g.name, id: g.id, n: i + 1, model: it.model, effort: it.effort, note: it.note }] : []))));
+const memberLine = (m: (typeof memberOf.value)[number]) => [
+  `${m.group} · 第 ${m.n} 个`,
+  [m.model && modelName(probe.value, m.model), m.effort].filter(Boolean).join(" · "),
+].filter(Boolean).join("：");
+
+// ---- command words: `/别名 模型 强度` switches a conversation to it (src/agents/ai-spec.ts)
+type Named = Profile & { aliases?: string[] };
+/** The words it answers to by itself (its id, name, program, command…): shown, not edited. */
+const autoNames = computed(() => [...new Set(props.profiles.flatMap((p) => aiPolicy.data?.backends.find((b) => b.id === p.id)?.names ?? []))].filter((n) => !/\s/.test(n)));
+/** Aliases are kept on the ACP (first) profile: two forms of one account may not share a word. */
+const savedAliases = computed(() => (primary.value as Named).aliases ?? []);
+const aliases = ref<string[]>([]);
+const aliasInput = ref("");
+watch(() => JSON.stringify(savedAliases.value), () => { aliases.value = [...savedAliases.value]; }, { immediate: true });
+const aliasDirty = computed(() => JSON.stringify(aliases.value) !== JSON.stringify(savedAliases.value) || !!aliasInput.value.trim());
+function takeAlias() {
+  for (const word of aliasInput.value.split(/[\s,，、/]+/).map((w) => w.trim()).filter(Boolean)) {
+    const lower = word.toLowerCase();
+    if (autoNames.value.includes(lower)) toast(`“${word}”本来就能用`, "info");
+    else if (!aliases.value.some((a) => a.toLowerCase() === lower)) aliases.value.push(word);
+  }
+  aliasInput.value = "";
 }
-function resetRouting() {
-  const s = savedRouting();
-  when.value = s.when;
-  modelWhens.value = s.models;
+function aliasKey(e: KeyboardEvent) {
+  if (e.key === "Backspace" && !aliasInput.value && aliases.value.length) aliases.value.pop();
 }
-watch(() => JSON.stringify(routing.value.candidates), resetRouting, { immediate: true });
-const shape = (w: string, m: { model: string; when: string }[]) => JSON.stringify([w.trim(), m.map((x) => [x.model, x.when.trim()])]);
-const routingDirty = computed(() => {
-  const s = savedRouting();
-  return shape(when.value, modelWhens.value) !== shape(s.when, s.models);
-});
-const modelChoices = (current: string) => [...new Set([...(current ? [current] : []), ...models.value])].map((m) => ({ value: m, label: modelName(probe.value, m), hint: modelWhens.value.some((x) => x.model === m && x.model !== current) ? "已写过" : undefined, disabled: modelWhens.value.some((x) => x.model === m && x.model !== current) }));
-function addModelWhen() {
-  const free = models.value.find((m) => !modelWhens.value.some((x) => x.model === m));
-  modelWhens.value.push({ model: free ?? "", when: "" });
-}
-function saveRouting() {
-  if (modelWhens.value.some((m) => !m.model.trim() || !m.when.trim())) return toast("每个模型都要选好并写上适合什么", "error");
-  const own: Candidate[] = [
-    ...(when.value.trim() ? [{ profile: primary.value.id, when: when.value.trim() }] : []),
-    ...modelWhens.value.map((m) => ({ profile: primary.value.id, model: m.model.trim(), when: m.when.trim() })),
-  ];
-  const candidates = [...(routing.value.candidates as Candidate[]).filter((c) => !ids.value.includes(c.profile)), ...own];
-  emit("save", { routing: { ...routing.value, candidates } }, `已保存 ${name.value} 的说明`);
+function saveAliases() {
+  takeAlias();
+  const strip = ({ installed, install, networkReason, ...rest }: Profile) => rest;
+  const next = { ...strip(primary.value), aliases: aliases.value.length ? aliases.value : undefined };
+  const list = [...props.config.agents.profiles.filter((x: Profile) => x.id !== primary.value.id), next];
+  emit("save", { profiles: list }, aliases.value.length ? `${name.value} 的命令别名已保存` : `${name.value} 不用别名了`);
 }
 
 // ---- runs at once and the account's quota
@@ -238,7 +241,7 @@ async function useAgain(source: string) {
   emit("reload");
 }
 const when2 = (iso: string) => fmt(iso, { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-const chosen = computed(() => routing.value.automatic && (routing.value.candidates as Candidate[]).some((c) => ids.value.includes(c.profile)));
+const chosen = computed(() => routing.value.automatic && memberOf.value.some((m) => m.id === "candidates"));
 </script>
 
 <template>
@@ -311,20 +314,26 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
       </section>
 
       <section class="part">
-        <h4>适合做什么</h4>
-        <p class="small muted">交办和自动选 AI 时按这里挑后端。{{ routing.automatic ? "" : "任务选型的自动选择关着，现在不起作用。" }}</p>
-        <textarea v-model="when" class="input" rows="2" maxlength="2000" :placeholder="`${name} 适合什么任务，也可以写成本、速度、时段（如“工作日白天排队，晚上优先”）`" />
-        <div v-for="(m, i) in modelWhens" :key="i" class="mrow">
-          <UiSelect v-if="models.length" :model-value="m.model" size="sm" width="180px" aria-label="模型" :options="modelChoices(m.model)" @change="(v) => (m.model = v)" />
-          <input v-else v-model="m.model" class="input sm-input mono" placeholder="模型" aria-label="模型" />
-          <textarea v-model="m.when" class="input" rows="1" maxlength="2000" placeholder="这个模型和别的有什么不同、适合什么" />
-          <button class="btn ghost sm icon" aria-label="移除" @click="modelWhens.splice(i, 1)"><Icon name="x" :size="14" /></button>
+        <h4>命令别名</h4>
+        <p class="small muted">在对话里发 <code>/别名 模型 强度</code> 就换到这个后端（模型和强度可以不写）。</p>
+        <div class="tags" @click="($event.currentTarget as HTMLElement).querySelector('input')?.focus()">
+          <span v-for="n in autoNames" :key="`auto-${n}`" class="tag auto" title="自动有的，不用加">{{ n }}</span>
+          <span v-for="(a, i) in aliases" :key="a" class="tag">{{ a }}<button type="button" class="tag-x" :aria-label="`去掉别名 ${a}`" @click.stop="aliases.splice(i, 1)">×</button></span>
+          <input v-model="aliasInput" class="tag-input" maxlength="120" aria-label="加一个别名" placeholder="加别名，回车" @keydown.enter.prevent="takeAlias" @keydown="aliasKey" @blur="takeAlias" />
         </div>
         <div class="row wrap">
-          <button class="btn ghost sm" @click="addModelWhen"><Icon name="plus" :size="13" />给某个模型单独写</button>
-          <span class="spacer" />
-          <button class="btn primary sm" :disabled="!routingDirty" @click="saveRouting">保存</button>
+          <span class="small muted grow">灰色的是自动有的。别名不能和命令、组名或别的后端的名字重复。</span>
+          <button class="btn primary sm" :disabled="!aliasDirty" @click="saveAliases">保存</button>
         </div>
+      </section>
+
+      <section class="part">
+        <h4>在哪些 AI 组里</h4>
+        <ul v-if="memberOf.length" class="member small">
+          <li v-for="m in memberOf" :key="`${m.id}-${m.n}`"><span>{{ memberLine(m) }}</span><span v-if="m.note" class="muted">：{{ m.note }}</span></li>
+        </ul>
+        <p v-else class="small muted">还不在任何组里。</p>
+        <p class="small muted">组和每一项适合做什么在 <RouterLink :to="{ path: '/settings', query: { tab: 'agents', section: 'rules', card: 'ai-groups' } }">规则 → AI 组</RouterLink> 里改{{ routing.automatic ? "" : "；任务选型的自动选择关着，“候选”组现在不起作用" }}。</p>
       </section>
 
       <section class="part">
@@ -406,7 +415,20 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
 .job { display: grid; gap: 2px; padding-left: 2px; min-width: 0; }
 .job-out { display: block; }
 .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.mrow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.tags {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0;
+  padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); cursor: text;
+}
+.tag {
+  display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 2px 0 8px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--ink); font-family: var(--mono); font-size: 12px; white-space: nowrap; max-width: 100%;
+}
+.tag.auto { padding-right: 8px; background: var(--sunken); color: var(--muted); }
+.tag-x { width: 18px; height: 18px; border: 0; border-radius: 50%; background: none; color: var(--muted); font: inherit; line-height: 1; cursor: pointer; }
+.tag-x:hover { color: var(--ink); }
+.tag-input { flex: 1 1 120px; min-width: 80px; height: 24px; border: 0; outline: 0; background: none; color: inherit; font: inherit; font-size: 13px; }
+.grow { flex: 1 1 auto; min-width: 0; }
+.member { margin: 0; padding-left: 18px; display: grid; gap: 2px; color: var(--ink-2); }
 .num { width: 72px; margin: 0 4px; }
 .sm-input { width: 180px; }
 .lines { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; align-items: baseline; }
@@ -418,8 +440,6 @@ const chosen = computed(() => routing.value.automatic && (routing.value.candidat
   .be-meta { grid-column: 2; }
   .be-tags { grid-column: 2; justify-content: flex-start; }
   .be-body { padding: 0 12px 12px; }
-  .mrow { grid-template-columns: minmax(0, 1fr) auto; }
-  .mrow > :first-child { grid-column: 1 / -1; }
   .lines { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
 </style>

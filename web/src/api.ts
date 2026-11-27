@@ -180,6 +180,8 @@ export type Ask = {
   tool: string | null;
   status: "pending" | "answered" | "cancelled";
   answer: string | null;
+  /** Which option was picked (an answered question). */
+  choice?: number | null;
   approved: boolean | null;
   result: string | null;
   shownAt: string | null;

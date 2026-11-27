@@ -7,6 +7,8 @@ import HelpText from "./HelpText.vue";
 import { DECISION_SCENES, type DecisionScene, type DecisionReport } from "../../../src/core/decision-scenes";
 
 const props = defineProps<{ thresholds?: Partial<Record<DecisionScene, number>> }>();
+/** Fewer settled runs than this on one side of a category: its rate says little yet. */
+const ROUTE_ENOUGH = 10;
 const emit = defineEmits<{ save: [thresholds: Record<DecisionScene, number>] }>();
 const report = ref<DecisionReport | null>(null);
 const loading = ref(false);
@@ -60,6 +62,25 @@ function save(event: Event, scene: DecisionScene) {
         <div>{{ s.label }}：{{ s.suggestion }}</div>
         <div v-if="s.labelsEnabled" class="report-table"><table><caption>假设门槛变化（放行条数 / 已知漏看）</caption><thead><tr><th v-for="t in s.thresholds" :key="t.threshold">{{ t.threshold }}</th></tr></thead><tbody><tr><td v-for="t in s.thresholds" :key="t.threshold">{{ t.risky }} / {{ t.misses }}</td></tr></tbody></table></div>
       </div>
+      <div class="stack small routes">
+        <strong class="routes-title">按类别选 AI 的结果</strong>
+        <p class="hint">同一类运行，用决策模型排的先后和按规则的默认先后，各自正常完成的比例。样本够了再决定这一类要不要继续让模型挑（规则里的“自动挑 / 按先后”）。</p>
+        <div v-if="report.routes?.length" class="report-table">
+          <table>
+            <thead><tr><th>类别</th><th>采用模型的排序</th><th>按默认先后</th></tr></thead>
+            <tbody>
+              <tr v-for="r in report.routes" :key="r.classId">
+                <th scope="row">{{ r.name }}</th>
+                <td v-for="side in [r.decision, r.static]" :key="side === r.decision ? 'd' : 's'" :title="`完成 ${side.completed} / 有结果 ${side.settled}，还没结果 ${side.pending}`">
+                  <template v-if="side.settled >= ROUTE_ENOUGH">{{ Math.round((100 * side.completed) / side.settled) }}%<span class="muted">（{{ side.completed }}/{{ side.settled }}）</span></template>
+                  <span v-else class="muted">{{ side.settled || side.pending ? `样本还少（${side.settled} 条有结果）` : "没有" }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="muted">最近 30 天还没有按类别选 AI 的记录：有类别设成“自动挑”且范围里有两个以上的组时才会有。</p>
+      </div>
     </template>
   </div>
 </template>
@@ -70,4 +91,6 @@ function save(event: Event, scene: DecisionScene) {
 table { width: 100%; border-collapse: collapse; table-layout: fixed; overflow-wrap: anywhere; }
 th, td { padding: 6px 2px; border-bottom: 1px solid var(--line); text-align: left; }
 caption { text-align: left; color: var(--muted); padding-bottom: 4px; }
+.routes { padding-top: 8px; border-top: 1px solid var(--line); }
+.routes-title { font-size: 13px; font-weight: 600; }
 </style>

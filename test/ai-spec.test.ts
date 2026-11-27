@@ -186,5 +186,9 @@ it("设置保存别名和组名时检查命令、组与其他后端，拒绝后�
       expect(res.body).toContain("重名");
     }
     expect(parseAiSpec(app, "/谷歌").ai?.profile).toBe("antigravity");
+    // The settings page names backends in rules by these, and shows the words each answers to by itself.
+    const { backends } = (await server.inject({ method: "GET", url: "/api/ai/policy" })).json() as { backends: { id: string; program: string; names: string[] }[] };
+    expect(backends.find(b => b.id === "antigravity")).toMatchObject({ program: "antigravity", names: expect.arrayContaining(["agy", "gemini"]) });
+    expect(backends.find(b => b.id === "claude-cli")?.program).toBe("claude");
   } finally { await server.close(); }
 }, 60000);

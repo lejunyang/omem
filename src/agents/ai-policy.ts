@@ -6,7 +6,9 @@ import { HttpError } from "../core/util.ts";
 import { modelDisplayName } from "../core/ai-keys.ts";
 import { backendAvailable } from "./availability.ts";
 import { downReason, excluded, hasRoom } from "./capacity.ts";
-import { backendProgram, commonBackendAliases, defaultModelFamilies, normalizeProgram } from "./backend-names.ts";
+import { automaticNames, backendProgram, commonBackendAliases, defaultModelFamilies, normalizeProgram } from "./backend-names.ts";
+import { pairedIn } from "../core/peers.ts";
+import { cachedProbe } from "./probe.ts";
 import { modelFamily } from "./families.ts";
 import { quotaAvoid } from "./quota.ts";
 import { runClass, runClasses, type RunClass } from "./run-classes.ts";
@@ -151,6 +153,25 @@ export function validatePolicy(app: Pick<App, "config">, policy: Policy, groups 
     if (["key", "backend"].includes(type) && profiles.some(p => matchesSelector(sel, p))) continue;
     throw new HttpError(400, "不认识的排除规则：" + sel);
   }
+}
+/**
+ * The backends as the settings page and the profile form name them in rules: the program a `backend:`
+ * rule matches, the key a `key:` rule matches, the models known without asking the backend (its default,
+ * a key's models, the last detection), and the command words it answers to besides its own aliases.
+ */
+export function policyBackends(app: App) {
+  const devices = new Map(pairedIn(app.home).map(p => [p.id, p.back?.name]));
+  const keys = new Map(app.config.ai.providers.map(p => [p.id, p.name || p.id]));
+  return allProfiles(app.config).map(p => {
+    const probe = cachedProbe(app, p.id);
+    return {
+      id: p.id, name: p.name ?? p.id, program: backendProgram(p), installed: backendAvailable(p, app.home),
+      ...(p.keyRef ? { key: { id: p.keyRef, name: keys.get(p.keyRef) ?? p.keyRef } } : {}),
+      models: [...new Set([p.model, ...(p.keyModels ?? []), ...(probe?.models ?? [])].filter((m): m is string => !!m))],
+      ...(probe?.modelNames ? { modelNames: probe.modelNames } : {}),
+      names: automaticNames(p, p.peer && devices.get(p.peer.id)),
+    };
+  });
 }
 export function policyUsage(app: App) {
   const rows = all<{ kind: string; classId: string | null; pick: string | null; label: string; count: number }>(app.db, `select r.kind,

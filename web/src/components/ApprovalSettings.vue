@@ -6,7 +6,7 @@ import SetRow from "./SetRow.vue";
 import Skeleton from "./Skeleton.vue";
 import UiSegmented from "./UiSegmented.vue";
 import VirtualList from "./VirtualList.vue";
-const props = defineProps<{ config: any; save: (patch: Record<string, unknown>) => Promise<void> }>();
+const props = defineProps<{ config: any; save: (patch: Record<string, unknown>) => Promise<unknown> }>();
 type Tool = { name: string; description: string; always: boolean };
 const tools = ref<Tool[]>([]);
 const ladder = ref<{ tool: string; rung: string; streak: number }[]>([]);

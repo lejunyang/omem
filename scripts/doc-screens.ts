@@ -1700,6 +1700,56 @@ upsertItem(app, stale.id, { status: "expired", note: "自动过期：14 天没�
   createProposal(app, { target: "assistant", kind: "settings", title: "问退款单时能直接搜原件", reason: "最近三次问退款单，本人都补了一句“去对账单里查”", content: { add_tools: ["scan"] }, runId: null });
   createProposal(app, { target: "assistant", kind: "prompt", title: "回答退款金额前先对一遍分摊口径", reason: "两次把满减按整单比例算错，本人纠正过", content: { prompt: "回答退款金额前，先读《退款改造需求》里的分摊口径，再算。" }, runId: null });
 }
+// ---- AI rules and groups (shot settings-ai-rules): the backends' models as last detected, the groups
+// the rules name, three categories with rules (one from a sentence the owner said), a role whose own
+// default the rule leaves out, a week of picks per category and the route decisions' outcomes.
+{
+  const { saveProbe } = await import("../src/agents/probe.ts");
+  const { saveConfig } = await import("../src/core/config.ts");
+  const at = new Date().toISOString();
+  const daysAgo = (d: number, h = 0) => new Date(Date.now() - (d * 24 + h) * 3600_000).toISOString();
+  saveProbe(app, "codex", { at, agent: "Codex", models: ["gpt-6.2-sol", "gpt-6.2-astra"], efforts: ["low", "medium", "high", "xhigh"] });
+  saveProbe(app, "claude", { at, agent: "Claude Code", models: ["claude-opus-5-5", "claude-sonnet-5"], efforts: ["low", "medium", "high"] });
+  saveProbe(app, "antigravity", { at, agent: "Antigravity", models: ["gemini-4-neon", "gemini-4-hydrogen"], efforts: ["low", "high"] });
+  saveProbe(app, "traex", { at, agent: "TraeX", models: ["deepseek-v4.1-flash", "gpt-6.1-sol"], efforts: ["low", "medium", "high"] });
+  const sol = { profile: "codex", model: "gpt-6.2-sol" };
+  app.config.agents.groups = [
+    { id: "strong", name: "强", items: [{ profile: "claude", model: "claude-opus-5-5", effort: "high" }, { profile: "codex", model: "gpt-6.2-astra", effort: "xhigh" }] },
+    { id: "standard", name: "标准", items: [{ ...sol, effort: "medium" }] },
+    { id: "cheap", name: "省", items: [{ profile: "traex", model: "deepseek-v4.1-flash", effort: "medium", hours: "20:00-09:00", note: "晚上不排队" }, { ...sol, effort: "low" }] },
+    { id: "writing", name: "写作", items: [{ profile: "antigravity", model: "gemini-4-neon", effort: "high", note: "长文、整理成页" }, { profile: "claude", model: "claude-opus-5-5", effort: "high" }] },
+  ];
+  app.config.agents.tiers = {};
+  app.config.agents.routing.candidates = [];
+  app.config.agents.policy = { deny: [], classes: {
+    routine: { use: ["cheap", "standard"], deny: ["model:gemini", "backend:claude"], order: "fixed", strict: true, said: [{ text: "日常整理别用 gemini 和 Claude Code", at: daysAgo(2, 3) }] },
+    writing: { use: ["writing", "standard"], deny: [], order: "fixed", strict: false, said: [] },
+    supervise: { use: ["strong"], deny: [], order: "fixed", strict: true, said: [] },
+  } };
+  app.config.agents.roles = { ...app.config.agents.roles, summarizer: "antigravity" };
+  saveConfig(app.config, home);
+  const label = (ai: { profile: string; model?: string; effort?: string }) => [ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ");
+  const picks: [import("../src/agents/run-kinds.ts").RunKind, string, { profile: string; model?: string; effort?: string }, number][] = [
+    ["ingest", "routine", { profile: "traex", model: "deepseek-v4.1-flash", effort: "medium" }, 41],
+    ["ingest", "routine", { ...sol, effort: "low" }, 17],
+    ["thread-summary", "routine", { profile: "antigravity", model: "gemini-4-neon" }, 6],
+    ["triage", "watch", { ...sol, effort: "low" }, 33],
+    ["ask", "chat", { profile: "claude", model: "claude-opus-5-5", effort: "high" }, 12],
+    ["ask", "chat", { ...sol, effort: "medium" }, 9],
+    ["wiki-write", "writing", { profile: "antigravity", model: "gemini-4-neon", effort: "high" }, 8],
+    // A long task's supervisor: its category is on the choice (the run is the delegation it watches).
+    ["agent", "supervise", { profile: "codex", model: "gpt-6.2-astra", effort: "xhigh" }, 3],
+  ];
+  for (const [kind, cls, ai, n] of picks) {
+    const r = createRun(app, { kind, title: "按规则选 AI（演示）" });
+    // Quiet: they only stand for the week's picks, and stay out of the run lists of the other shots.
+    run(app.db, "update runs set status = 'done', quiet = 1, created_at = ?, started_at = ?, finished_at = ? where id = ?", daysAgo(1), daysAgo(1), daysAgo(1), r.id);
+    for (let i = 0; i < n; i++) addRunEvent(app, r.id, "status", { text: `按先后用 ${label(ai)}`, choice: { class: cls, ai, picked: label(ai) } });
+    // The route decisions of the categories that let the decision model pick: done or failed by the run.
+    if (cls === "chat") for (let i = 0; i < n; i++) run(app.db, `insert into decisions(id, at, scene, "by", question, material, probabilities, choice, taken, threshold, ref, route)
+      values (?, ?, 'route', 'demo:decision', '{}', '{}', '{}', 'standard', 'standard', 0.55, ?, ?)`, `dc_demo_${kind}_${ai.model}_${i}`, daysAgo(2), r.id, JSON.stringify({ classId: cls, by: i % 3 ? "decision" : "static", defaultOrder: ["standard", "strong"] }));
+  }
+}
 // The brief written before the card: its first paragraph.
 await attachBrief(app, `今天最要紧的是回小李：上月退款单的回放用哪个月的数据，他排在推送之后等你一句话。已备好：对账单里金额对不上的 3 单查过了，都是满减按整单比例分摊的旧路径（[差异表](#/items/${refundLine.id})）。`);
 await sendToday(app);
@@ -1725,6 +1775,11 @@ async function prepareNetworkDemo(page: Page) {
   const states = [{ id: networkDemo.id, status: "ready", reason: null, localReason: null, ip: "203.0.113.10", country: "JP", checkedAt, runs: [], ipv6: { status: "unknown", checkedAt, observations: [], source: "dns.google", reason: "有 IPv6 地址但连不上，这台机器多半没有 IPv6 出口，请求会走 IPv4" }, dns: { status: "inspected", checkedAt, servers: ["192.0.2.53"], source: "操作系统各接口 DNS 配置", warnings: [] } }];
   await page.route("**/api/agents/network-policies", (route) => route.fulfill({ json: { policies: [networkDemo], states, interfaces: [{ name: "demo-tun", addresses: ["192.0.2.1"] }] } }));
   await page.route("**/api/agents/*/probe", (route) => route.fulfill({ json: { at: new Date().toISOString(), agent: "演示 Agent", models: ["default"], efforts: [] } }));
+  // The machine taking the shot may or may not be logged in to these: shown as a fictional account that is.
+  await page.route("**/api/agents/*/machine-login**", (route) => route.request().method() !== "GET" ? route.fallback() : route.fulfill({ json: {
+    backend: decodeURIComponent(route.request().url().split("/api/agents/")[1].split("/")[0]), name: "演示 Agent", canLogin: true, canCheck: true, canAdd: true, extra: false,
+    state: "logged-in", user: "demo@example.com", checkedAt: new Date(Date.now() - 20 * 60_000).toISOString(), pending: null,
+  } }));
   await page.route("**/api/settings", async (route) => {
     const response = await route.fetch();
     const data = await response.json();
@@ -2182,6 +2237,19 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.locator("#set-cloud-tools .ct-backend").first().waitFor();
     await p.locator("#set-cloud-tools").scrollIntoViewIfNeeded();
     await p.waitForTimeout(300);
+  } },
+  // 设置 → 后端与模型 → 规则: the categories with 日常整理 opened (its rule came from a sentence; a role's
+  // own default AI is left out by it); the AI groups follow below the fold.
+  { name: "settings-ai-rules", path: "/settings?tab=agents&section=rules", prepare: async (p) => {
+    await p.locator(".cls-row", { hasText: "日常整理" }).click();
+    await p.locator("#set-ai-rules").scrollIntoViewIfNeeded();
+    await p.locator("#set-ai-rules").evaluate((el) => {
+      let s: HTMLElement | null = el.parentElement;
+      while (s && !(s.scrollHeight > s.clientHeight && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
+      el.scrollIntoView({ block: "start" });
+      (s ?? document.scrollingElement)?.scrollBy(0, -16);
+    });
+    await p.waitForTimeout(400);
   } },
   // 账号 → 凭据 as 小林 sees it: the example account soon to end (lent to everyone), the code host not logged
   // in yet, and below them the AI backend the example account supplies. Whether the example's install

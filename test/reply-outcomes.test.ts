@@ -7,6 +7,7 @@ import { setKey } from "../src/core/ai-keys.ts";
 import { one, run } from "../src/core/db.ts";
 import { resetDecisionCooldownForTests, setDecisionFetchForTests } from "../src/core/decision.ts";
 import { ensurePersonalSpace } from "../src/core/spaces.ts";
+import { createUser } from "../src/core/users.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import { recordLarkSent } from "../src/channels/lark-feedback.ts";
@@ -132,6 +133,22 @@ describe("回复发出后有没有用", () => {
     expect(await labelReplies(app)).toBe(1);
     expect(replyOutcome(app, loose)!.evidence).toEqual([expect.objectContaining({ who: "本人", text: "我自己查到了，是配置没开" })]);
     expect(replyLine(app, "oc_demo")).toBe("2 条里，解决了 2、被追问 0、被纠正 0、别人接手 0，其余看不出");
+  });
+
+  it("成员自己和机器人的会话：他说的话记在他名下，不算本人；飞书里带 @ 的同一句只算一次", async () => {
+    const app = setup();
+    createUser(app, { id: "xiaowang", name: "小王" });
+    const { runId, conversationId } = answered(app);
+    run(app.db, "update messages set meta = json_object('userId', 'xiaowang') where conversation_id = ? and role = 'user'", conversationId);
+    run(app.db, "update reply_outcomes set chat_id = 'oc_team' where run_id = ?", runId);
+    const id = addMessage(app, conversationId, "user", "换成日均的 UV", null, { userId: "xiaowang" });
+    run(app.db, "update messages set created_at = ? where id = ?", ago(7), id);
+    run(app.db, "insert into lark_messages(message_id, chat_id, sender_name, sender_kind, content, create_ms) values(?,?,?,?,?,?)", "om_dup", "oc_team", "小王", "user", "@某某的助理 换成日均的 UV", Date.now() - 7 * HOUR);
+    const asked = fake("followup");
+    expect(await labelReplies(app)).toBe(1);
+    expect(replyOutcome(app, runId)!.evidence).toEqual([expect.objectContaining({ who: "小王", text: "换成日均的 UV" })]);
+    expect(asked[0]).toContain("小王：换成日均的 UV");
+    expect(asked[0]).not.toContain("本人：");
   });
 
   it("没配决策模型：有后续的先等着，过一周记成没判", async () => {
