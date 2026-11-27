@@ -15,6 +15,7 @@ type WakeEvent = { note: string; drift: boolean };
 type Session = { id: string; stage: string; ai: LongTask["ai"] };
 type SupervisorState = {
   day?: string; wakes?: number; lastWake?: string; session?: Session; stage?: string;
+  pausedEvents?: WakeEvent[];
   briefAsk?: string; cardId?: string; lastPush?: string; pendingPush?: string; pendingHighlights?: string[]; lastReport?: string;
 };
 
@@ -34,13 +35,24 @@ const stopped = (task: LongTask) => ["paused", "ended", "done"].includes(task.st
 export function wakeSupervisor(app: App, id: string, note: string, options: { immediate?: boolean; drift?: boolean } = {}) {
   return withinTx(app.db, () => {
     const task = getLongTask(app, id);
-    if (stopped(task)) return;
+    if (task.status === "ended" || task.status === "done") return;
     const lane = laneOf(id);
     const event: WakeEvent = { note, drift: !!options.drift };
     const queued = queuedInLane(app, lane, "supervise");
+    const { pausedEvents } = supervisorState(app, id);
+    const queuedEvents = (queued?.input.events ?? []) as WakeEvent[];
+    const eventsByNote = new Map<string, WakeEvent>();
+    for (const e of [...queuedEvents, ...(pausedEvents ?? []), event]) {
+      if (!eventsByNote.has(e.note) || e.drift) eventsByNote.set(e.note, e);
+    }
+    const events = [...eventsByNote.values()];
+    if (task.status === "paused") {
+      // An already queued round may finish quietly during the pause. Keep its events too.
+      patchSupervisorState(app, id, { pausedEvents: events });
+      return;
+    }
+    if (pausedEvents) patchSupervisorState(app, id, { pausedEvents: null });
     if (queued) {
-      const events = (queued.input.events ?? []) as WakeEvent[];
-      if (!events.some(e => e.note === note)) events.push(event);
       updateQueuedRun(app, queued.id, {
         input: { ...queued.input, events },
         ...(options.immediate || options.drift ? { notBefore: now() } : {}),
@@ -49,7 +61,7 @@ export function wakeSupervisor(app: App, id: string, note: string, options: { im
     }
     return createRun(app, { kind: "supervise", title: truncate(`监工 · ${task.goal}`, 80), userId: task.userId,
       spaceId: task.spaceId, lane, input: { longTaskId: id, threadId: task.threadId, conversationId: task.threadId,
-        itemId: task.itemId, spaces: [task.spaceId], events: [event] },
+        itemId: task.itemId, spaces: [task.spaceId], events },
       notBefore: options.immediate || options.drift ? null : new Date(Date.now() + 5 * minute).toISOString(),
     }).id;
   });

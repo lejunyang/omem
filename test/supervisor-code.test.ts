@@ -8,10 +8,10 @@ import { answerAsk, createAsk, describeAnswer, getAsk, listAsks, waitForAnswer }
 import { codeChainFor, queueNextCodeRound, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { queueCodeWork } from "../src/agents/code-delegate.ts";
 import { addTask, getTask, recordCheckpoint, toDecide, updateTask } from "../src/agents/code-tasks.ts";
-import { confirmLongTaskBrief, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
+import { changeLongTask, confirmLongTaskBrief, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
 import { queueSupervisedAgent, onWorkRunSettled } from "../src/agents/agent-work.ts";
 import { checkTaskDuration } from "../src/agents/drift.ts";
-import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { createRun, getRun, queuedInLane, setRunOutput } from "../src/agents/runs.ts";
 import { answerWorkerQuestion, checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "../src/agents/supervisor-code.ts";
 import { testApp } from "./helpers.ts";
 import { submitSupervisorReport } from "../src/agents/supervisor-report.ts";
@@ -75,6 +75,38 @@ describe("监工的编码交办", () => {
       const queued = all<{ input: string }>(app.db, "select input from runs where kind='supervise' and status='queued'");
       expect(queued.some(r => r.input.includes("已用完 1 个工作轮次"))).toBe(true);
     }
+  });
+
+  it("工作者在暂停期间提问并结束，继续后的第一轮监工答复原问题", async () => {
+    const { app, lead, task } = await setup();
+    confirmLongTaskBrief(app, task.id, { doneWhen: ["说明已校对"] });
+    const lane = `supervisor:${task.id}`;
+    const scope = { spaces: ["personal"], denyTools: [], userId: "owner", lark: { chats: [] } };
+    const worker = queueSupervisedAgent(app, lead.id, { agent: "assistant", task: "核对说明", assistantScope: scope });
+    run(app.db, "update runs set status='done' where lane=?", lane);
+    run(app.db, "update runs set status='running' where id=?", worker);
+    await changeLongTask(app, task.id, { action: "pause" });
+    const ask = createWorkerAsk(app, { runId: worker, question: "是否保留原示例？" });
+    run(app.db, "update runs set status='done' where id=?", worker);
+    onWorkRunSettled(app, getRun(app, worker));
+    expect(queuedInLane(app, lane, "supervise")).toBeNull();
+
+    await changeLongTask(app, task.id, { action: "resume" });
+    const resumed = queuedInLane(app, lane, "supervise")!;
+    const events = resumed.input.events as { note: string }[];
+    expect(events.filter(e => e.note.includes(ask.id)).map(e => e.note)).toEqual([
+      `运行 ${worker} 的问题 ${ask.id}\n${ask.question}`,
+    ]);
+    expect(events.some(e => e.note.includes(`工作运行 ${worker} 已完成`))).toBe(true);
+    run(app.db, "update runs set status='running' where id=?", resumed.id);
+    await submitSupervisorReport(app, resumed.id, {
+      stage: "校对", status: "on-track", goalCheck: [], progress: { done: [], doing: [], next: [] },
+      decisions: [], actions: [], askOwner: [], answers: [{ questionId: ask.id, answer: "保留", basis: task.goal }],
+    });
+    expect(getAsk(app, ask.id)).toMatchObject({ status: "answered", answer: "保留", answeredBy: "supervisor" });
+    await changeLongTask(app, task.id, { action: "pause" });
+    await changeLongTask(app, task.id, { action: "resume" });
+    expect(JSON.stringify(queuedInLane(app, lane, "supervise")!.input.events)).not.toContain(ask.id);
   });
 
   it("本交办轮数已满或长任务超时，增加单次续轮额度也无法入队", async () => {
