@@ -8,6 +8,7 @@ import { itemFlow } from "../src/flows/store.ts";
 import { describeStage, parseFlow } from "../src/flows/definitions.ts";
 import { createRun, getRun, __testHandlers } from "../src/agents/runs.ts";
 import * as runner from "../src/agents/runner.ts";
+import { namedReviewAI } from "../src/agents/review.ts";
 import { itemProgress } from "../src/agents/progress.ts";
 import { eligibleFixes, fixModelStage } from "../src/studies/fixes.ts";
 import { findings, trials, recordFinding } from "../src/studies/store.ts";
@@ -227,7 +228,12 @@ describe("交给改：一次交多条，宿主逐条交办，评审通过即标�
     const first = findings(f.app, f.item.id).find((x) => x.id === a)!;
     expect(first.work_id).toBeTruthy(); expect(findings(f.app, f.item.id).find((x) => x.id === b)!.work_id).toBeNull();
     const w = getRun(f.app, first.work_id!);
-    expect(w.input).toMatchObject({ execution: { profile: "coder-ai", source: "user" }, reviewExecution: { profile: "coder-ai" } }); expect(String(w.input.task)).toContain("只改报错");
+    expect(w.input).toMatchObject({ studyFindingId: a, execution: { profile: "coder-ai", source: "user" }, reviewExecution: { profile: "coder-ai" } }); expect(String(w.input.task)).toContain("只改报错");
+    for (const part of ["pre-check", "review-lead", "review-business", "split"]) expect(namedReviewAI(w.input, part)).toEqual(w.input.reviewExecution);
+    const override = { profile: "other", reason: "指定主审", source: "user" as const };
+    expect(namedReviewAI({ ...w.input, roundReview: { ais: { "review-lead": override } } }, "review-lead")).toEqual(override);
+    expect(namedReviewAI({ reviewExecution: override }, "review-lead")).toBeUndefined();
+    expect(namedReviewAI({ studyFindingId: a }, "pre-check")).toBeUndefined();
     expect(studyView(f.app, f.item.id).findings.find((x) => x.id === b)!.queued).toBe(1);
     await tick(); expect(findings(f.app, f.item.id).find((x) => x.id === b)!.work_id).toBeNull();
     // Review passed: the finding is fixed and the next one is delegated.

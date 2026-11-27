@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
 import { getRun, setRunOutput, type Run } from "./runs.ts";
+import { namedReviewAI } from "./review.ts";
 
 /**
  * The check before coding (docs/v2/pre-check.md). Before the first round of a new delegation codes,
@@ -98,6 +99,7 @@ export async function runPreCheck(app: App, o: { run: Run; task: string; spaces:
   try {
     const res = await runRole(app, {
       role: "business-analyst",
+      execution: namedReviewAI(o.run.input, "pre-check"),
       spaceId: o.run.spaceId!,
       spaces: o.spaces,
       task: [

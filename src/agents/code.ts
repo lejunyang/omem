@@ -66,6 +66,7 @@ export function shell(command: string, cwd: string, signal: AbortSignal, timeout
 }
 
 export type CodeInput = {
+  studyFindingId?: string;
   execution?: Execution;
   /** Review tier the owner named, and checks to add (docs/v2/review.md). */
   reviewTier?: string;

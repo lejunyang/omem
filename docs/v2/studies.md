@@ -485,7 +485,7 @@ budget: { trials: 8, minutes: 240 }   # 这一段这一轮最多做多少
 - 本人在发现上点“交给改…”，或“挑几条交给改”（可以一键挑认可的），或在对话里让助手用 `queue_study_fixes`。接口 `POST /api/items/:id/study/fix-queue { findings, note? }`，`DELETE …/fix-queue/:finding` 撤回还没交办的。`study_findings.fix_queued_at` 是排队时间，`fix_note` 是带进交办的要求（交办失败时换成原因）。
 - `src/studies/fix-queue.ts` 的 `tickFixQueue`：同一个研究同时只有一个交办在做（不管是谁发起的），空了就按排队顺序取下一条，用 `queueFindingFix` 交办（起点是方向基线，任务里带发现正文和依据的试验），交办时清掉排队标记；交办不出去（范围关了改代码、没有仓库）就带着原因出队。交办或评审的运行结束时（`attachFixQueue` 听运行事件，宿主启动 5 秒后也扫一次）推进。
 - 评判就是交办自己的评审：交办到了“评审通过、等本人”（`stage.key = done`）就标已改好，依据写交办 id；没过的不标、留给本人，队列接着走。这对“去改”和“改”阶段发起的交办同样生效。本人在交办结束后又改过这条（比如“没改好，重新打开”）的不再自动标。“改”阶段在改动上重跑原来失败的试验仍然没过时，清掉已改好并写明原因。
-- 改代码和评审用哪个 AI：研究范围的 `fixAI: { coder?: { profile, model?, effort? }, reviewer?: … }`（`study_scopes.fix_ai`），保存时按本人指定的 AI 校验；交办带成 `execution` / `reviewExecution`（`source: user`）。不设就用 omem 默认的编码和评审。网页在“范围”里打开“可以改代码”后出现两个选择。
+- 改代码和评审用哪个 AI：研究范围的 `fixAI: { coder?: { profile, model?, effort? }, reviewer?: … }`（`study_scopes.fix_ai`），保存时按本人指定的 AI 校验。新交办的发现用 reviewer 做编码前检查、需求拆分、各项评审和主审；单独点名某项或另选模型复看时用点名的 AI。不设就用 omem 原有的选型。网页在“范围”里打开“可以改代码”后出现两个选择。
 - 一次一条是有意的：改动都从同一个基线出发、改同一批仓库，本人一条一条应用；并行会让后应用的冲突。
 
 验证：`test/study-fix.test.ts`“交给改”（顺序、范围的 AI、评审通过标改好、没过留给本人并出队、撤回、权限）。真实交办没跑过。

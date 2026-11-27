@@ -89,6 +89,8 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   const round = roundOf(run);
   const branchReview = isBranchReview(run);
   const root = (run.input as { continueFrom?: string }).continueFrom ?? run.id;
+  const original = root === run.id ? run : getRun(app, root);
+  const originalTask = String(original.input.task || input.task);
   const worktrees = worktreesOf(app, root);
   const results = out.repos ?? [];
   const multi = results.length > 1;
@@ -143,8 +145,9 @@ export async function reviewContext(app: App, codeRunId: string, note?: string, 
   // A re-review of a branch (rereview.ts): what changed since, what the earlier reviews left open.
   const rereview = branchReview ? (await import("./rereview.ts")).rereviewText(app, run.id, worktrees.map((w) => ({ space: w.space, path: workDirOf(w), tip: w.tip }))) : "";
   const brief = [
-    `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${input.task}`,
-    input.itemId ? await materialsBrief(app, input.itemId, owner, { since: root !== run.id ? getRun(app, root).createdAt : undefined })
+    `## ${branchReview ? "需求与评审要求" : "原始需求"}\n\n${originalTask}`,
+    input.task && input.task !== originalTask ? `## 本轮任务\n\n${input.task}` : "",
+    input.itemId ? await materialsBrief(app, input.itemId, owner, { since: root !== run.id ? original.createdAt : undefined })
       : input.contextItemId ? await materialsBrief(app, input.contextItemId, owner, { background: true }) : "",
     decisionsBrief(app, [...workRuns(app, run.id), ...(input.fromReview ? workRuns(app, input.fromReview) : [])]),
     note ? `## 本人确认评审计划时补充\n\n${note}` : "",

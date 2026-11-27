@@ -121,8 +121,8 @@ export const tierSchema = z.object({
  * single `reviewExecution`. Named choices win over rotation and the cross-family pick.
  */
 export const REVIEW_AI_PARTS = ["review-lead", "split"] as const;
-export function namedReviewAI(input: { reviewExecutions?: Record<string, import("./execution.ts").Execution>; reviewExecution?: import("./execution.ts").Execution; roundReview?: { ais?: Record<string, import("./execution.ts").Execution> } }, part: string) {
-  return input.roundReview?.ais?.[part] ?? input.reviewExecutions?.[part] ?? (part === "reviewer" || part === "split" ? input.reviewExecution : undefined);
+export function namedReviewAI(input: { studyFindingId?: string; reviewExecutions?: Record<string, import("./execution.ts").Execution>; reviewExecution?: import("./execution.ts").Execution; roundReview?: { ais?: Record<string, import("./execution.ts").Execution> } }, part: string) {
+  return input.roundReview?.ais?.[part] ?? input.reviewExecutions?.[part] ?? (input.studyFindingId || part === "reviewer" || part === "split" ? input.reviewExecution : undefined);
 }
 
 /** The models review rounds rotate through (tiers with `rotateModels`). */

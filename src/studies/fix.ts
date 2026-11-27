@@ -57,10 +57,10 @@ export async function queueFindingFix(app: App, itemId: string, finding: string,
     `## 依据的试验\n${evidence.map((t) => `${t.id}\n对象：${t.object}\n检查：${t.check}\n结果：${t.result}\n摘要：${t.summary}\n证据引用：${t.evidence}`).join("\n\n")}`,
     note?.trim() ? `## 本人的要求\n${note.trim()}` : "",
     fallbackNote,
-    "改动只留在这次交办的分支上。\n改完照复现办法验证，交代改之前和改之后各是什么结果。\n不合并、不推送。",
+    "照这条发现的复现办法验收，交代改前和改后的结果。只处理挡住验收的问题和本次引入的回归；无关旧问题或可选改进另记，不作为续轮理由。\n改动只留在这次交办的分支上，不合并、不推送。",
   ].filter(Boolean).join("\n\n");
   // Called under studyOperation's per-item lock, so two clicks cannot create two works.
-  const r = queueCodeWork(app, { spaceId: item.spaceId, userId: item.userId, title: f.title.slice(0, 80), input: { itemId, repos: scope.repos.map((r) => r.id), task, startCommits, ...fixExecutions(scope) } });
+  const r = queueCodeWork(app, { spaceId: item.spaceId, userId: item.userId, title: f.title.slice(0, 80), input: { itemId, studyFindingId: f.id, repos: scope.repos.map((r) => r.id), task, startCommits, ...fixExecutions(scope) } });
   run(app.db, "update study_findings set work_id=?,state='confirmed',updated_at=? where id=?", r.id, now(), f.id);
   return findingFix(app, { ...f, work_id: r.id });
 }

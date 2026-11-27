@@ -140,6 +140,7 @@ export function queueNextCodeRound(
         roundReview: opts.roundReview ?? input.roundReview,
         readSpaces: input.readSpaces,
         itemId: input.itemId,
+        studyFindingId: current.input.studyFindingId,
         contextItemId: input.contextItemId,
         fromReview: input.fromReview,
         // A task-driven round's brief is its tasks, not `task`: the notes go along on their own.

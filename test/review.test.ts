@@ -9,7 +9,7 @@ import { __testHandlers, addRunEvent, createRun, getRun, setRunOutput } from "..
 import { saveAgentSpec } from "../src/agents/specs.ts";
 import { createThread } from "../src/agents/threads.ts";
 import { codeChainFor, type CodeChain } from "../src/agents/code-chain.ts";
-import { setReviewRetryDelayForTests } from "../src/agents/review-chain.ts";
+import { reviewContext, setReviewRetryDelayForTests } from "../src/agents/review-chain.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { all, run } from "../src/core/db.ts";
@@ -20,6 +20,15 @@ import { testApp } from "./helpers.ts";
 const metrics = (m: Partial<ReviewMetrics> = {}): ReviewMetrics => ({ "change.lines": 10, "change.codeLines": 10, "change.files": 1, "change.repos": 1, "change.paths": ["src/a.ts"], "change.checksPassed": true, "task.text": "改一下", ...m });
 
 describe("review tiers and checks", () => {
+  it("续轮评审分别拿到原始验收要求和本轮任务，首轮不重复", async () => {
+    const app = testApp();
+    try {
+      const root = createRun(app, { kind: "code", title: "改报错", input: { task: "缺参数应返回非零退出码" } });
+      const next = createRun(app, { kind: "code", title: "补回归", input: { continueFrom: root.id, round: 2, task: "修改项 T2" } });
+      expect((await reviewContext(app, root.id)).brief).not.toContain("## 本轮任务");
+      expect((await reviewContext(app, next.id)).brief).toContain("## 原始需求\n\n缺参数应返回非零退出码\n\n## 本轮任务\n\n修改项 T2");
+    } finally { app.db.close(); }
+  });
   it("picks the first matching tier, honours a named tier, never goes lighter, and adds checks by their own condition", () => {
     const app = testApp();
     saveAgentSpec(app, { name: "security-review", description: "只看鉴权和越权", prompt: "评审", tools: ["search"] }, "user");
