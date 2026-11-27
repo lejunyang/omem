@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 决策等不到 API key 分钟额度时的处理（2026-11-28）
+
+- 从 `src/core/decision.ts` 读起。所有决策模型都来不及等额度时，按决策失败处理。配置 `fallback: general` 时改问通用模型，配置 `fallback: none` 时按否处理。等待超时仍不计入提供方故障，设置页试用会显示等待超过时限。
+
 ## API key 的分钟限额（2026-11-28）
 
 - 在 `ai.providers[].limits` 设置 RPM / TPM，可按模型名或接入点 ID 覆盖。同一 key 和请求模型共用滚动 60 秒窗口，按到达顺序排队，收到用量后修正预占。实现从 `src/core/ai-rate-limit.ts`、`ai-request.ts` 读起。

@@ -132,8 +132,7 @@ async function decideQuestions(app: App, material: Material, questions: Question
       if (!(e instanceof DecisionRefused)) down.set(choiceKey(s), pauseAfter(app, s, e));
     }
   }
-  if (last) throw last;
-  return null;
+  throw last ?? new AiRateLimitWaitExpired();
 }
 
 function pauseAfter(app: App, s: Usable, e: unknown) {
@@ -275,7 +274,6 @@ export async function judgeYesNo(
   try {
     const r = await decide(app, o.material, { type: "yesno", instructions: o.instructions, yes: o.yes, no: o.no }, { signal: o.signal });
     if (r) return { yes: r.choice === "yes", reason: describeDecision(r), by: "decision" };
-    if (app.config.ai.decision.fallback === "none") return null;
   } catch (e) {
     const why = (e as Error).message.slice(0, 200);
     if (app.config.ai.decision.fallback === "general") return viaGeneral(`决策模型出错（${why}），改用通用模型：`);

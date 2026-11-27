@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { categoryStatus, decisionStatuses, setKey } from "../src/core/ai-keys.ts";
-import { AI_MINUTE, aiRateLimit, aiRateLimitStats } from "../src/core/ai-rate-limit.ts";
+import { AI_MINUTE, AiRateLimitWaitExpired, aiRateLimit, aiRateLimitStats } from "../src/core/ai-rate-limit.ts";
 import { relayStats } from "../src/core/ai-relay.ts";
-import { decide, decisionOrder, resetDecisionCooldownForTests, setDecisionFetchForTests } from "../src/core/decision.ts";
+import { decide, decisionOrder, judgeYesNo, resetDecisionCooldownForTests, setDecisionFetchForTests } from "../src/core/decision.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
@@ -92,7 +92,28 @@ it("skips a local minute wait beyond the per-provider budget without recording a
   expect(asked).toEqual(["a", "b"]);
   expect(decisionOrder(app).map(s => s.provider)).toEqual(["a", "b"]);
   expect(relayStats(app, p.id)).toBeNull();
-  expect(await decide(app, "材料", q, { only: { provider: "a", model: "m-a" }, timeoutMs: 100 })).toBeNull();
+  await expect(decide(app, "材料", q, { only: { provider: "a", model: "m-a" }, timeoutMs: 100 })).rejects.toBeInstanceOf(AiRateLimitWaitExpired);
+});
+
+it.each(["none", "general"] as const)("uses the %s fallback when all decision models run out of time to wait for quota", async (fallback) => {
+  const app = setup();
+  app.config.ai.decision.fallback = fallback;
+  const asked = answers({});
+  const general = vi.fn(async () => ({ yes: true, reason: "通用模型的判断" }));
+  for (const s of decisionOrder(app)) {
+    const provider = app.config.ai.providers.find((p) => p.id === s.provider)!;
+    provider.limits = { rpm: 1 };
+    await aiRateLimit(app, provider, s.model)!.acquire(1, { signal: new AbortController().signal });
+  }
+  const result = await judgeYesNo(app, { preferDecision: true, instructions: q.instructions, material: "材料", general });
+  expect(result).toEqual(fallback === "none"
+    ? { yes: false, by: "decision", reason: "决策模型出错（API key 限额的等待时间超过本次调用时限），按否处理" }
+    : { yes: true, by: "general", reason: "决策模型出错（API key 限额的等待时间超过本次调用时限），改用通用模型：通用模型的判断" });
+  expect(general).toHaveBeenCalledTimes(fallback === "none" ? 0 : 1);
+  expect(asked).toEqual([]);
+  expect(decisionOrder(app).map((s) => s.provider)).toEqual(["a", "b"]);
+  expect(relayStats(app, "a")).toBeNull();
+  expect(relayStats(app, "b")).toBeNull();
 });
 
 it("waits when a decision can make its deadline and skips an upstream minute refusal when it cannot", async () => {
@@ -116,7 +137,7 @@ it("waits when a decision can make its deadline and skips an upstream minute ref
 
   await vi.advanceTimersByTimeAsync(AI_MINUTE);
   setDecisionFetchForTests(async () => Response.json({ error: { code: "rate_limit_exceeded", message: "Exceeded tokens per minute" } }, { status: 429 }));
-  expect(await decide(app, "材料", q, { only, timeoutMs: 2000 })).toBeNull();
+  await expect(decide(app, "材料", q, { only, timeoutMs: 2000 })).rejects.toBeInstanceOf(AiRateLimitWaitExpired);
   expect(relayStats(app, p.id)).toBeNull();
   expect(decisionOrder(app).map(s => s.provider)).toEqual(["a", "b"]);
 });

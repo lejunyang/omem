@@ -11,7 +11,7 @@ describe("PUT /api/settings", () => {
     const server = await startServer(app, { port: 0, quiet: true });
     try {
       const decision = { ...app.config.ai.decision, provider: "first", model: "m-first", others: [{ provider: "second", model: "m-second" }], pick: "random" };
-      const providers = ["first", "second"].map((id) => ({ id, kind: "typesafe", name: id, backends: [] }));
+      const providers = ["first", "second"].map((id) => ({ id, kind: "typesafe", name: id, backends: [], limits: { rpm: 1 } }));
       setKey(app.home, "second", "test-key");
       const saved = await server.inject({ method: "PUT", url: "/api/settings", payload: { ai: { ...app.config.ai, decision, providers } } });
       expect(saved.statusCode).toBe(200);
@@ -23,9 +23,14 @@ describe("PUT /api/settings", () => {
         expect(JSON.parse(String(init?.body)).model).toBe("m-second");
         return Response.json({ answers: { q: { type: "noul", noul: 0.9 } } });
       }) as typeof fetch);
-      const trial = await server.inject({ method: "POST", url: "/api/ai/decision/test", payload: { provider: "second", model: "m-second", material: "示例材料", question: "是否继续？" } });
+      const tryDecision = (provider: string, model: string) => server.inject({ method: "POST", url: "/api/ai/decision/test", payload: { provider, model, material: "示例材料", question: "是否继续？" } });
+      const trial = await tryDecision("second", "m-second");
       expect(trial.statusCode).toBe(200);
       expect(trial.json().by).toContain("m-second");
+      const waiting = await tryDecision("second", "m-second");
+      expect(waiting.statusCode).toBe(502);
+      expect(waiting.body).toContain("API key 限额的等待时间超过本次调用时限");
+      expect((await tryDecision("first", "m-first")).statusCode).toBe(400);
       expect(app.config.ai.decision).toEqual(decision);
     } finally {
       setDecisionFetchForTests(null);

@@ -75,7 +75,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 生成的 Agent 后端经中转共用队列。决策、图片生成、HTTP 音频转写、引用 `keyRef` 的向量和重排、API key 检查里的单 token 试调用，也走这个队列。查询模型、验证 key、发现格式地址和创建语音连接凭证无需推理。WebRTC 语音会话建立后的推理由浏览器和提供方直接交换，omem 不在数据路径中。环境变量直连、自定义后端、没有启动中转的一次性命令以及其他 omem 进程各走自己的连接。
 
-单模型的决策调用默认 30 秒，有备用模型时每家最多 15 秒。等待会用完本次时限时跳过该提供方，下次仍按原顺序尝试。直连服务各自沿用原有调用时限。Agent 等待时中转保持同一 HTTP 请求，保留最终状态码。运行事件会写“按 API key 的限额等了 N 秒”。Codex 源码的流空闲默认值是 [300 秒](https://github.com/openai/codex/blob/main/codex-rs/model-provider-info/src/lib.rs)。Claude Code 的 [API 请求默认 600 秒](https://code.claude.com/docs/en/env-vars#look-up-the-variables-claude-code-reads)，[首字节和非流式时限](https://code.claude.com/docs/en/errors#no-response-from-api)还随版本和连接方式变化。默认时限给单次分钟等待留有余量。连续多批等待、上游生成时间和自行调短的客户端时限都会影响一次 HTTP 请求能等多久。
+单模型的决策调用默认 30 秒，有备用模型时每家最多 15 秒。等待会用完本次时限时跳过该提供方，下次仍按原顺序尝试。全部因等待时限跳过时，是否判断按失败处理，`fallback: general` 转通用模型，`fallback: none` 按否处理。直连服务各自沿用原有调用时限。Agent 等待时中转保持同一 HTTP 请求，保留最终状态码。运行事件会写“按 API key 的限额等了 N 秒”。Codex 源码的流空闲默认值是 [300 秒](https://github.com/openai/codex/blob/main/codex-rs/model-provider-info/src/lib.rs)。Claude Code 的 [API 请求默认 600 秒](https://code.claude.com/docs/en/env-vars#look-up-the-variables-claude-code-reads)，[首字节和非流式时限](https://code.claude.com/docs/en/errors#no-response-from-api)还随版本和连接方式变化。默认时限给单次分钟等待留有余量。连续多批等待、上游生成时间和自行调短的客户端时限都会影响一次 HTTP 请求能等多久。
 
 本人的 `GET /api/ai` 在每个 `providers[]` 返回 `limits` 和 `rateLimit`。后者是 `null`（未配置时），或包含以下字段：
 
