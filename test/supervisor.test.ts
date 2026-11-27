@@ -138,6 +138,7 @@ describe("长任务监工", () => {
   it("群话题直接补充立即唤醒监工，命令、HTTP 和按钮操作同一任务，附件单独采集", async () => {
     const app = testApp();
     app.config.lark.ownerOpenId = "ou_owner";
+    app.config.agents.profiles.push({ id: "claude", model: "opus", transport: "acp", command: process.execPath, args: ["test/fake-acp-agent.ts"], env: {}, idleTimeoutMs: 60000 });
     createSpace(app, { id: "docs", name: "项目文档" });
     createUser(app, { id: "editor", name: "编辑" });
     linkIdentity(app, "editor", "lark", "ou_editor");
@@ -196,6 +197,7 @@ describe("长任务监工", () => {
         await send("这条群消息不属于任务", address);
       }
       await send("/whoami");
+      await send("/codex");
       expect(reply).toHaveBeenCalledTimes(repliesBefore);
       expect(getLongTask(app, task.id).supplements).toEqual([]);
       addMember(app, "docs", "editor", "reader");
@@ -205,16 +207,23 @@ describe("长任务监工", () => {
       expect(patch).not.toHaveBeenCalled();
       addMember(app, "docs", "editor", "editor");
 
-      const supplement = "  补充：先只改说明文件。\n    保留  示例格式。  ";
-      const queued = wakeSupervisor(app, task.id, "修改项完成")!;
-      const dueAt = () => Date.parse(one<{ at: string }>(app.db, "select not_before at from runs where id=?", queued)!.at);
-      expect(dueAt()).toBeGreaterThan(Date.now());
-      const messageId = await send(supplement);
-      expect(addressed(app, `lark:${messageId}`)).toBe(true);
+      const supplements = [
+        "  补充：先只改说明文件。\n    保留  示例格式。  ",
+        "/api/long-tasks 先保留这个接口，下轮再改",
+        "/fixtures 下的示例也要保留",
+      ];
+      for (const [i, supplement] of supplements.entries()) {
+        const queued = wakeSupervisor(app, task.id, "修改项完成")!;
+        const dueAt = () => Date.parse(one<{ at: string }>(app.db, "select not_before at from runs where id=?", queued)!.at);
+        expect(dueAt()).toBeGreaterThan(Date.now());
+        const messageId = await send(supplement);
+        expect(addressed(app, `lark:${messageId}`)).toBe(true);
+        expect(getLongTask(app, task.id).supplements.map(s => s.text)).toEqual(supplements.slice(0, i + 1));
+        expect(getRun(app, queued).input.events).toContainEqual(expect.objectContaining({ note: supplement }));
+        expect(dueAt()).toBeLessThanOrEqual(Date.now());
+        run(app.db, "update runs set status='done' where id=?", queued);
+      }
       const supplemented = getLongTask(app, task.id);
-      expect(supplemented.supplements).toEqual([expect.objectContaining({ text: supplement })]);
-      expect(getRun(app, queued).input.events).toContainEqual(expect.objectContaining({ note: supplement }));
-      expect(dueAt()).toBeLessThanOrEqual(Date.now());
       await send("/监工");
       expect(reply.mock.calls.at(-1)?.[0].data.content).toContain(task.id);
 

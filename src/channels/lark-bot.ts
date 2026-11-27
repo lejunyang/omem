@@ -1,4 +1,5 @@
-import { parseCommand } from "../agents/commands.ts";
+import { parseAiCommand } from "../agents/ai-command.ts";
+import { commandNames, parseCommand } from "../agents/commands.ts";
 import { updateThread, type Thread } from "../agents/threads.ts";
 import { homeOf, noteAnchor, noteTopicRoot, replyAnchor } from "../agents/home.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
@@ -795,14 +796,18 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (m.fromApp || m.type !== "text" || !m.topicId) return;
     const userId = who(m);
     if (!userId) return;
-    const text = m.mentions.length ? spoken(m, true) : m.text;
-    const command = text.trimStart().startsWith("/");
-    if (command && parseCommand(text)?.name !== "监工") return;
-    return one<{ id: string }>(app.db, `select c.id from conversations c
+    const topic = one<{ id: string; status: string }>(app.db, `select c.id, t.status from conversations c
       join long_tasks t on t.thread_id=c.id
       where c.channel=? and c.external_id=? and c.status='active' and t.user_id=?
-        and (t.status not in ('ended','done') or ?)
-      order by c.updated_at desc limit 1`, channel, `${m.chatId}#${m.topicId}`, userId, Number(command))?.id;
+      order by c.updated_at desc limit 1`, channel, `${m.chatId}#${m.topicId}`, userId);
+    if (!topic) return;
+    const text = (m.mentions.length ? spoken(m, true) : m.text).trim();
+    if (text.startsWith("/")) {
+      const command = parseCommand(text);
+      if (command?.name === "监工") return topic.id;
+      if ((command && commandNames.includes(command.name)) || parseAiCommand(app, text, userId)) return;
+    }
+    if (topic.status !== "ended" && topic.status !== "done") return topic.id;
   };
 
   /** `approved`: the owner let a refused guest through (its records were kept the first time). */
