@@ -1,5 +1,5 @@
 import { checkTaskDuration } from "./drift.ts";
-import { codeBudgetStop, longTaskForRun, signalCodeWork } from "./supervisor-code.ts";
+import { workBudgetStop, longTaskForRun, signalCodeWork } from "./supervisor-code.ts";
 import type { App } from "../core/app.ts";
 import type { Execution } from "./execution.ts";
 import { all, one } from "../core/db.ts";
@@ -368,7 +368,7 @@ async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict
       return finish("paused", { reviewStop: "not-converging" });
     }
     const supervisor = longTaskForRun(app, rootId);
-    const stop = supervisor && codeBudgetStop(app, supervisor, rootId);
+    const stop = supervisor && workBudgetStop(app, supervisor, rootId);
     if (stop) {
       setWorkState(app, rootId, { paused: "budget" });
       signalCodeWork(app, rootId, stop);

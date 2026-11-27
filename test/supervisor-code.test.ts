@@ -9,6 +9,7 @@ import { codeChainFor, queueNextCodeRound, trySettleCodeChain } from "../src/age
 import { queueCodeWork } from "../src/agents/code-delegate.ts";
 import { addTask, getTask, recordCheckpoint, toDecide, updateTask } from "../src/agents/code-tasks.ts";
 import { getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
+import { queueSupervisedAgent, onWorkRunSettled } from "../src/agents/agent-work.ts";
 import { checkTaskDuration } from "../src/agents/drift.ts";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { answerWorkerQuestion, checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "../src/agents/supervisor-code.ts";
@@ -19,7 +20,7 @@ async function setup(rounds = 5) {
   app.config.agents.profiles.push({ id: "stub", transport: "acp", command: process.execPath, args: [], env: {}, idleTimeoutMs: 60000 });
   const task = await startLongTask(app, { spaceId: "personal", userId: "owner", goal: "校对说明", ai: { profile: "stub" } });
   run(app.db, "update long_tasks set status='active', budget=json_set(budget,'$.codeRounds',?), brief=json_set(brief,'$.scope',json(?)) where id=?", rounds, '["docs"]', task.id);
-  const lead = createRun(app, { kind: "supervise", title: "监工", input: { longTaskId: task.id, conversationId: task.threadId } });
+  const lead = createRun(app, { kind: "supervise", title: "监工", lane: `supervisor:${task.id}`, input: { longTaskId: task.id, conversationId: task.threadId } });
   const delegate = () => queueCodeWork(app, { parentId: lead.id, userId: "owner", spaceId: "personal", title: "校对", input: { task: "核对说明", taskMode: true, goal: "校对说明" } });
   return { app, task: getLongTask(app, task.id), lead, delegate };
 }
@@ -43,6 +44,36 @@ describe("监工的编码交办", () => {
     const unrelated = createRun(app, { kind: "code", title: "另一件事" });
     expect(() => checkSupervisorBasis(app, lead.id, unrelated.id, task.goal)).toThrow(/自己长任务/);
     expect(getRun(app, second.id).output.codeChain).toMatchObject({ lastCodeRunId: second.id });
+  });
+
+  it("工作 Agent 和编码共用预算，工作结束仍由监工接手", async () => {
+    const { app, lead, delegate, task } = await setup(1);
+    const scope = { spaces: ["personal"], denyTools: [], userId: "owner", lark: { chats: [] } };
+    const id = queueSupervisedAgent(app, lead.id, { agent: "assistant", task: "核对说明", assistantScope: scope });
+    expect(() => delegate()).toThrow(/工作轮次/);
+    run(app.db, "update runs set status='done' where id=?", id);
+    const next = onWorkRunSettled(app, getRun(app, id))!;
+    expect(getRun(app, next.coordinateRunId!)).toMatchObject({ kind: "supervise", input: { longTaskId: task.id } });
+    expect(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
+  });
+
+  it.each([1, 2])("工作者结束后收到答复，按总预算 %i 决定续轮或叫醒监工", async rounds => {
+    const { app, lead, task } = await setup(rounds);
+    const scope = { spaces: ["personal"], denyTools: [], userId: "owner", lark: { chats: [] } };
+    const id = queueSupervisedAgent(app, lead.id, { agent: "assistant", task: "核对说明", assistantScope: scope });
+    const ask = createWorkerAsk(app, { runId: id, question: "保留示例？" });
+    run(app.db, "update runs set status='done' where id=?", id);
+    await answerWorkerQuestion(app, task.id, ask.id, "保留");
+    const next = all<{ id: string }>(app.db, "select id from runs where kind='agent' and id!=?", id);
+    expect(next.length).toBe(rounds - 1);
+    expect(getAsk(app, ask.id).answer).toBe("保留");
+    if (next[0]) {
+      expect(getRun(app, next[0].id).input).toMatchObject({ longTaskId: task.id, resumeFromRun: id });
+      expect(getRun(app, lead.id).output.agentWork).toMatchObject({ runs: 2 });
+    } else {
+      const queued = all<{ input: string }>(app.db, "select input from runs where kind='supervise' and status='queued'");
+      expect(queued.some(r => r.input.includes("已用完 1 个工作轮次"))).toBe(true);
+    }
   });
 
   it("本交办轮数已满或长任务超时，增加单次续轮额度也无法入队", async () => {
@@ -104,7 +135,7 @@ describe("监工的编码交办", () => {
     expect(getRun(app, worker.id).output.codeResultHandedOff).toBe(true);
   });
 
-  it("检查点核对真实路径和相邻补丁的同一段", async () => {
+  it("检查点按路径边界识别范围外文件", async () => {
     const { app, delegate } = await setup();
     const worker = delegate();
     const dir = mkdtempSync(join(tmpdir(), "supervised-checkpoints-"));
@@ -125,6 +156,6 @@ describe("监工的编码交办", () => {
     recordCheckpoint(app, worker.id, wt, worker.id, [], "第二轮");
     const events = all<{ input: string }>(app.db, "select input from runs where kind='supervise' and status='queued'").flatMap(r => JSON.parse(r.input).events ?? []);
     expect(events).toContainEqual(expect.objectContaining({ drift: true, note: expect.stringContaining("超出任务书范围：repo/docs-old") }));
-    expect(events).toContainEqual(expect.objectContaining({ drift: true, note: expect.stringContaining("改回原样：repo/docs/guide") }));
+    expect(events.filter(e => e.drift).map(e => e.note).join("\n")).not.toContain("repo/docs/guide");
   });
 });

@@ -24,42 +24,12 @@ function inScope(scope: string[], repo: string, path: string) {
   });
 }
 
-/** Both diffs end at the middle checkpoint. Equal added/removed lines at the same middle
- * coordinates mean the second change restored the first one, even if other hunks survived. */
-function hunksAt(dir: string, from: string, middle: string): Map<string, string> {
-  const result = git(dir, ["-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-renames", "--unified=0", from, middle]);
-  const hunks = new Map<string, string>();
-  if (!result.ok) return hunks;
-  let file = "", key = "";
-  let lines: string[] = [];
-  function finish() {
-    if (key && lines.length) hunks.set(JSON.stringify([file, key, lines]), file);
-    key = "";
-    lines = [];
-  }
-  for (const line of result.stdout.split("\n")) {
-    if (line.startsWith("diff --git ")) { finish(); file = ""; }
-    else if (!key && line.startsWith("--- a/")) file = line.slice(6);
-    else if (!key && line.startsWith("+++ b/")) file = line.slice(6);
-    else if (line.startsWith("@@ ")) {
-      finish();
-      key = /\+(\d+(?:,\d+)?) @@/.exec(line)?.[1] ?? "";
-    } else if (key && (line.startsWith("+") || line.startsWith("-") || line.startsWith("\\"))) lines.push(line);
-  }
-  finish();
-  return hunks;
-}
-
-export function checkCheckpoint(app: App, task: LongTask, work: string, seq: number, repo: string, dir: string, before: string | undefined, middle: string, head: string) {
+export function checkCheckpoint(app: App, task: LongTask, work: string, seq: number, repo: string, dir: string, middle: string, head: string) {
   if (middle === head) return;
   const paths = git(dir, ["diff", "--name-only", "--no-renames", "-z", middle, head]);
   const outside = paths.ok && task.brief.scope.length ? paths.stdout.split("\0").filter(p => p && !inScope(task.brief.scope, repo, p)) : [];
-  const messages: string[] = [];
-  if (outside.length) messages.push(`超出任务书范围：${outside.slice(0, 20).map(p => repo + "/" + p).join("、")}`);
-  if (before && before !== middle) {
-    const old = hunksAt(dir, before, middle);
-    const restored = new Set([...hunksAt(dir, head, middle)].filter(([key]) => old.has(key)).map(([, file]) => file));
-    if (restored.size) messages.push(`相邻两次检查点把同一段改回原样：${[...restored].slice(0, 20).map(p => repo + "/" + p).join("、")}`);
+  if (outside.length) {
+    const note = `交办 ${work} 检查点 ${seq}（${middle} → ${head}）\n超出任务书范围：${outside.slice(0, 20).map(p => repo + "/" + p).join("、")}`;
+    wakeSupervisor(app, task.id, note, { immediate: true, drift: true });
   }
-  if (messages.length) wakeSupervisor(app, task.id, `交办 ${work} 检查点 ${seq}（${middle} → ${head}）\n${messages.join("\n")}`, { immediate: true, drift: true });
 }

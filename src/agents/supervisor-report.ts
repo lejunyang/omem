@@ -29,7 +29,7 @@ export function supervisorProgressText(app: App, task: LongTask, report: Report)
 
 async function updateCard(app: App, task: LongTask, body: string) {
   const thread = getThread(app, task.threadId);
-  if (!thread.channel.startsWith("lark") || !thread.settings.lastMessageId) return;
+  if (!thread.channel.startsWith("lark") || !thread.key?.includes("#") || !thread.settings.lastMessageId) return;
   const { botOfChannel, withBot } = await import("../core/bot-context.ts");
   const { buildCard, sendLark, updateLarkCard, recordInteraction } = await import("../channels/lark-send.ts");
   const controls = ["ended", "done"].includes(task.status) ? [] : [{ buttons: [
@@ -108,12 +108,6 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
   if (task.status === "draft" && report.askOwner.length)
     throw new HttpError(400, "起草轮由宿主发一张任务书确认卡。把需要本人调整的条目写入 brief，askOwner 留空。");
   if (task.status !== "draft" && report.brief?.constraints) throw new HttpError(400, "约束仅由本人修改");
-  if (report.status === "done") {
-    const facts = supervisorFacts(app, task);
-    const pending = one(app.db, "select 1 from asks where conversation_id=? and status='pending' and json_extract(context,'$.handler') in ('supervisor-questions','supervisor-brief') limit 1", task.threadId);
-    if (report.askOwner.length || report.brief || facts.active || facts.openItems || pending)
-      throw new HttpError(409, "仍有运行、修改项、任务书提案或本人问题待处理");
-  }
   const { answerWorkerQuestion, checkSupervisorBasis } = await import("./supervisor-code.ts");
   for (const a of report.answers ?? []) {
     checkSupervisorBasis(app, runId, runId, a.basis);
@@ -122,6 +116,12 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
   const prior = supervisorState(app, task.id);
   const text = supervisorProgressText(app, task, report);
   withinTx(app.db, () => {
+    if (report.status === "done") {
+      const facts = supervisorFacts(app, task);
+      const pending = one(app.db, "select 1 from asks where conversation_id=? and status='pending' and json_extract(context,'$.handler') in ('supervisor-questions','supervisor-brief') limit 1", task.threadId);
+      if (report.askOwner.length || report.brief || facts.active || facts.openItems || facts.pendingQuestions || pending)
+        throw new HttpError(409, "仍有运行、修改项、任务书提案或问题待处理");
+    }
     saveLongTaskReport(app, task.id, runId, report, text);
     patchSupervisorState(app, task.id, { lastReport: runId, stage: report.stage });
     if (report.brief) proposeBrief(app, task, runId, report.brief);

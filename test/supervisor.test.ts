@@ -163,6 +163,9 @@ describe("长任务监工", () => {
       return { questionId: ask.id, question, options: ["维持", "变更"], prefer: "维持", why: "沿用任务书" };
     });
     expect(listAsks(app, { status: "pending" })).toHaveLength(0);
+    run(app.db, "update runs set status='done' where id=?", worker.id);
+    await expect(submitSupervisorReport(app, ctx.run.id, { ...draftReport, brief: undefined, status: "done" })).rejects.toThrow(/问题待处理/);
+    run(app.db, "update runs set status='running' where id=?", worker.id);
     await submitSupervisorReport(app, ctx.run.id, { ...draftReport, brief: undefined, status: "needs-owner", askOwner: questions });
     const cards = listAsks(app, { conversationId: task.threadId, status: "pending" });
     expect(cards).toHaveLength(1);

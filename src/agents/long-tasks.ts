@@ -106,7 +106,8 @@ export function startLongTask(app: App, input: z.input<typeof startLongTaskSchem
     const lark = parent && parent.channel.startsWith("lark");
     const thread = createThread(app, { spaceId, userId, title, parentId: parent?.id,
       channel: parent?.channel ?? "web", key: lark ? parent.key?.split("#")[0] : null,
-      settings: { itemId: item.id, links: parent ? [parent.id] : [], ...(lark && { isolatedTopic: true, group: parent.settings.group, lark: parent.settings.lark }) } });
+      settings: { itemId: item.id, links: parent ? [parent.id] : [], ...(lark && { isolatedTopic: true,
+        lastMessageId: parent.settings.lastMessageId, group: parent.settings.group, lark: parent.settings.lark }) } });
     const id = newId("lt"), at = now();
     run(app.db, `insert into long_tasks(id,space_id,user_id,thread_id,item_id,goal,ai,brief,budget,notifications,created_at,updated_at)
       values(?,?,?,?,?,?,?,?,?,?,?,?)`, id, spaceId, userId, thread.id, item.id, goal, JSON.stringify(ai),

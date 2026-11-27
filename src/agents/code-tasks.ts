@@ -563,7 +563,7 @@ export function recordCheckpoint(app: App, rootId: string, worktrees: WorktreeRe
     const dir = gitDirOf(app, wt);
     if (task && dir && heads[wt.space]) {
       const base = wt.start ?? wt.base;
-      checkCheckpoint(app, task, rootId, seq, wt.space, dir, last && (previous.at(-2)?.heads[wt.space] ?? base), last?.heads[wt.space] ?? base, heads[wt.space]);
+      checkCheckpoint(app, task, rootId, seq, wt.space, dir, last?.heads[wt.space] ?? base, heads[wt.space]);
     }
     if (dir && heads[wt.space]) git(dir, ["update-ref", `refs/omem/${rootId}/cp${seq}`, heads[wt.space]]);
   }

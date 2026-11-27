@@ -86,14 +86,16 @@ export function supervisorUsage(app: App, task: LongTask) {
 }
 
 export function supervisorFacts(app: App, task: LongTask) {
-  return one<{ active: number; rounds: number; total: number; done: number; openItems: number; lastChange: string | null }>(app.db, workers + `
+  return one<{ active: number; rounds: number; total: number; done: number; openItems: number; pendingQuestions: number; lastChange: string | null }>(app.db, workers + `
     select (select count(*) from workers where status in ('running','queued')) active,
       (select count(*) from workers where charged) rounds,
+      (select count(*) from workers w cross join asks a on a.run_id=w.id
+        where a.status='pending' and json_extract(a.context,'$.supervisorTaskId')=?) pendingQuestions,
       count(*) total, count(case when state='done' then 1 end) done,
       count(case when state not in ('done','wontdo','reverted') then 1 end) openItems,
       max(coalesce(max(updated_at),''),coalesce((select max((select at from run_events e where e.run_id=w.id order by seq desc limit 1)) from workers w),''),
         coalesce((select max(created_at) from code_checkpoints where work_id in (select id from workers)),'')) lastChange
-    from code_tasks where work_id in (select id from workers)`, laneOf(task.id))!;
+    from code_tasks where work_id in (select id from workers)`, laneOf(task.id), task.id)!;
 }
 
 export async function checkSupervisorTimer(app: App, id: string, purpose: string) {
@@ -140,8 +142,7 @@ async function waitForAi(ctx: RunContext, task: LongTask, why: string): Promise<
 async function ensureTopic(app: App, task: LongTask) {
   const thread = getThread(app, task.threadId);
   if (!thread.channel.startsWith("lark") || thread.key?.includes("#") || !thread.parentId) return;
-  const parent = getThread(app, thread.parentId);
-  const anchor = parent.settings.lastMessageId;
+  const anchor = thread.settings.lastMessageId;
   if (anchor) await (await import("./inbox.ts")).deliverToThread(app, task.threadId, `长任务 · ${task.goal}`, { openTopicFrom: anchor });
 }
 

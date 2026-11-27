@@ -24,14 +24,17 @@ export function longTaskForRun(app: App, runId: string | null): LongTask | null 
   return null;
 }
 
-export function codeBudgetStop(app: App, task: LongTask, rootId?: string): string | null {
+export function workBudgetStop(app: App, task: LongTask, rootId?: string): string | null {
   if (task.status !== "active") return "长任务当前未在推进，先查看任务状态";
   if (Date.now() >= Date.parse(task.createdAt) + task.budget.hours * 3_600_000) return "长任务已达到总时长预算，需要本人加预算";
-  const used = one<{ total: number; local: number }>(app.db, `select count(*) total,
+  const used = one<{ total: number; local: number }>(app.db, `select count(*) + (
+      select count(*) from runs lead join runs worker on worker.parent_id=lead.id
+      where lead.lane=? and worker.kind='agent' and json_extract(worker.input,'$.longTaskId')=?
+    ) total,
     count(case when id=? or json_extract(input,'$.continueFrom')=? then 1 end) local
     from runs where kind='code' and json_extract(input,'$.longTaskId')=? and json_extract(input,'$.branches') is null`,
-    rootId ?? null, rootId ?? null, task.id)!;
-  if (used.total >= task.budget.codeRounds) return `长任务已用完 ${task.budget.codeRounds} 个编码轮次，需要本人加预算`;
+    `supervisor:${task.id}`, task.id, rootId ?? null, rootId ?? null, task.id)!;
+  if (used.total >= task.budget.codeRounds) return `长任务已用完 ${task.budget.codeRounds} 个工作轮次，需要本人加预算`;
   if (used.local >= app.config.agents.autoAdvance.codeRoundsMax) return "本次交办已达单个交办的编码轮次上限";
   return null;
 }
@@ -49,7 +52,7 @@ export function createCodeRound(app: App, request: Parameters<typeof createRun>[
     if (request.parentId && one(app.db, `select 1 from runs where id=? and kind='supervise' and json_extract(output,'$.supervisorReport') is not null`, request.parentId))
       throw new HttpError(409, "监工已交本轮报告，不能再派活");
     if (!input.branches) {
-      const stop = codeBudgetStop(app, task, root);
+      const stop = workBudgetStop(app, task, root);
       if (stop) throw new HttpError(409, stop);
     }
     return createRun(app, { ...request, input: { ...input, longTaskId: task.id } });
@@ -79,9 +82,9 @@ export function checkSupervisorBasis(app: App, caller: string | null, target: st
 
 export function createWorkerAsk(app: App, input: Parameters<typeof createAsk>[1]) {
   const supervisor = longTaskForRun(app, input.runId);
+  if (!supervisor) return createAsk(app, input);
   if ((input.kind && input.kind !== "question") || (input.context?.handler && input.context.handler !== "review-escalation"))
     throw new HttpError(400, "只有工作者的问题和评审分歧可以交给监工");
-  if (!supervisor) return createAsk(app, input);
   return withinTx(app.db, () => {
     const ask = createAsk(app, { ...input, context: { ...input.context, supervisorTaskId: supervisor.id, toName: "监工", notificationOnly: true } });
     const choices = ask.options.map(option => option.label).join(" / ");

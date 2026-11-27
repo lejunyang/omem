@@ -1,6 +1,6 @@
 import type { App } from "../core/app.ts";
 import { allProfiles } from "../core/config.ts";
-import { HttpError } from "../core/util.ts";
+import { parseModelArgs } from "./commands.ts";
 import { canWrite, OWNER } from "../core/users.ts";
 import { itemAccess } from "../items/access.ts";
 import { resolveModelOption } from "./models.ts";
@@ -11,43 +11,31 @@ import type { Thread } from "./threads.ts";
 import type { Inbound } from "./inbox.ts";
 
 const usage = "/监工 [后端 [模型] [强度]] 任务";
-const tiers = new Map<string, "strong" | "standard" | "cheap">([["强", "strong"], ["标准", "standard"], ["便宜", "cheap"]]);
-const levels: Record<string, string> = { 低: "low", 中: "medium", 高: "high", 极高: "xhigh", 最高: "max" };
-function effort(word: string) {
-  return /^(minimal|low|medium|high|xhigh|max|ultra)$/i.test(word) ? word.toLowerCase() : Object.hasOwn(levels, word) ? levels[word] : undefined;
-}
+type ParsedSupervisorAi = {
+  ai?: LongTask["ai"]; group?: string; rest: string; notes: string[];
+  ambiguous?: { profile: string; model: string }[]; unknown?: string;
+};
 
-// Only consume the AI prefix. The goal can span lines and is stored in the person's own words.
-export function supervisorArgs(app: App, args: string, userId: string): { goal: string; ai?: LongTask["ai"] } {
+// Only the first line can name the backend and model; subsequent lines belong to the goal.
+export function supervisorArgs(app: App, args: string, userId: string): ParsedSupervisorAi {
   const first = /^(\S+)([\s\S]*)$/.exec(args);
-  if (!first) return { goal: "" };
-  const [, name, rest] = first;
-  const tier = tiers.get(name);
-  if (tier) {
-    const ai = app.config.agents.tiers[tier];
-    if (!ai) throw new HttpError(400, `还没有配置「${name}」档的 AI。`);
-    return { ai, goal: rest.trimStart() };
+  const profile = first && allProfiles(app.config).find(p => p.id === first[1]);
+  if (!first || !profile) return { rest: args, notes: [] };
+  let rest = first[2];
+  const token = /^[^\S\r\n]+([\w.@:/-]+)(?=\s|$)/.exec(rest);
+  const effortOnly = /^(low|medium|high|xhigh|max)$/i;
+  let model: string | undefined;
+  if (token && !effortOnly.test(token[1]) && !/^effort$/i.test(token[1])) {
+    const offered = userProbe(app, userId, profile.id)?.models ?? [];
+    const resolved = resolveModelOption(token[1], offered);
+    if (!offered.length || resolved.matched) {
+      model = resolved.value;
+      rest = rest.slice(token[0].length);
+    }
   }
-  const profile = allProfiles(app.config).find(p => p.id.toLowerCase() === name.toLowerCase());
-  if (!profile) return { goal: args };
-  let tail = rest;
-  const nextWord = () => /^[^\S\n\r]+(\S+)/.exec(tail);
-  const token = nextWord();
-  const ai: LongTask["ai"] = { profile: profile.id };
-  if (token && !effort(token[1]) && /^[\w.@:/-]+$/.test(token[1])) {
-    const probe = userProbe(app, userId, profile.id);
-    const choice = resolveModelOption(token[1], probe?.models ?? []);
-    if (probe?.models.length && !choice.matched) throw new HttpError(400, `后端 ${profile.id} 的可选模型有 ${probe.models.join("、")}。`);
-    ai.model = choice.value;
-    tail = tail.slice(token[0].length);
-  }
-  const level = nextWord();
-  const selectedEffort = level && effort(level[1]);
-  if (selectedEffort) {
-    ai.effort = selectedEffort;
-    tail = tail.slice(level[0].length);
-  }
-  return { ai, goal: tail.trimStart() };
+  const level = /^[^\S\r\n]+(?:effort[ \t]*[:=][ \t]*([\w.-]+)|(low|medium|high|xhigh|max))(?=\s|$)/i.exec(rest);
+  const selected = parseModelArgs([model, level && `effort=${level[1] ?? level[2]}`].filter(Boolean).join(" "));
+  return { ai: { profile: profile.id, ...selected }, rest: rest.slice(level?.[0].length ?? 0).trimStart(), notes: [] };
 }
 
 export function longTaskText(app: App, task: LongTask) {
@@ -83,8 +71,8 @@ export function supervisorCommand(app: App, thread: Thread, args: string, inb: I
         break;
       }
       case "换": {
-        const { ai, goal } = supervisorArgs(app, value, userId);
-        if (!ai || goal) return "用法：/监工 换 后端 [模型] [强度]";
+        const { ai, rest } = supervisorArgs(app, value, userId);
+        if (!ai || rest) return "用法：/监工 换 后端 [模型] [强度]";
         updated = changeLongTask(app, current.id, { action: "ai", ai });
         break;
       }
@@ -98,7 +86,7 @@ export function supervisorCommand(app: App, thread: Thread, args: string, inb: I
   }
   if (args === "接管") return "请用 /监工 加上要推进的目标，另开长任务。";
   if (current) return "在这个话题直接说要补充的内容，或发 /监工 查看状态。";
-  const { goal, ai } = supervisorArgs(app, args, userId);
+  const { rest: goal, ai } = supervisorArgs(app, args, userId);
   if (!goal) return `请写明任务目标。用法：${usage}`;
   const task = startLongTask(app, { spaceId, userId, threadId: thread.id, goal, ai });
   return longTaskText(app, task);

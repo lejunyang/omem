@@ -1,4 +1,4 @@
-import { codeBudgetStop, createCodeRound, longTaskForRun, signalCodeWork } from "./supervisor-code.ts";
+import { workBudgetStop, createCodeRound, longTaskForRun, signalCodeWork } from "./supervisor-code.ts";
 import type { Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -117,7 +117,7 @@ export function queueNextCodeRound(
     const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; contextItemId?: string; fromReview?: string; taskMode?: boolean };
     if (!opts.manual && current.input.longTaskId) {
       const task = longTaskForRun(app, current.id)!;
-      const stop = codeBudgetStop(app, task, root);
+      const stop = workBudgetStop(app, task, root);
       if (stop) {
         signalCodeWork(app, root, stop);
         return null;

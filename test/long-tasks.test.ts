@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { changeLongTask, confirmLongTaskBrief, getLongTask, longTaskInThread, saveLongTaskReport, startLongTask } from "../src/agents/long-tasks.ts";
 import { reportSchema } from "../src/agents/supervisor-schema.ts";
-import { createThread, getThread, resolveThread, setChatSettings } from "../src/agents/threads.ts";
+import { createThread, getThread, resolveThread, setChatSettings, updateThread } from "../src/agents/threads.ts";
 import type { App } from "../src/core/app.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { mergeLibrary } from "../src/core/pull.ts";
@@ -41,9 +41,11 @@ describe("长任务存储和授权", () => {
 
   it("飞书子会话等话题创建期间，主群消息仍进入发起会话", () => {
     const app = setup();
-    const parent = createThread(app, { spaceId: "personal", channel: "lark", key: "group" });
+    const parent = createThread(app, { spaceId: "personal", channel: "lark", key: "group", settings: { lastMessageId: "om_request" } });
     setChatSettings(app, "lark", "group", { mode: "chat" });
     const task = startLongTask(app, { ...input, threadId: parent.id });
+    updateThread(app, parent.id, { settings: { lastMessageId: "om_next" } });
+    expect(getThread(app, task.threadId).settings.lastMessageId).toBe("om_request");
     expect(resolveThread(app, { channel: "lark", chatId: "group" }).thread.id).toBe(parent.id);
     run(app.db, "update conversations set external_id='group#topic' where id=?", task.threadId);
     expect(resolveThread(app, { channel: "lark", chatId: "group", topicId: "topic" }).thread.id).toBe(task.threadId);

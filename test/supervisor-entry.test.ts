@@ -45,12 +45,15 @@ it("creates a task from a multiline command and applies the topic controls to th
   expect(app.db.prepare("select count(*) as n from long_tasks").get()).toEqual({ n: 1 });
 });
 
-it("keeps an English goal intact after a line break and supports a configured tier", () => {
+it("preserves the goal and returns the shared AI parser shape for named and shorthand effort", () => {
   const { app } = entries();
-  expect(supervisorArgs(app, "audit all changes", "owner")).toEqual({ goal: "audit all changes" });
-  expect(supervisorArgs(app, "codex high\naudit all changes", "owner")).toEqual({ goal: "audit all changes", ai: { profile: "codex", effort: "high" } });
-  app.config.agents.tiers.strong = { profile: "codex", model: "sample" };
-  expect(supervisorArgs(app, "强 核对迁移", "owner")).toEqual({ goal: "核对迁移", ai: app.config.agents.tiers.strong });
+  expect(supervisorArgs(app, "audit all changes", "owner")).toEqual({ rest: "audit all changes", notes: [] });
+  expect(supervisorArgs(app, "codex high\naudit all changes", "owner")).toEqual({ rest: "audit all changes", ai: { profile: "codex", effort: "high" }, notes: [] });
+  for (const level of ["low", "medium", "high", "xhigh", "max"]) {
+    const expected = { rest: "检查  文档\n保留换行", ai: { profile: "codex", model: "sample", effort: level }, notes: [] };
+    expect(supervisorArgs(app, `codex sample effort=${level} 检查  文档\n保留换行`, "owner")).toEqual(expected);
+    expect(supervisorArgs(app, `codex sample ${level} 检查  文档\n保留换行`, "owner")).toEqual(expected);
+  }
 });
 
 it("creates through the tool, forwards verbatim from another conversation and checks the task owner and space", async () => {

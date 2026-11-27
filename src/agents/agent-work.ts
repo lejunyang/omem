@@ -1,7 +1,8 @@
 import type { Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
 import { getLongTask, longTaskInThread } from "./long-tasks.ts";
-import { supervisorFacts, wakeSupervisor } from "./supervisor.ts";
+import { wakeSupervisor } from "./supervisor.ts";
+import { longTaskForRun, workBudgetStop } from "./supervisor-code.ts";
 import { all, one, run, withinTx } from "../core/db.ts";
 import { now, truncate } from "../core/util.ts";
 import { addMessage, createThread, getThread } from "./threads.ts";
@@ -147,8 +148,8 @@ export function queueSupervisedAgent(app: App, runId: string, round: AgentRoundI
     const parent = getRun(app, runId);
     const task = getLongTask(app, String(parent.input.longTaskId));
     if (task.status !== "active" || parent.output.supervisorReport) throw new Error("本轮当前不能派活");
-    if (Date.now() >= Date.parse(task.createdAt) + task.budget.hours * 3600_000 ||
-        supervisorFacts(app, task).rounds >= task.budget.codeRounds) throw new Error("工作已达任务书预算，请本人决定是否增加");
+    const stop = workBudgetStop(app, task);
+    if (stop) throw new Error(stop);
     const thread = getThread(app, task.threadId);
     const work: AgentWork = workOfRun(app, parent) ?? {
       askRunId: runId, rootConversationId: thread.parentId ?? thread.id, workConversationId: thread.id,
@@ -170,10 +171,28 @@ export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput, l
     input: { ...(longTaskId ? { longTaskId } : {}), ...(a.boardDevice ? { boardDevice: a.boardDevice } : {}), ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
     parentId: work.askRunId,
   });
-  const id = r.id;
-  const next: AgentWork = { ...work, runs: work.runs + 1, rounds: [...work.rounds, { runId: id, agent: a.agent, status: "queued" }] };
-  saveWork(app, next, [id, work.askRunId, ...work.rounds.map((r) => r.runId)]);
-  return id;
+  recordAgentRound(app, work, r.id, a.agent);
+  return r.id;
+}
+
+function recordAgentRound(app: App, work: AgentWork, runId: string, agent: string) {
+  const next: AgentWork = { ...work, runs: work.runs + 1, rounds: [...work.rounds, { runId, agent, status: "queued" }] };
+  saveWork(app, next, [work.askRunId, ...next.rounds.map(r => r.runId)]);
+}
+
+/** An answer arrived after the worker ended. Consume it and reserve the next round in the same transaction. */
+export function resumeAgentAfterSupervisorAnswer(app: App, worker: Run, answer: string) {
+  const task = longTaskForRun(app, worker.id)!;
+  const stop = workBudgetStop(app, task);
+  if (stop) {
+    wakeSupervisor(app, task.id, `工作运行 ${worker.id} 已收到回答。\n${answer}\n${stop}`, { immediate: true });
+    return;
+  }
+  const next = createRun(app, { kind: "agent", title: "按监工的回答继续", spaceId: worker.spaceId,
+    parentId: worker.parentId, userId: task.userId, lane: worker.lane, input: { ...worker.input, longTaskId: task.id,
+      resumeFromRun: worker.id, task: `${worker.input.task ?? ""}\n\n${answer}` } });
+  const work = workOfRun(app, worker);
+  if (work) recordAgentRound(app, refreshWork(app, work.askRunId)!, next.id, String(worker.input.spec));
 }
 
 /**
