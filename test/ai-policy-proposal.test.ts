@@ -120,7 +120,7 @@ it("在原类别规则上增减选择，保留顺序、严格模式、其他类�
   const routine = structuredClone(app.config.agents.policy.classes.routine);
   const text = sentence("写作改用强组，可以用 Gemini", { changes: [{ class: "writing", removeUse: ["standard"], addUse: ["strong"], removeDeny: ["model:gemini"] }] });
   const ask = await askFor(text);
-  expect(viewText(ask.ui!.view!)).toContain("取消排除：model:gemini");
+  expect(viewText(ask.ui!.view!)).toContain("取消排除：Gemini 系列模型");
   expect(app.config.agents.policy.classes.writing).toEqual(original);
   await answerAsk(app, ask.id, { by: "owner", choice: 0 });
   const saved = loadConfig(app.home).agents.policy;

@@ -11,6 +11,7 @@ import { createAsk, registerAskAction } from "./asks.ts";
 import { createRun, getRun, runUser, setRunOutput, type RunContext } from "./runs.ts";
 import { groupPick, matchesSelector, policyReason, policyScope, policyUsage, validatePolicy, type PolicyAI } from "./ai-policy.ts";
 import { runClasses } from "./run-classes.ts";
+import { modelFamily } from "./families.ts";
 import { cachedProbe, effortsFor } from "./probe.ts";
 import { backendAvailable } from "./availability.ts";
 
@@ -135,14 +136,38 @@ function preview(app: App, draft: Draft) {
       const matches = catalog.filter(ai => policyReason(single, ai))
         .map(ai => [ai.id, ai.model, selector.startsWith("ai:") ? ai.effort : undefined].filter(Boolean).join(" · "));
       const labels = [...new Set(matches)];
-      view.push({ type: "fold", title: `排除 ${selector}（${labels.length} 项）`, text: labels.map(label => "- " + label).join("\n") || "当前没有匹配的 AI", open: labels.length <= 3 });
+      view.push({ type: "fold", title: `不用 ${selectorText(app, selector, catalog)}（${labels.length} 项）`, text: labels.map(label => "- " + label).join("\n") || "当前没有匹配的 AI", open: labels.length <= 3 });
     }
     const removed = (app.config.agents.policy.classes[id]?.deny ?? []).filter(s => !rule.deny.includes(s));
-    if (removed.length) view.push({ type: "markdown", text: "取消排除：" + removed.join("、") });
+    if (removed.length) view.push({ type: "markdown", text: "取消排除：" + removed.map(s => selectorText(app, s, catalog)).join("、") });
   }
   if (!changed.size) view.push({ type: "markdown", text: "没有可保存的规则变更。" });
   if (draft.unmatched.length) view.push({ type: "callout", tone: "warning", title: "这些要求没有对应的设置", text: draft.unmatched.map(s => "- " + s).join("\n") });
   return { view, changed };
+}
+
+const FAMILY_NAMES: Record<string, string> = {
+  google: "Gemini", anthropic: "Claude", openai: "GPT", deepseek: "DeepSeek", doubao: "豆包", qwen: "通义千问",
+  zhipu: "GLM", moonshot: "Kimi", xai: "Grok", meta: "Llama", mistral: "Mistral", minimax: "MiniMax",
+};
+/** A deny selector the way the settings page says it (web/src/lib/ai-policy.ts selectorText): the owner reads the card, not the rule syntax. */
+export function selectorText(app: App, selector: string, catalog: PolicyAI[]) {
+  const at = selector.indexOf(":");
+  const type = selector.slice(0, at);
+  const value = selector.slice(at + 1).trim();
+  if (type === "backend") {
+    const same = catalog.filter(p => matchesSelector(selector, p));
+    const best = same.find(p => !p.keyRef && !p.peer && !/-cli$/.test(p.id)) ?? same[0];
+    const name = best && allProfiles(app.config).find(p => p.id === best.id)?.name;
+    return `${name || best?.id || value}（全部模型）`;
+  }
+  if (type === "model") {
+    const family = modelFamily({ model: value }) ?? value;
+    return `${FAMILY_NAMES[family] ?? value} 系列模型`;
+  }
+  if (type === "ai") return value;
+  if (type === "key") return `API key「${app.config.ai.providers.find(k => k.id === value)?.name || value}」生成的后端`;
+  return selector;
 }
 
 export function submitPolicyDraft(app: App, runId: string, draft: Draft) {

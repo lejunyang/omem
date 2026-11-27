@@ -4,7 +4,7 @@ import { OWNER } from "../core/users.ts";
 import { json, localStamp, truncate } from "../core/util.ts";
 import { casesText, nearCases } from "../channels/listen-cases.ts";
 import { CORRECTION } from "../memory/gaps.ts";
-import { exchange, reactions, REPLY_LABELS, replyLine, reviewable, type OutcomeRow, type ReplyLabel } from "./reply-outcomes.ts";
+import { exchange, messageKey, reactions, REPLY_LABELS, replyLine, reviewable, turnSpeaker, type OutcomeRow, type ReplyLabel } from "./reply-outcomes.ts";
 import { chatName } from "./run-scope.ts";
 import { createRun, registerHandler, type RunContext } from "./runs.ts";
 
@@ -88,7 +88,7 @@ function readAfter(app: App, o: OutcomeRow, until: number): After {
   const seen = new Set<string>();
   const add = (l: Line) => {
     const text = l.text.replace(/\s+/g, " ").trim();
-    const key = text.slice(0, 60);
+    const key = messageKey(text);
     if (!text || seen.has(key)) return;
     seen.add(key);
     lines.push({ ...l, text: truncate(text, l.bot ? 240 : 500) });
@@ -130,10 +130,9 @@ function readAfter(app: App, o: OutcomeRow, until: number): After {
     if (!asker) {
       const q = one<{ text: string; meta: string; created_at: string }>(app.db, "select text, meta, created_at from messages where conversation_id = ? and role = 'user' and created_at <= ? and json_extract(meta, '$.command') is null order by created_at desc limit 1", o.conversation_id, o.at);
       if (q) {
-        const speaker = json<{ speaker?: unknown }>(q.meta, {}).speaker;
         question = q.text;
         questionAt = q.created_at;
-        asker = typeof speaker === "string" && speaker ? { name: speaker, owner: false } : { name: "本人", owner: true };
+        asker = turnSpeaker(app, json<{ speaker?: unknown; userId?: unknown }>(q.meta, {}));
       }
     }
     for (const m of all<{ role: string; text: string; meta: string; created_at: string }>(
@@ -141,12 +140,12 @@ function readAfter(app: App, o: OutcomeRow, until: number): After {
       "select role, text, meta, created_at from messages where conversation_id = ? and created_at > ? and created_at <= ? and json_extract(meta, '$.command') is null order by created_at limit 30",
       o.conversation_id, o.at, new Date(until).toISOString(),
     )) {
-      const meta = json<{ speaker?: unknown; wake?: unknown }>(m.meta, {});
+      const meta = json<{ speaker?: unknown; userId?: unknown; wake?: unknown }>(m.meta, {});
       if (meta.wake) continue;
       if (m.role === "assistant") { add({ who: "助手", text: m.text, at: m.created_at, owner: false, asker: false, bot: true, close: true }); continue; }
       if (m.role !== "user") continue;
-      const speaker = typeof meta.speaker === "string" && meta.speaker ? meta.speaker : null;
-      add({ who: speaker ?? "本人", text: m.text, at: m.created_at, owner: !speaker, asker: !!asker && (speaker ? speaker === asker.name : asker.owner), bot: false, close: true });
+      const who = turnSpeaker(app, meta);
+      add({ who: who.name, text: m.text, at: m.created_at, owner: who.owner, asker: !!asker && (who.owner ? asker.owner : who.name === asker.name), bot: false, close: true });
     }
   }
   lines.sort((a, b) => a.at.localeCompare(b.at));

@@ -168,6 +168,21 @@ describe("夜里复查回复结果", () => {
     expect(task).not.toContain("这条是一天以后说的");
   });
 
+  it("成员自己和机器人的会话：他接着说的话算提问的人说的，不算本人自己答了", async () => {
+    const app = fresh();
+    const { createUser } = await import("../src/core/users.ts");
+    createUser(app, { id: "xiaowang", name: "小王" });
+    const { runId, conversationId } = answered(app, 30);
+    run(app.db, "update messages set meta = json_object('userId', 'xiaowang') where conversation_id = ? and role = 'user'", conversationId);
+    const id = addMessage(app, conversationId, "user", "退款改造上线时间我自己问到了，是下周二", null, { userId: "xiaowang" });
+    run(app.db, "update messages set created_at = ? where id = ?", ago(29), id);
+    const c = reviewCandidates(app).find((x) => x.runId === runId)!;
+    expect(c.signals).not.toContain("owner-answered");
+    const task = reviewTask(app, [{ runId, pick: c.pick, signals: c.signals }]);
+    expect(task).toContain("小王（提问的人）（相关）：退款改造上线时间我自己问到了");
+    expect(task).not.toContain("本人在那里说");
+  });
+
   it("数据页和每天的用量按复查后的结果算，并给出复查同意的占比", () => {
     const app = fresh();
     const a = answered(app, 30, { confidence: 0.4 }), b = answered(app, 30), s = answered(app, 30);
