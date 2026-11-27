@@ -8,7 +8,7 @@ import { auditLog, saveRole } from "../src/auth/permissions.ts";
 import { answerAsk, createAsk, listAsks } from "../src/agents/asks.ts";
 import { codeChainFor, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { ignoredAdded, worktreesOf } from "../src/agents/code.ts";
-import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQuestionText, recordCheckpoint, recordOutsideChanges, retryTask, scheduleWorkRevert, setWorkState, settleCodingRound, updateTask, waitingText, workPatches, workState } from "../src/agents/code-tasks.ts";
+import { addTask, applyReverts, lastRound, listCheckpoints, listTasks, ownerQuestionText, recordCheckpoint, recordOutsideChanges, retryTask, revertsCleanly, scheduleRevert, scheduleWorkRevert, setWorkState, settleCodingRound, updateTask, waitingText, workPatches, workState } from "../src/agents/code-tasks.ts";
 import { advanceWork, reconcileWaiting, reviewAgain, settleTask, taskReview } from "../src/agents/code-loop.ts";
 import * as agentTools from "../src/agents/tools.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
@@ -305,6 +305,37 @@ describe("a delegation driven by tasks", () => {
       review.mockRestore();
       app.db.close();
     }
+  });
+
+  it("不回退已经被另一项同内容提交替代的旧提交", () => {
+    const app = testApp();
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "omem-revert-"));
+      const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: dir, encoding: "utf8" }).trim();
+      git("init", "-q", "-b", "main");
+      git("commit", "-q", "--allow-empty", "-m", "base");
+      const base = git("rev-parse", "HEAD");
+      writeFileSync(join(dir, "check.txt"), "keep");
+      git("add", "check.txt");
+      git("commit", "-qm", "Omem-Task: T1");
+      const superseded = git("rev-parse", "HEAD");
+      git("commit", "--amend", "-qm", "Omem-Task: T2");
+      writeFileSync(join(dir, "change.txt"), "fix");
+      git("add", "change.txt");
+      git("commit", "-qm", "Omem-Task: T1");
+      const tip = git("rev-parse", "HEAD");
+      createSpace(app, { id: "sample", name: "示例", kind: "repo", rootPath: dir });
+      const work = createRun(app, { kind: "code", spaceId: "sample", title: "改示例", input: { repos: ["sample"], taskMode: true } });
+      const trees = [{ space: "sample", path: dir, branch: "main", base, start: base }];
+      const task = addTask(app, work.id, { title: "改示例", kind: "fix" }, "coder");
+      updateTask(app, work.id, task.seq, { commits: { sample: [superseded, tip] } });
+      expect.soft(revertsCleanly(app, work.id, trees, task.seq)).toBe(false);
+      scheduleRevert(app, work.id, task.seq, "重做", OWNER);
+      expect(applyReverts(app, work.id, trees, () => {}, identity)).toEqual([]);
+      expect(git("rev-parse", "HEAD")).toBe(tip);
+      expect(readFileSync(join(dir, "check.txt"), "utf8")).toBe("keep");
+      expect(git("status", "--porcelain")).toBe("");
+    } finally { app.db.close(); }
   });
 
   it("takes back a file or a hunk as a commit of its own, and hands a hunk that no longer applies to the coder", async () => {

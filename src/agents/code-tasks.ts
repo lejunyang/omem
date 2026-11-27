@@ -846,6 +846,10 @@ export function revertLabel(r: RevertOp) {
   return `回退 ${/^diff --git a\/(\S+)/.exec(r.patch!.text)?.[1] ?? "一段改动"} 里的一段`;
 }
 
+function commitsInHistory(dir: string, commits: string[], head: string) {
+  return commits.every(commit => git(dir, ["merge-base", "--is-ancestor", commit, head]).ok);
+}
+
 /**
  * Whether a task's change can be taken back alone: no later commit of the work touches its files.
  * Otherwise reverting it would take later work with it, so the fix goes forward instead.
@@ -856,7 +860,7 @@ export function revertsCleanly(app: App, rootId: string, worktrees: WorktreeRef[
     const shas = t.commits[wt.space] ?? [];
     if (!shas.length) continue;
     const dir = gitDirOf(app, wt);
-    if (!dir) return false;
+    if (!dir || !commitsInHistory(dir, shas, "HEAD")) return false;
     const files = new Set(shas.flatMap((s) => git(dir, ["show", "--name-only", "--format=", s]).stdout.split("\n").filter(Boolean)));
     const later = git(dir, ["log", "--name-only", "--format=", `${shas.at(-1)}..HEAD`]).stdout.split("\n").filter(Boolean);
     if (later.some((f) => files.has(f))) return false;
@@ -883,12 +887,18 @@ export function applyReverts(app: App, rootId: string, worktrees: WorktreeRef[],
     }
     const t = getTask(app, rootId, r.seq);
     let ok = true;
+    let reason = "回退和后来的改动冲突";
     const made: { dir: string; head: string }[] = [];
     for (const wt of worktrees) {
       const shas = t.commits[wt.space] ?? [];
       if (!shas.length) continue;
       const dir = wt.path;
       const head = git(dir, ["rev-parse", "HEAD"]).stdout.trim();
+      if (!commitsInHistory(dir, shas, head)) {
+        reason = "修改项的旧提交已不在当前分支历史中";
+        ok = false;
+        break;
+      }
       const rev = git(dir, ["revert", "--no-commit", ...[...shas].reverse()]);
       if (!rev.ok) {
         git(dir, ["revert", "--abort"]);
@@ -902,8 +912,8 @@ export function applyReverts(app: App, rootId: string, worktrees: WorktreeRef[],
     }
     if (!ok) {
       for (const m of made) git(m.dir, ["reset", "-q", "--hard", m.head]);
-      updateTask(app, rootId, r.seq, {}, { by: "host", kind: "revert", text: "回退和后来的改动冲突，没有回退；这一轮在现在的代码上改" });
-      log(`${taskLabel(r.seq)} 回退有冲突，改为在现在的代码上改`);
+      updateTask(app, rootId, r.seq, {}, { by: "host", kind: "revert", text: `${reason}，没有回退；这一轮在现在的代码上改` });
+      log(`${taskLabel(r.seq)}：${reason}，没有回退`);
       continue;
     }
     const kept = Object.fromEntries(Object.keys(t.commits).map((space) => [space, [] as string[]]));
