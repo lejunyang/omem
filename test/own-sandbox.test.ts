@@ -23,7 +23,7 @@ it.skipIf(process.platform === "win32")("mounts only the assigned workspace, pri
   const plan = ownMounts(box, cwd, { ro: ["/work"], rw: [] }, "/data/inbox/r");
   expect(plan.rw).toEqual(["/home/me/.cache", "/data/inbox/r", cwd]);
   expect(plan.ro).toEqual(["/work", "/data/bin"]);
-  const args = bwrapArgs({ ...plan, cwd, command: "node", args: [] });
+  const { args } = bwrapArgs({ ...plan, cwd, command: "node", args: [] });
   expect(args).toContain("/home/me/private");
   expect(args).not.toContain("--unshare-net");
   expect(ownMounts({ ...box, writable: ["/work/child"] }, "/work").rw).not.toContain("/work/child");

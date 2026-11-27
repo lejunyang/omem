@@ -146,7 +146,7 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
         signal.throwIfAborted();
         const network = own?.network ?? account?.network;
         if (network) ro.push(realpathSync(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)));
-        const argv = bwrapArgs({ ...scope.workspace, links, minimalRoot: true, network, privateDirs: [home], hide: [canonical(app.home), "/tmp/.omem-executor-tmp"],
+        const { args: argv } = bwrapArgs({ ...scope.workspace, links, minimalRoot: true, network, privateDirs: [home], hide: [canonical(app.home), "/tmp/.omem-executor-tmp"],
           masked, ro, rw, cwd: call.cwd, command: file, args: call.args });
         return withPinnedBinds(argv, undefined, (args, fds) => spawn(support.bwrap!, args,
           { env, cwd: "/", stdio: ["pipe", "pipe", "pipe", ...fds], detached: true }) as ChildProcessWithoutNullStreams);

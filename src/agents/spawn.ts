@@ -6,7 +6,7 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "n
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
-import { canonical, ownSandboxEnv, type OwnSandbox } from "./own-sandbox.ts";
+import { canonical, ownSandboxEnv, under, type OwnSandbox } from "./own-sandbox.ts";
 import { bwrapArgs, sandboxSupport, sandboxCommand, type SandboxAccount, type WorkspaceMounts } from "./sandbox.ts";
 
 /**
@@ -68,7 +68,9 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   const resolved = resolveCommand(command, env);
   if (!resolved) throw new Error(`找不到命令 ${command}。请安装对应 Agent CLI 或在设置中修改命令。`);
   if (opts.directOnly && resolved.prefix.includes("/c")) throw new Error("命令需要经过 shell 才能启动");
-  const snapshotSources = new Set<string>();
+  const account = opts.ownSandbox ?? opts.sandbox;
+  const npmrc = account && join(canonical(account.home), ".npmrc");
+  const registryFile = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => under(npmrc, p)) ? npmrc : undefined;
   let boxed;
   if (opts.ownSandbox) {
     const box = opts.ownSandbox;
@@ -80,32 +82,24 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-      args: bwrapArgs({ ...plan, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources) };
-  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, snapshotSources) : null;
-  const account = opts.ownSandbox ?? opts.sandbox;
-  const npmrc = account && join(canonical(account.home), ".npmrc");
-  const showRegistry = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => npmrc === p || npmrc.startsWith(p + "/"));
+      ...bwrapArgs({ ...plan, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
+  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, registryFile) : null;
+  // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
+  const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;
   const start = (argv: string[], fds: number[]) => {
-    // Replace only the final credential mask for this identity. The pipe holds a
-    // snapshot, so a host-side login during the turn cannot reveal a new token.
-    const end = showRegistry ? argv.indexOf("--") : -1;
-    const index = end < 0 ? -1 : argv.findIndex((arg, i) => i < end && arg === "--ro-bind" && argv[i + 1] === "/dev/null" && argv[i + 2] === npmrc);
-    const config = index >= 0 && npmrc ? sandboxNpmrc(npmrc) : undefined;
-    const pipe = fds.length + 3;
-    if (config) argv.splice(index, 2, "--ro-bind-data", String(pipe));
     const child = spawn(boxed?.file ?? resolved.file, argv, {
       cwd: opts.cwd, env: boxed?.env ?? env,
-      stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...fds, ...(config ? ["pipe" as const] : [])],
+      stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...(config ? ["pipe" as const] : []), ...fds],
       shell: false, windowsHide: true, detached: process.platform !== "win32",
     });
     if (config) {
-      const input = child.stdio[pipe] as Writable;
+      const input = child.stdio[3] as Writable;
       input.on("error", () => {});
       input.end(config);
     }
     return child;
   };
-  const child = boxed && snapshotSources.size ? withPinnedBinds(boxed.args, snapshotSources, start) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
+  const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, config ? 4 : 3) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
   child.stdin?.on("error", () => {});
   return child;
 }

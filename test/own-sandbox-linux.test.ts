@@ -9,7 +9,7 @@ import { agentProfileSchema, keyedProfiles } from "../src/core/config.ts";
 import { prepareRun, mcpBridge } from "../src/agents/runner.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { openAcp } from "../src/agents/acp.ts";
-import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { bwrapArgs, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { ownRun, sandboxStatus } from "../src/agents/own-run.ts";
 import { launch } from "../src/agents/spawn.ts";
 import { ownMounts } from "../src/agents/own-sandbox.ts";
@@ -199,11 +199,19 @@ it.skipIf(!support.ok)("npm 配置保留源和代理，登录行在沙箱内不�
       "username=fixture", "certfile=/private/client", "keyfile=/private/key"].join("\n");
     app.config.agents.ownSandbox.mode = "require";
     const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+    const neighbor = join(home, "neighbor");
+    writeFileSync(neighbor, "fixture");
     for (const contents of [registry, registry + auth]) {
       writeFileSync(join(home, ".npmrc"), contents);
       const box = ownRun(app, profile, cwd, false).box!;
       box.plan.ro.push(home);
-      const child = launch("/bin/sh", ["-ec", 'test ! -w "$HOME/.npmrc"; cat "$HOME/.npmrc"'],
+      const npmrc = join(home, ".npmrc");
+      const { args, pinned } = bwrapArgs({ ...box.plan, cwd, command: "/bin/sh", args: [] }, npmrc);
+      expect(pinned.has(neighbor)).toBe(true);
+      const index = args.indexOf("--ro-bind-data");
+      expect(args.slice(index, index + 3)).toEqual(["--ro-bind-data", "3", npmrc]);
+      expect(index).toBeLessThan(args.indexOf("--remount-ro"));
+      const child = launch("/bin/sh", ["-ec", 'test ! -w "$HOME/.npmrc"; grep -qx fixture "$HOME/neighbor"; cat "$HOME/.npmrc"'],
         { cwd, ownSandbox: box, env: { OMEM_DESKTOP_TOOLS: "off" } });
       let output = "", errors = "";
       child.stdout.on("data", b => output += b);

@@ -127,12 +127,13 @@ export type SandboxPlan = {
 export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointers" | "privateTmp">;
 
 /**
- * bubblewrap's arguments for a plan. Pure. Mounts go from the shallowest path to the deepest, so a
+ * Build the mount arguments and collect snapshot entries to pin at launch. Mounts go from the shallowest path to the deepest, so a
  * folder inside a hidden one comes back on top of it and a hidden folder inside a read-only one
  * (omem's data folder inside its checkout) stays hidden; at the same path writable wins. /tmp is
  * always private.
  */
-export function bwrapArgs(plan: SandboxPlan, snapshotSources?: Set<string>): string[] {
+export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
+  const pinned = new Set<string>();
   const rank = { dir: 0, tmpfs: 1, ro: 2, rw: 3 } as const;
   const ops = new Map<string, { path: string; kind: keyof typeof rank }>();
   const add = (path: string, kind: keyof typeof rank) => {
@@ -168,7 +169,7 @@ export function bwrapArgs(plan: SandboxPlan, snapshotSources?: Set<string>): str
         const path = join(parent, entry.name);
         if (ops.has(path) || credentials.includes(path)) continue;
         if (entry.isSymbolicLink()) snapshotLinks.push("--symlink", readlinkSync(path), path);
-        else { add(path, access); snapshotSources?.add(path); }
+        else { add(path, access); pinned.add(path); }
       }
     } finally { dir.closeSync(); }
   }
@@ -182,7 +183,8 @@ export function bwrapArgs(plan: SandboxPlan, snapshotSources?: Set<string>): str
   const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
   const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
   // Apply credential masks last, including inside writable caches or a mounted account HOME.
-  const masks = credentials.flatMap(path => {
+  const npmrc = registryFile && credentials.includes(registryFile) && statSync(registryFile, { throwIfNoEntry: false })?.isFile() ? registryFile : undefined;
+  const masks = credentials.filter(path => path !== npmrc).flatMap(path => {
     const stat = statSync(path, { throwIfNoEntry: false });
     if (!stat) return [];
     return stat.isDirectory() ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path];
@@ -194,10 +196,12 @@ export function bwrapArgs(plan: SandboxPlan, snapshotSources?: Set<string>): str
   // A read-only host root still exposes live filesystem sockets. Networked runs start with
   // the runtime directories and explicit run mounts, leaving host service sockets outside.
   const root = n || plan.minimalRoot ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
-  return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, ...snapshotLinks, ...masks, ...(plan.commandMounts ?? []),
+  const args = ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, ...snapshotLinks, ...masks, ...(plan.commandMounts ?? []),
+    ...(npmrc ? ["--ro-bind-data", "3", npmrc] : []),
     ...[...snapshots].flatMap(([p, access]) => access === "ro" ? ["--remount-ro", p] : []),
     ...(n ? ["--unshare-net", "--tmpfs", "/run", ...(n.secrets && existsSync(n.secrets) ? ["--tmpfs", n.secrets] : []), "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
     ...ca, "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
+  return { args, pinned, npmrc };
 }
 
 export function egressRequested(config: import("../core/config.ts").Config, profile: object, own = false) {
@@ -286,7 +290,7 @@ export function omemInstallDir() {
  * What `launch` starts instead of the command, for a run of one user's own account: bwrap with
  * the mounts worked out from where the command really lives.
  */
-export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, snapshotSources?: Set<string>): { file: string; args: string[]; env: Record<string, string> } {
+export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, registryFile?: string) {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
   const hide = [...new Set([...acct.hide, homedir(), "/tmp"].filter((p) => isAbsolute(p) && existsSync(p)).map(real))];
@@ -325,7 +329,7 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ privateTmp: workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: [...new Set(acct.masked?.flatMap(path => [path, real(path)]))], network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources),
+    ...bwrapArgs({ privateTmp: workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: [...new Set(acct.masked?.flatMap(path => [path, real(path)]))], network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, registryFile),
     env: sandboxEnv(baseEnv, runEnv, acct, hide, nodeBin),
   };
 }
