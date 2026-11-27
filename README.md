@@ -708,6 +708,7 @@ pnpm run check        # 类型检查 + 测试 + 构建
 pnpm run build:plugins   # 只构建插件页面（web/dist/plugins/<id>）和 SDK；dev 时 Vite 直接从源码提供插件页面，带热更新
 node scripts/screens.ts http://127.0.0.1:5173 screens   # 桌面与手机截图，并检查元素溢出（有问题退出码非零；OVERFLOW_REPORT_ONLY=1 只报告）
 node scripts/doc-screens.ts         # 文档站与 README 的功能截图（先 pnpm run build；用虚构演示数据，输出 site/public/screens）
+node scripts/card-preview.ts        # 不用飞书看卡片：用真实卡片代码生成样例并截图（--site 重画文档站的卡片截图）
 pnpm --filter omem-docs run dev   # 文档站（VitePress）
 node scripts/eval-retrieval.ts corpus.jsonl queries.jsonl [--vector]
 node scripts/bench/fetch.ts [名称]   # 公开评测数据：下载、校验哈希、转换（清单 scripts/bench/datasets.json；手动跑）
@@ -750,7 +751,7 @@ packages/cli          轻量命令行（@omem-ai/cli）：只有连远程 omem �
 packages/plugin-sdk   插件 SDK（@omem-ai/plugin-sdk，不是插件）：client.ts 是插件页面与外壳的桥，blocks.ts 画表单和图表，objects.ts / slots.ts 是对象和插槽的类型，service.mjs 是插件服务的 HTTP / WebSocket 帮助模块
 skills/library  内置技能（如 lark-messaging、lark-docs、lark-suite、desktop-control、wiki-writing，可带 references/），启动时播种到 library/_skills（已有的不覆盖，新版新增的技能补进）
 .agents/skills  在本仓库开发时给编码 Agent 的技能（网页设计约定、osdk、中文表达检查）
-scripts/      脚本：更新（upgrade.ts）、截图与溢出检查（screens.ts、overflow-check.ts；文档站功能截图 doc-screens.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
+scripts/      脚本：更新（upgrade.ts）、截图与溢出检查（screens.ts、overflow-check.ts；文档站功能截图 doc-screens.ts；飞书卡片预览 card-preview.ts）、检索与记忆评测、规模测试、临时转发（relay.mjs）
 vscode/       VS Code 插件（workspace 里的包 omem-vscode；omem 的网页版 VS Code 启动前从源码编译装进去，连本机 omem 不用设置）：连接方式（本机 / 直接 / 本机配对的设备）、交办列表、评审问题评论线程、选中提问与修改点、发起交办、修改项与看改动、方案视图（按决定看改动）；在真实 VS Code 里跑的测试在 vscode/test
 chrome/       Chrome 扩展（workspace 里的包 omem-chrome）：DevTools 网络面板（筛选、Mock、资源搜索）、用户状态、设备模拟与居中模拟器、「拾取」（截图、元素样式与间距、侧栏拾取篮）、「录制」（侧栏，把操作、请求和截图交给 omem 整理成技能）、「演示」（侧栏顶部，拾取和录制记进一次演示）；默认不连 CDP，注入页面的脚本在 chrome/src/inject，扩展自己的约定在 chrome/AGENTS.md，真实 Chromium 的 e2e 在 chrome/e2e
 site/         文档站（VitePress，workspace 里的包 omem-docs）：功能介绍与安装使用，截图在 site/public/screens，GitHub Pages 发布（.github/workflows/docs.yml）

@@ -5,6 +5,12 @@ kind: reference
 updated: 2026-11-27
 ---
 
+## 飞书卡片不用登录也能预览；文档站加了卡片截图（2026-11-28）
+
+- `node scripts/card-preview.ts`：用真实的卡片代码（`askCard`、`viewCard`、阶段卡和方案确认的排版）在临时数据目录里生成样例，用开发依赖 open-feishu-card 按电脑和手机宽度画出来截图；`--json` 画任意卡片，`--site` 重画文档站的 `lark-card-stage` / `lark-card-design` / `lark-card-view`（机器人与卡片页）。和客户端的差别写在脚本开头和 docs/v2/lark-cards.md 第 5 节。
+- 方案确认的排版提成纯函数 `designConfirmation`（`src/designs/work.ts`），脚本和交办共用。
+- 预览里看出来的：回答后的宿主卡片原来还是灰色卡片头，灰色的“已回答”标签几乎看不见；现在宿主卡片回答后也是不着色的卡片头，颜色只在标签上。
+
 ## 长任务的任务书、监工汇报和查询接口（2026-11-27）
 
 从 `src/agents/supervisor.ts` 看一轮监工怎样收到任务书、本人补充和跑偏信号。`src/agents/supervisor-report.ts` 把报告记入时间线并更新原进度卡。编码和工作 Agent 按同一预算派活和续轮，工作者待答的问题会保留到监工处理。
