@@ -71,7 +71,7 @@ function newId(name: string) {
   for (let n = draft.value.length; ; n++) if (!draft.value.some((g) => g.id === `group-${n}`)) return `group-${n}`;
 }
 async function addGroup() {
-  const name = (await promptDialog("新建 AI 组", { placeholder: "如 写作、监工", message: "组名也是命令：在对话里发 /组名 就换到这一组。" }))?.trim();
+  const name = (await promptDialog("新建 AI 组", { placeholder: "如 写作、跟进", message: "组名也是命令：在对话里发 /组名 就换到这一组。" }))?.trim();
   if (!name) return;
   const id = newId(name);
   draft.value.push({ id, name, items: [] });
