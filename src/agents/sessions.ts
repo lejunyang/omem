@@ -642,7 +642,7 @@ ${WAKE_NOTE}`
             parts: prep.parts,
             scene: prep.scene,
             ...turnMessage(prep, !resume),
-            ownSandbox: prep.isolation.box, allowWrites: prep.allowWrites, doubaoPermission: prep.doubaoPermission,
+            workspace: prep.workspace, ownSandbox: prep.isolation.box, allowWrites: prep.allowWrites, doubaoPermission: prep.doubaoPermission,
             modes: prep.modes,
             fullAccess: prep.fullAccess, acpWritable: prep.acpWritable,
             signal: ctx.signal,
@@ -746,7 +746,7 @@ ${WAKE_NOTE}`
             parts: curPrep.parts,
             scene: curPrep.scene,
             ...turnMessage(curPrep, true, carry),
-            ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites, doubaoPermission: curPrep.doubaoPermission,
+            workspace: curPrep.workspace, ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites, doubaoPermission: curPrep.doubaoPermission,
             modes: curPrep.modes,
             fullAccess: curPrep.fullAccess, acpWritable: curPrep.acpWritable,
             signal: ctx.signal,
@@ -773,7 +773,7 @@ ${WAKE_NOTE}`
           const handle = await openAcp(profile, {
             app, cwd, signal, resumeSessionId, env: networkEnvironment(app, profile), strictSelection,
             cleanup: await sessionCleanup(app, profile, { cwd, runId: ctx.run.id, persistSession: true }, emit),
-            mcp: selected.mcp, extraMcp: selected.extraMcp, ownSandbox: selected.isolation.box,
+            mcp: selected.mcp, extraMcp: selected.extraMcp, workspace: selected.workspace, ownSandbox: selected.isolation.box,
             allowWrites: selected.allowWrites, modes: selected.modes, fullAccess: selected.fullAccess,
             acpWritable: selected.acpWritable, system: selected.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
           }, emit);

@@ -80,7 +80,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-      args: bwrapArgs({ ...plan, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources) };
+      args: bwrapArgs({ ...plan, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources) };
   } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, snapshotSources) : null;
   const account = opts.ownSandbox ?? opts.sandbox;
   const npmrc = account && join(canonical(account.home), ".npmrc");

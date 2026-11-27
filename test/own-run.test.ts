@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { ownRun, sandboxStatus } from "../src/agents/own-run.ts";
 import { shortPath } from "../src/agents/own-sandbox.ts";
-import { bwrapArgs, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { prepareRun } from "../src/agents/runner.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
@@ -193,7 +193,7 @@ it.skipIf(!support.ok)("获准的 Git 命令能从额外目录启动，也能通
   for (const path of [cwd, bin, repo, hidden, state]) mkdirSync(path, { recursive: true });
   for (const path of [hidden, state]) writeFileSync(join(path, "private"), "fixture");
   writeFileSync(join(repo, "marker"), "work");
-  writeFileSync(join(bin, "git"), '#!/bin/sh\nif test "$1" = -C; then cd "$2" || exit 2; fi\ntest -f marker && test ! -e ../hidden/private && test ! -e ../state/private && echo approved >> result\n', { mode: 0o755 });
+  writeFileSync(join(bin, "git"), '#!/bin/sh\nif test "$1" = -C; then cd "$2" || exit 2; fi\ntest -f /tmp/shared-marker && test -f marker && test ! -e ../hidden/private && test ! -e ../state/private && echo approved >> result\n', { mode: 0o755 });
   vi.stubEnv("HOME", home);
   vi.stubEnv("PATH", bin + ":" + process.env.PATH);
   vi.stubEnv("CODEX_HOME", state);
@@ -202,7 +202,7 @@ it.skipIf(!support.ok)("获准的 Git 命令能从额外目录启动，也能通
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
   const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: "personal", runId: null, profile, cwd });
   try {
-    const child = launch("/bin/sh", ["-ec", '(cd "$1" && git fetch); git -C "$1" fetch', "sh", repo],
+    const child = launch("/bin/sh", ["-ec", 'touch /tmp/shared-marker; (cd "$1" && git fetch); git -C "$1" fetch', "sh", repo],
       { cwd, ownSandbox: prep.isolation.box, env: prep.mcp.env });
     let err = "";
     child.stderr.on("data", chunk => err += chunk);
@@ -229,8 +229,8 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
   try {
     const box = prep.isolation.box!;
     expect(box.readOnly).toBe(true);
-    const args = bwrapArgs({ ...box.plan, cwd: prep.cwd, command: profile.command, args: [] });
-    expect(args.some((arg, i) => arg === "--tmpfs" && args[i + 1] === "/tmp")).toBe(true);
+    const privateTmp = box.plan.work.privateTmp!;
+    expect(existsSync(privateTmp)).toBe(true);
     expect([...box.plan.ro, ...box.plan.rw]).not.toContain("/tmp");
     expect(box.plan.rw).toContain(allowed);
     const name = "private-" + app.home.split("/").at(-1);
@@ -239,6 +239,9 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
     expect((await once(child, "close"))[0]).toBe(0);
     expect(existsSync(join("/tmp", name))).toBe(false);
     expect(existsSync(join(allowed, "result"))).toBe(true);
+    expect(readFileSync(join(privateTmp, name), "utf8")).toBe("private\n");
+    revokeToolToken(prep.token);
+    await vi.waitFor(() => expect(existsSync(privateTmp)).toBe(false));
   } finally {
     revokeToolToken(prep.token); app.db.close();
     rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });

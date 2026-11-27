@@ -23,7 +23,6 @@ export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; re
 /** What a run for one user's own account carries on its profile (accounts.ts sets it in prepareRun). */
 export type SandboxAccount = {
   guarded?: string;
-  privateTmp?: string;
   /** In a borrowed HOME, bind only shared state and create the other required directories privately. */
   borrowed?: { state: string[]; dirs: string[] };
   masked?: string[];
@@ -326,7 +325,7 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ privateTmp: acct.privateTmp ?? workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: [...new Set(acct.masked?.flatMap(path => [path, real(path)]))], network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources),
+    args: bwrapArgs({ privateTmp: workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: [...new Set(acct.masked?.flatMap(path => [path, real(path)]))], network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources),
     env: sandboxEnv(baseEnv, runEnv, acct, hide, nodeBin),
   };
 }
