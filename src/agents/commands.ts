@@ -289,12 +289,14 @@ const commands: Record<string, Command> = {
       if (!model && !effort) return "没看出要改成什么。用法：/model 模型名 effort=low|medium|high";
       if (persist) {
         const { actor } = threadActor(app, thread);
-        const target = resolveRunProfile(app, { actor, profileId: "spec" in actor ? undefined : profileId, model, effort });
+        const prior = "spec" in actor ? actor.spec : app.config.agents.roleModels.assistant?.[profileId!];
+        const target = resolveRunProfile(app, { actor, profileId: "spec" in actor ? undefined : profileId,
+          model: model ?? prior?.model, effort: effort ?? prior?.effort });
         const conflict = policyReason(actorScope(app, actor, "ask"), target);
         if (conflict) return conflict;
         // An agent spec answering here carries its own model/effort: save it on the spec, since
         // role defaults never apply to spec runs.
-        const answering = thread.settings.spec ? findAgentSpec(app, thread.settings.spec) : null;
+        const answering = "spec" in actor ? actor.spec : null;
         if (answering) {
           saveAgentSpec(app, { name: answering.name, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }, "user");
           return `已把 Agent 档案 ${answering.name} 的默认改为 ${model ?? "模型不变"} / ${effort ?? "强度不变"}。`;

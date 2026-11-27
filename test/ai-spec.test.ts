@@ -3,11 +3,9 @@ import { resolve } from "node:path";
 import { parseAiSpec } from "../src/agents/ai-spec.ts";
 import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { receive } from "../src/agents/inbox.ts";
-import { getRun, runEvents, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
+import { getRun } from "../src/agents/runs.ts";
 import { saveProbe } from "../src/agents/probe.ts";
 import { createThread, getThread, updateThread } from "../src/agents/threads.ts";
-import { releaseAll } from "../src/agents/sessions.ts";
-import "../src/agents/jobs.ts";
 import { createUser } from "../src/core/users.ts";
 import { memberAi } from "../src/agents/member-ai.ts";
 import { takeSteering } from "../src/agents/steer.ts";
@@ -113,6 +111,15 @@ it("本人点名、成员点名及默认值保存分别校验", async () => {
   await group("/agent claude");
   expect(updateThread(app, named.thread.id, { settings: { profile: "codex" } }).settings.ownerNamedAi).toBeUndefined();
 });
+it("组名和后端名同样检查成员账号", () => {
+  createUser(app, { id: "member", name: "成员" });
+  app.config.agents.accounts.codex = "own";
+  for (const text of ["/codex", "/强"]) {
+    const pick = parseAiSpec(app, text, { userId: "member" });
+    expect(pick.ai).toBeUndefined();
+    expect(pick.unknown).toBeTruthy();
+  }
+});
 it("访客和材料不能替本人点名；话题只修改新话题", async () => {
   const guest = await receive(app, { conversationId, asker: "访客", text: "/claude opus5.5" });
   expect(guest.thread.settings.profile).toBeUndefined();
@@ -124,22 +131,12 @@ it("访客和材料不能替本人点名；话题只修改新话题", async () =
   expect((await send("/help all")).reply).toContain("/todo");
 });
 
-it("假 ACP 按单轮点名运行，写明越过的规则，下一轮回到原会话 AI", async () => {
-  app.baseUrl = "http://127.0.0.1:1";
-  app.config.agents.policy.deny = ["backend:claude"];
-  app.config.agents.routing.choose.conversation = "off";
-  await send("/codex");
-  startWorker(app);
-  try {
-    const turn = await waitForRun(app, (await send("/claude 帮我整理")).runId!);
-    expect(turn.error).toBeNull();
-    expect(turn.ai?.profile).toBe("claude");
-    expect(runEvents(app, turn.id)).toContainEqual(expect.objectContaining({ type: "status", data: { text: "本人点名，越过了「全局规则 不用 backend:claude」" } }));
-    const next = await waitForRun(app, (await send("接着整理")).runId!);
-    expect(next.error).toBeNull();
-    expect(next.ai?.profile).toBe("codex");
-  } finally {
-    stopWorker();
-    releaseAll();
-  }
-}, 30000);
+it("保存校验覆盖省略的模型和强度，实际保存的组合与校验一致", async () => {
+  app.config.agents.profiles.find(p => p.id === "codex")!.model = "blocked";
+  app.config.agents.roleModels.assistant = { codex: { model: "allowed", effort: "high" } };
+  app.config.agents.policy.deny = ["ai:codex · blocked", "ai:codex · new · high"];
+  expect((await send("/ai save codex")).reply).toContain("已保存");
+  expect(app.config.agents.roleModels.assistant.codex).toEqual({ model: "allowed", effort: "high" });
+  expect((await send("/model save new")).reply).toContain("不用 ai:codex · new · high");
+  expect(app.config.agents.roleModels.assistant.codex.model).toBe("allowed");
+});

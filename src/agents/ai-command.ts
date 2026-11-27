@@ -30,6 +30,7 @@ export function checkCommandPick(app: App, thread: Thread, userId: string, pick:
     const conflict = policyReason(actorScope(app, actor, "ask"), p);
     if (conflict) throw new Error(conflict);
   }
+  return p;
 }
 
 function applyPick(app: App, thread: Thread, userId: string, pick: AiPick, mode: Mode, rest: string, notes: string[]): string | CommandTask {
@@ -37,18 +38,18 @@ function applyPick(app: App, thread: Thread, userId: string, pick: AiPick, mode:
     const effort = userId === OWNER ? thread.settings.effort : memberThreadAi(app, thread, userId).effort;
     if (effort) pick = { ...pick, effort };
   }
-  checkCommandPick(app, thread, userId, pick, mode === "save");
+  const effective = checkCommandPick(app, thread, userId, pick, mode === "save");
   const named = [pick.profile, pick.model, pick.effort].filter(Boolean).join(" · ");
   if (mode === "chat" && rest) return { thread, task: rest, turnAi: pick, notes };
   if (mode === "save") {
     if (userId !== OWNER) setMemberAi(app, userId, { ...pick, model: pick.model ?? "", effort: pick.effort ?? "" });
     else {
       const { actor } = threadActor(app, thread);
-      if ("spec" in actor) saveAgentSpec(app, { name: actor.spec.name, agent: pick.profile, model: pick.model ?? "", effort: pick.effort ?? "" }, "user");
+      if ("spec" in actor) saveAgentSpec(app, { name: actor.spec.name, agent: pick.profile, model: effective.model ?? "", effort: effective.effort ?? "" }, "user");
       else {
         const next = structuredClone(app.config);
         next.agents.roles[actor.role] = pick.profile;
-        next.agents.roleModels[actor.role] = { ...next.agents.roleModels[actor.role], [pick.profile]: { model: pick.model, effort: pick.effort } };
+        next.agents.roleModels[actor.role] = { ...next.agents.roleModels[actor.role], [pick.profile]: { model: effective.model, effort: effective.effort } };
         saveConfig(next, app.home);
         Object.assign(app.config, next);
       }

@@ -100,8 +100,14 @@ export function parseAiSpec(app: App, text: string, { userId = OWNER }: { userId
   if (group) {
     result.group = group.id;
     result.rest = tail.trim();
-    result.ai = groupPick(app, group.id);
-    if (!result.ai) result.unknown = "AI 组「" + group.name + "」当前没有可用后端。";
+    const pick = groupPick(app, group.id);
+    if (!pick) return { ...result, unknown: "AI 组「" + group.name + "」当前没有可用后端。" };
+    if (userId !== OWNER) {
+      const p = profiles.find(p => p.id === pick.profile)!;
+      const plan = memberAccountPlan(app, userId, { ...p, model: pick.model, effort: pick.effort });
+      if (plan.kind === "blocked") return { ...result, unknown: plan.reason };
+    }
+    result.ai = pick;
     return result;
   }
 
