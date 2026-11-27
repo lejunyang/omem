@@ -59,7 +59,7 @@ const commands: Record<string, Command> = {
         ...["space", "agent", "model", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
         "",
         "**快捷**",
-        ...["remember", "todo", "search", "review", "runs", "whoami", "login", "演示", "演示结束"].map(line),
+        ...["remember", "todo", "search", "review", "监工", "runs", "whoami", "login", "演示", "演示结束"].map(line),
         "",
         "其他文字照常交给助理。",
       ].join("\n"),
@@ -478,6 +478,11 @@ const commands: Record<string, Command> = {
       const code = createLoginLink(app, inb.userId ?? OWNER, thread.channel);
       return `在浏览器里打开，点“登录”：${base}/api/auth/link/${code}\n\n5 分钟内有效，只能用一次，不要转发给别人。`;
     },
+  },
+  监工: {
+    usage: "/监工 [AI] 任务",
+    help: "开长任务；在任务话题里看状态、暂停、继续、结束、加时或换 AI",
+    run: async ({ app, thread, args, inb }) => (await import("./supervisor-command.ts")).supervisorCommand(app, thread, args, inb),
   },
   演示: {
     usage: "/演示 <要教什么>",

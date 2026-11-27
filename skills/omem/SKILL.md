@@ -81,6 +81,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `study` | 研究：提方向、逐个试验、读记录、归并发现、在对话里改写发现或标已改好、把发现交给改、结束方向、登记范围内推送；study_push 仅宿主按授权临时授予 | [references/flows.md](references/flows.md) |
 | `notifications` | 事项通知排查：关联修复、通知检查与重发、忽略规则 | 同上 |
 | `wiki` | 读写 Wiki 页面、生成 Wiki | [references/wiki.md](references/wiki.md) |
+| `supervise` | 开长任务、转达本人补充、看进展，监工提交每轮报告 | [references/supervise.md](references/supervise.md) |
 | `delegate` | 交给别的 Agent、请教、选 AI、看运行记录 | [references/agents.md](references/agents.md) |
 | `skills` | 技能与 Agent 档案 | 同上 |
 | `remote` | 远程操作的录制：列出、读步骤和请求，整理成技能（配合 `save_skill` 的 `from_recording`） | [references/remote.md](references/remote.md) |

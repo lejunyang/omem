@@ -23,6 +23,8 @@ import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchi
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
 import { readBoard, dispatchBoard, cancelBoard, reportPage, reviewBoard } from "./work-board.ts";
 import { workInConversation, refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
+import { longTaskText } from "./supervisor-command.ts";
+import { changeLongTask, getLongTask, longTaskInThread, startLongTask, startLongTaskSchema } from "./long-tasks.ts";
 import { executionArgs, executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
 import { designBodySchema } from "../designs/types.ts";
@@ -5606,6 +5608,55 @@ def({
     const { codeHistory } = await import("./code-history.ts");
     return codeHistory(ctx.app, { space: id, paths: a.paths, spaces: ctx.spaces, limit: a.limit });
   },
+});
+
+// A task can be addressed from a different conversation. Its id never grants access to it.
+function supervisorTask(ctx: ToolContext, id: string | undefined, write: boolean) {
+  const thread = runThread(ctx);
+  const task = id ? getLongTask(ctx.app, id) : thread ? longTaskInThread(ctx.app, thread) : null;
+  const user = ctx.userId ?? OWNER;
+  if (!task || !itemAccess(ctx.app, user, task, "read")) throw new HttpError(404, "找不到长任务；在其他会话请传 task_id");
+  space(ctx, task.spaceId);
+  if (write) {
+    if (task.userId !== user || !canWrite(ctx.app, user, task.spaceId)) throw new HttpError(403, "需要任务发起人和所在空间的编辑权限");
+    inScope(ctx, task.spaceId, "长任务", "items.edit");
+  }
+  return task;
+}
+
+def({
+  name: "start_long_task", write: true,
+  description: "本人要求用监工跟进一件长任务时，按原话创建目标和工作话题。返回编号与话题，监工会起草任务书请本人确认。",
+  schema: startLongTaskSchema.omit({ spaceId: true, threadId: true }).extend({ space: z.string().optional() }),
+  handler: (ctx, a) => {
+    if (!ownTurn(ctx)) throw new HttpError(403, "请在本人提出长任务的会话里创建");
+    const { space: target, ...options } = a;
+    const spaceId = writeSpace(ctx, target, "items.edit");
+    const thread = runThread(ctx);
+    const parent = thread ? findThread(ctx.app, thread) : null;
+    const task = startLongTask(ctx.app, { ...options, userId: ctx.userId ?? OWNER, spaceId,
+      threadId: parent?.spaceId === spaceId ? parent.id : undefined });
+    return longTaskText(ctx.app, task);
+  },
+});
+
+def({
+  name: "message_supervisor", write: true,
+  description: "向指定长任务的监工转达本人补充的原话。在任务自己的话题里可以省略 task_id。",
+  schema: z.object({ task_id: z.string().optional(), text: z.string().min(1) }),
+  handler: (ctx, a) => {
+    if (!ownTurn(ctx)) throw new HttpError(403, "请在本人补充要求的会话里转达");
+    const task = supervisorTask(ctx, a.task_id, true);
+    changeLongTask(ctx.app, task.id, { action: "supplement", text: a.text });
+    return `已把补充交给长任务 ${task.id} 的监工。`;
+  },
+});
+
+def({
+  name: "long_task_status",
+  description: "读长任务的目标、状态、监工 AI、预算和最近一次进展。在任务自己的话题里可以省略 task_id。",
+  schema: z.object({ task_id: z.string().optional() }),
+  handler: (ctx, a) => longTaskText(ctx.app, supervisorTask(ctx, a.task_id, false)),
 });
 
 def({

@@ -21,7 +21,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   // Mid-round branch sync: the assistant passes `sync` and waits on the round, the coder calls sync_branch.
   // 情境 became 持续跟进的规则: the assistant's note on save_situation says what to call it with the owner.
   // 实测 2026-11-25：中途交付和编码补充的说明已计入。
-  "assistant": ["agent", 20690, 19991, 1679, 1581],
+  // 监工的创建、查询和转达说明只给有相应工具的对话。
+  "assistant": ["agent", 20919, 19991, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   "archive-rule-writer": ["archive-rule-draft", 3091, 3091, 2091, 2091],

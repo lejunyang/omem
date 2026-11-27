@@ -1,8 +1,10 @@
 # 监工：让一个强模型把一件长任务盯到底
 
-状态：设计（2026-11-27），未实现。依赖 [ai-policy.md](ai-policy.md) 的 AI 组和规则；用到的现有部分见 [coding-loop.md](coding-loop.md)（交办、修改项、谁叫醒谁）、[studies.md](studies.md)（研究）、[flows.md](flows.md)。
+2026-11-27 已接入对话命令、主助手工具、任务书确认和工作话题。当前可点名监工 AI，省略时先取默认监工，再取强模型档位。研究接入和接管已有交办在第 12 节第三期。实际用法见 [对话里的监工](../../site/features/ask.md#让监工盯一件长任务)。
 
-## 1. 现在对助手说“盯着把这件事做完”，会怎样
+下面是整体设计。AI 组和规则见 [ai-policy.md](ai-policy.md)，相关机制见 [coding-loop.md](coding-loop.md)（交办、修改项、谁叫醒谁）、[studies.md](studies.md)（研究）、[flows.md](flows.md)。
+
+## 1. 引入监工前，助手能把一件事跟到哪一步
 
 能做到的：
 

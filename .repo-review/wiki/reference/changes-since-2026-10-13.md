@@ -18,6 +18,10 @@ updated: 2026-11-27
 | `POST /api/long-tasks` | `goal` 必填，可传 `space`、发起会话 `threadId`、`ai`、`budget`、`notifications`，返回新建的草案。 |
 | `PATCH /api/long-tasks/:id` | `action` 取 `pause`、`resume`、`end`、`budget`、`ai` 或 `supplement`。后三项分别传 `budget`、`ai` 或 `text`。预算字段按新总额更新，可只给一项。 |
 
+## 对话里开长任务、给监工补充要求（2026-11-27）
+
+用 `/监工 [AI] 任务` 或请主助手开工作话题，确认任务书后按进度跟进。在话题里查看状态、加时、换 AI、暂停、继续或结束，也可以请助手从另一会话按编号转达原话。见 [对话用法](../../../site/features/ask.md#让监工盯一件长任务)。
+
 ## 卡片聚合复杂内容：清单、成对的值、收起的细节、图片；确认卡片带状态标签（2026-11-27）
 
 - 组件块加 `list`（一条一行，标题前彩色短标签，可带链接和一行说明）、`fields`（成对的名字和值）、`fold`（收起的细节）、`image`（http(s) 图片；飞书里发卡片前宿主下载再上传，不取本机和链路本地地址，失败时是链接）。飞书用卡片自己的元素画（Markdown 里的 `<text_tag>`、`grey-50` 底的分栏、折叠面板），网页由 `packages/plugin-sdk/blocks.ts` 画，展示块里的 Markdown 改用卡片字号，块间距统一为 12px。

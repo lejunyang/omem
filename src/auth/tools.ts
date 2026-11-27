@@ -29,7 +29,7 @@ const toolCapabilities: Record<string, ToolCapability> = {
   save_requirements: "memory.write", split_requirements: "memory.write",
   read_design: "designs.view", assess_design: "memory.write", settle_design: "memory.write",
   list_conversations: "conversations.view", read_conversation: "conversations.view",
-  list_runs: "runs.view", read_run: "runs.view",
+  list_runs: "runs.view", read_run: "runs.view", long_task_status: "items.view",
   metric_read: "metrics.view", metric_define: "memory.write", metric_record: "memory.write",
   read_flow_reviews: "flows.view", read_flow_object: "flows.operate", submit_flow_reconcile: "flows.operate", flow_start: "flows.operate", stage_report: "flows.operate", stage_reopen: "flows.operate",
   switch_run_ai: "runs.operate", take_over_run: "runs.operate",
