@@ -102,12 +102,23 @@ registerAskHandler("ai-command", async (app, ask, args) => {
   if (by !== ask.userId || answer.choice === null) throw new Error("请由发起人选择一个模型。");
 });
 
-export function aiCommand(app: App, thread: Thread, text: string, inb: Inbound) {
-  const wrapper = /^\/ai(?:\s+|$)/i.test(text);
+export function parseAiCommand(app: App, text: string, userId?: string) {
+  const word = text.split(/\s/, 1)[0];
+  // A path such as /claude/settings.json may start with a backend name.
+  if (word.includes("/", 1)) return null;
+  const wrapper = word.toLowerCase() === "/ai";
   let specText = wrapper ? text.replace(/^\/ai\s*/i, "") : text.slice(1);
   const save = wrapper ? /^save\s+/i.test(specText) : /^(\S+)\s+save(?:\s|$)/i.test(specText);
   if (save) specText = wrapper ? specText.replace(/^save\s+/i, "") : specText.replace(/^(\S+)\s+save\b/i, "$1");
-  const spec = parseAiSpec(app, specText, { userId: inb.userId });
-  if (!spec.ai && !spec.group && !spec.ambiguous && !spec.unknown) return wrapper ? "用法：/ai save 后端 模型 强度，或 /ai off。" : null;
+  const spec = parseAiSpec(app, specText, { userId });
+  if (!spec.ai && !spec.group && !spec.ambiguous && !spec.unknown)
+    return wrapper ? "用法：/ai save 后端 模型 强度，或 /ai off。" : null;
+  return { spec, save };
+}
+
+export function aiCommand(app: App, thread: Thread, text: string, inb: Inbound) {
+  const parsed = parseAiCommand(app, text, inb.userId);
+  if (!parsed || typeof parsed === "string") return parsed;
+  const { spec, save } = parsed;
   return applyAiSpec(app, thread, inb.userId ?? OWNER, spec, save ? "save" : "chat");
 }

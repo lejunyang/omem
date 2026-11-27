@@ -55,7 +55,7 @@ const commands: Record<string, Command> = {
     help: "列出命令",
     run: ({ args }) => args.toLowerCase() !== "all" ? [
       line("topic"), "/<后端> [模型] [强度] [任务] — 换 AI，带任务只用一轮；也可用组名",
-      "/监工 — 长任务监工", line("stop"), line("new"), "后端名、启动命令名、你加的别名都能当命令。完整清单见 /help all。",
+      "/跟进 [AI] 任务 — 让指定的 AI 持续跟进", line("stop"), line("new"), "后端名、启动命令名、你加的别名都能当命令。完整清单见 /help all。",
     ].join("\n") : [
         "/<后端或组名> [模型] [强度] [任务] — 换 AI。后端名、启动命令名、你加的别名都能当命令。",
         "**会话**",
@@ -65,7 +65,7 @@ const commands: Record<string, Command> = {
         ...["space", "agent", "model", "ai", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
         "",
         "**快捷**",
-        ...["remember", "todo", "search", "review", "runs", "whoami", "login", "演示", "演示结束"].map(line),
+        ...["remember", "todo", "search", "review", "跟进", "runs", "whoami", "login", "演示", "演示结束"].map(line),
         "",
         "其他文字照常交给助理。",
       ].join("\n"),
@@ -511,6 +511,11 @@ const commands: Record<string, Command> = {
       const code = createLoginLink(app, inb.userId ?? OWNER, thread.channel);
       return `在浏览器里打开，点“登录”：${base}/api/auth/link/${code}\n\n5 分钟内有效，只能用一次，不要转发给别人。`;
     },
+  },
+  跟进: {
+    usage: "/跟进 [AI] 任务",
+    help: "开长任务；在任务话题里看状态、暂停、继续、结束、加时或换 AI",
+    run: async ({ app, thread, args, inb }) => (await import("./supervisor-command.ts")).supervisorCommand(app, thread, args, inb),
   },
   演示: {
     usage: "/演示 <要教什么>",

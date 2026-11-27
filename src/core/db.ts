@@ -2561,6 +2561,21 @@ export const migrations: readonly string[] = [
    alter table reply_outcomes add column sweep_tries integer not null default 0;
    create index reply_outcomes_task on reply_outcomes(task_id);
    create index reply_outcomes_unswept on reply_outcomes(at) where swept_at is null;`,
+  `create table if not exists long_tasks (
+     id text primary key, space_id text not null references spaces(id), user_id text not null,
+     thread_id text not null unique references conversations(id) on delete cascade,
+     item_id text not null unique references items(id) on delete cascade,
+     goal text not null, ai text not null, status text not null default 'draft',
+     brief text not null, confirmed_at text, supplements text not null default '[]',
+     budget text not null, notifications text not null, notes text not null default '[]',
+     state text not null default '{}', created_at text not null, updated_at text not null
+   );
+   create index if not exists long_tasks_space on long_tasks(space_id, updated_at desc);
+   create index if not exists long_tasks_user on long_tasks(user_id, updated_at desc);
+   create index if not exists long_tasks_open_items on long_tasks(item_id) where status in ('draft','active','paused');
+   create index if not exists long_tasks_updated on long_tasks(updated_at desc);`,
+  `create index if not exists supervised_code_rounds on runs(json_extract(input,'$.longTaskId'))
+     where kind='code' and json_extract(input,'$.longTaskId') is not null;`,
 ];
 
 export type Db = DatabaseSync;

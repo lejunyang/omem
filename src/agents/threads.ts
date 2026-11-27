@@ -240,11 +240,13 @@ export function resolveThread(app: App, addr: ThreadAddress): { thread: Thread; 
   const mode = cs.mode ?? (addr.topicId ? "topic" : "chat");
   const key = mode === "topic" && addr.topicId ? `${addr.chatId}#${addr.topicId}` : addr.chatId;
   const spaceId = cs.spaceId ?? addr.spaceId ?? (["lark", "lark-watch"].includes(addr.channel) ? captureSpace(app, addr.chatId) : "personal");
-  const row = one<Row>(app.db, "select * from conversations where channel = ? and external_id = ? and status = 'active' order by updated_at desc limit 1", addr.channel, key);
+  // An isolated work topic waiting for its first reply has the chat's delivery key, but does not own the chat.
+  const chatOnly = key === addr.chatId ? " and json_extract(settings, '$.isolatedTopic') is not 1" : "";
+  const row = one<Row>(app.db, `select * from conversations where channel = ? and external_id = ? and status = 'active'${chatOnly} order by updated_at desc limit 1`, addr.channel, key);
   const settings: ThreadSettings = { ...(cs.spec ? { spec: cs.spec } : {}), ...(cs.lark ? { lark: cs.lark } : {}) };
   if (!row) {
     // A pinned "/resume" may have re-attached an archived thread to this key; otherwise start fresh.
-    const prev = one<Row>(app.db, "select * from conversations where channel = ? and external_id = ? order by updated_at desc limit 1", addr.channel, key);
+    const prev = one<Row>(app.db, `select * from conversations where channel = ? and external_id = ?${chatOnly} order by updated_at desc limit 1`, addr.channel, key);
     return { thread: createThread(app, { spaceId, channel: addr.channel, key, title: addr.title, parentId: prev?.id ?? null, settings, userId: addr.userId }), started: "new" };
   }
   const t = toThread(row);
