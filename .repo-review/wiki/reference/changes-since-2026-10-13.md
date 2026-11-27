@@ -5,6 +5,12 @@ kind: reference
 updated: 2026-11-27
 ---
 
+## 飞书卡片不用登录也能预览；文档站加了卡片截图（2026-11-28）
+
+- `node scripts/card-preview.ts`：用真实的卡片代码（`askCard`、`viewCard`、阶段卡和方案确认的排版）在临时数据目录里生成样例，用开发依赖 open-feishu-card 按电脑和手机宽度画出来截图；`--json` 画任意卡片，`--site` 重画文档站的 `lark-card-stage` / `lark-card-design` / `lark-card-view`（机器人与卡片页）。和客户端的差别写在脚本开头和 docs/v2/lark-cards.md 第 5 节。
+- 方案确认的排版提成纯函数 `designConfirmation`（`src/designs/work.ts`），脚本和交办共用。
+- 预览里看出来的：回答后的宿主卡片原来还是灰色卡片头，灰色的“已回答”标签几乎看不见；现在宿主卡片回答后也是不着色的卡片头，颜色只在标签上。
+
 ## 卡片聚合复杂内容：清单、成对的值、收起的细节、图片；确认卡片带状态标签（2026-11-27）
 
 - 组件块加 `list`（一条一行，标题前彩色短标签，可带链接和一行说明）、`fields`（成对的名字和值）、`fold`（收起的细节）、`image`（http(s) 图片；飞书里发卡片前宿主下载再上传，不取本机和链路本地地址，失败时是链接）。飞书用卡片自己的元素画（Markdown 里的 `<text_tag>`、`grey-50` 底的分栏、折叠面板），网页由 `packages/plugin-sdk/blocks.ts` 画，展示块里的 Markdown 改用卡片字号，块间距统一为 12px。

@@ -201,26 +201,28 @@ function answeredCard(app: App, ask: Ask): Record<string, unknown> {
     : [{ markdown: resolveCitationsSync(app, truncate(ask.question, approval ? 800 : 1500)) }];
   const titled = (title: string, tag: { text: string; tone: Tone }): Pick<CardSpec, "title" | "subtitle" | "tag"> =>
     head ? { title: head.title || title, ...(head.subtitle ? { subtitle: truncate(head.subtitle, 80) } : {}), tag } : ask.kind === "suggestion" ? {} : { title };
+  // A host card's outcome is its tag on a plain header (a grey header would swallow a grey tag); others turn grey.
+  const grey = head ? {} : { color: "grey" };
   // Someone omem does not know shows as a bare Feishu id: leave the name out then.
   const name = ask.answeredBy ? userName(app, ask.answeredBy) : null;
   const when = { by: name && !/^o[un]_/.test(name) ? name : null, at: ask.answeredAt, timeZone: app.config.timezone };
   // Lapsed without an answer (agents/ask-expiry.ts): why, and no buttons.
-  if (ask.status === "cancelled" && ask.lapsed) return buildCard({ color: "grey", ...titled(`${TITLE[ask.kind]} · 已失效`, { text: "已失效", tone: "neutral" }), blocks: [...question, ...decidedBlocks({ verdict: `已失效：${ask.lapsed}`, at: ask.answeredAt, timeZone: app.config.timezone })] });
+  if (ask.status === "cancelled" && ask.lapsed) return buildCard({ ...grey, ...titled(`${TITLE[ask.kind]} · 已失效`, { text: "已失效", tone: "neutral" }), blocks: [...question, ...decidedBlocks({ verdict: `已失效：${ask.lapsed}`, at: ask.answeredAt, timeZone: app.config.timezone })] });
   if (ask.status === "cancelled") {
     // Closed with a note on how (the assistant passed on the owner's answer): say so, not just "lapsed".
     const d = ask.result ? { verdict: "已在别处处理", result: resolveCitationsSync(app, ask.result), plain: true } : { verdict: "已失效（在对话或网页上接着处理了）" };
     const state = ask.result ? "已在别处处理" : "已失效";
-    return buildCard({ color: "grey", ...titled(`${TITLE[ask.kind]} · ${state}`, { text: state, tone: "neutral" }), blocks: [...question, ...decidedBlocks(d)] });
+    return buildCard({ ...grey, ...titled(`${TITLE[ask.kind]} · ${state}`, { text: state, tone: "neutral" }), blocks: [...question, ...decidedBlocks(d)] });
   }
   if (approval) {
     const d = { ...when, verdict: ask.approved ? "批准" : "拒绝", words: ask.answer, result: ask.approved ? ask.result : null };
     const title = ask.approved ? (d.result ? (resultSummary(d.result).ok ? "已批准并执行" : "已批准，执行失败") : "已批准") : "已拒绝";
-    return buildCard({ ...titled(title, { text: ask.approved ? "已批准" : "已拒绝", tone: ask.approved ? "success" : "danger" }), color: decidedColor(d, !!ask.approved), blocks: [...question, ...decidedBlocks(d)] });
+    return buildCard({ ...titled(title, { text: ask.approved ? "已批准" : "已拒绝", tone: ask.approved ? "success" : "danger" }), ...(head ? {} : { color: decidedColor(d, !!ask.approved) }), blocks: [...question, ...decidedBlocks(d)] });
   }
-  if (immediate) return buildCard({ color: "grey", ...titled("已处理", { text: "已处理", tone: "neutral" }), blocks: [...question, ...decidedBlocks({ ...when, verdict: ask.result ?? "已处理" })] });
+  if (immediate) return buildCard({ ...grey, ...titled("已处理", { text: "已处理", tone: "neutral" }), blocks: [...question, ...decidedBlocks({ ...when, verdict: ask.result ?? "已处理" })] });
   const blocks: CardBlock[] = [...question, ...decidedBlocks({ ...when, verdict: ask.value ? "已填写" : `已选：${ask.answer ?? ""}`, result: ask.result ? resolveCitationsSync(app, ask.result) : null, plain: true })];
   if (ask.value && ask.answer) blocks.splice(question.length + 1, 0, { markdown: cardText(truncate(ask.answer, 3000)) });
-  return buildCard({ color: "grey", ...titled(ask.kind === "question" ? "已回答" : TITLE[ask.kind], { text: ask.value ? "已填写" : "已回答", tone: "neutral" }), blocks });
+  return buildCard({ ...grey, ...titled(ask.kind === "question" ? "已回答" : TITLE[ask.kind], { text: ask.value ? "已填写" : "已回答", tone: "neutral" }), blocks });
 }
 
 /** Where an ask goes in Feishu, or null when this channel is not the one to show it. */
