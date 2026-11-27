@@ -1,4 +1,7 @@
 import { checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "./supervisor-code.ts";
+import { classSchema, specAiSchema } from "../core/ai-policy-schema.ts";
+import { proposalArgs, startPolicyDraft, submitPolicyDraft } from "./ai-policy-proposal.ts";
+import { groupPick, policyScope } from "./ai-policy.ts";
 import { inlineStages } from "../flows/inline.ts";
 import { reconcileResultSchema } from "../flows/reconcile-schema.ts";
 import { beforeBehavior, changeWords, noteBehavior } from "./behavior-changes.ts";
@@ -1082,6 +1085,8 @@ def({
     name: z.string().describe("小写字母、数字、连字符"),
     description: z.string().optional().describe("做什么、什么时候该交给它（用于自动挑选）"),
     prompt: z.string().optional().describe("system prompt 正文：职责、步骤、输出格式、注意事项"),
+    class: classSchema.optional(),
+    ai: specAiSchema.optional(),
     agent: z.string().optional().describe("后端 Agent id（codex、claude…），不填用默认"),
     model: z.string().optional(),
     effort: z.string().optional(),
@@ -1103,6 +1108,21 @@ def({
     const spec = saveAgentSpec(ctx.app, { ...rest, status: draft ? "draft" : (findAgentSpec(ctx.app, a.name)?.status ?? "active") } as never, ctx.actor);
     noteBehavior(ctx, target, spec.name, before, { change_reason, owner_request });
     return `已保存 Agent 档案 ${spec.name}${spec.status === "draft" ? "（草稿，本人 /approve agent " + spec.name + " 后启用）" : ""}。`;
+  },
+});
+
+def({
+  name: "propose_ai_policy",
+  description: "本人要为某类任务设置长期 AI 规则时，传 text 原话交给强组起草。宿主向本人展示影响，确认后保存。规则起草角色用 draft 提交结构化改动。",
+  write: true,
+  schema: proposalArgs,
+  handler: (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以提出 AI 规则");
+    if (ctx.role === "ai-policy-writer" && ctx.runId && a.draft && !a.text)
+      return "已生成确认卡：" + submitPolicyDraft(ctx.app, ctx.runId, a.draft);
+    if (ctx.role === "ai-policy-writer" || !a.text || a.draft) throw new HttpError(400, "主助手传 text，强组起草角色传 draft");
+    const r = startPolicyDraft(ctx.app, a.text, ctx.runId);
+    return `已交给强组起草（运行 ${r.id}），生成预览后由本人确认。`;
   },
 });
 
@@ -1292,10 +1312,10 @@ function openDelegatedTopic(ctx: ToolContext, conversationId: string, work: Agen
 }
 
 const boardDestination = { device: z.string().min(1).optional().describe("设备 id；local 回本机"), mode: z.enum(["borrow", "remote"]).optional().describe("borrow 借后端在本机只读调查；remote 用对方环境"), access: z.enum(["read", "write"]).optional().describe("remote 默认 read；write 要对方接写任务且有空间写权限") };
-const boardExecution = z.union([executionSchema, z.enum(["strong", "standard", "cheap"])]);
+const boardExecution = z.union([executionSchema, z.string().min(1)]);
 function resolveBoardExecution(ctx: ToolContext, value?: z.infer<typeof boardExecution>, device?: string) {
   if (typeof value !== "string") return device && device !== "local" ? value : validateExecution(ctx.app, value, ctx.userId);
-  const tier = ctx.app.config.agents.tiers[value];
+  const tier = groupPick(ctx.app, value, policyScope(ctx.app, "agent"));
   if (!tier) throw new HttpError(400, `请先配置 ${value} 档位，或指定后端与模型`);
   const e = { ...tier, source: "auto" as const, reason: `任务板选用 ${value} 档` };
   return device && device !== "local" ? e : validateExecution(ctx.app, e, ctx.userId);
@@ -1418,7 +1438,7 @@ def({
     if (ctx.role === "supervisor" && (a.work_id || !a.name)) throw new HttpError(400, "在本长任务的话题里用 name 和 task 派活");
     if (a.work_id || (a.own_topic && !a.name)) return continueAgentWork(ctx, a);
     if (!a.name) throw new HttpError(400, "要交给哪个 Agent：传 name（档案名或 assistant）；继续已有的工作传 work_id");
-    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "agent", undefined, findAgentSpec(ctx.app, a.name) ?? undefined));
     const spec = a.name === "assistant" ? { name: "assistant", status: "active", space: undefined } : readAgentSpec(ctx.app, a.name);
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     const extraTools = lendTools(ctx, a.extra_tools);
@@ -1482,7 +1502,6 @@ function requireWorkOperator(ctx: ToolContext, work: AgentWork) {
 async function continueAgentWork(ctx: ToolContext, a: { execution?: z.infer<typeof executionSchema>; work_id?: string; name?: string; task: string; extra_tools?: string[] }) {
   // A rule's run or another device hands work on only as a fresh run (ruleHandoff, peerDispatch), never into a work here.
   if (ctx.peer || (ctx.runId && (getRun(ctx.app, ctx.runId).input as { rule?: unknown }).rule)) throw new HttpError(403, "从别的设备、或在规则的运行里不能接着一项已有的工作：用 run_agent(name, task) 交一件新的");
-  const execution = validateExecution(ctx.app, a.execution, ctx.userId);
   const extraTools = lendTools(ctx, a.extra_tools);
   const lentNote = extraTools.length ? `；这一轮借给它 ${extraTools.join("、")}` : "";
   const { refreshWork, queueAgentRound, MAX_AGENT_WORK_RUNS, workInConversation, forkAgentWorkTo } = await import("./agent-work.ts");
@@ -1493,6 +1512,7 @@ async function continueAgentWork(ctx: ToolContext, a: { execution?: z.infer<type
   requireWorkOperator(ctx, work);
   const agent = a.name ?? work.rounds.filter((r) => r.agent !== "digester").at(-1)?.agent;
   if (!agent) throw new HttpError(400, "说不出用哪个 Agent，先用 run_agent 交办");
+  const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "agent", undefined, findAgentSpec(ctx.app, agent) ?? undefined));
   const assistantScope = assistantTaskScope(ctx, agent);
   // The owner continues the work from another conversation (a new Feishu topic): fork it into
   // this conversation so the specialist's report and every later coordination reply land here.
@@ -1541,8 +1561,8 @@ ${r.answer}${r.missed.length ? `
 
 （回答里有 ${r.missed.length} 处引用的原件在对方那边，这里没有订阅它所在的空间，引用打不开；要用就转述并说明出处在 ${peer}。）` : ""}`;
     }
-    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
     const spec = readAgentSpec(ctx.app, a.name);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "agent", undefined, spec));
     if (spec.status !== "active") throw new HttpError(400, `档案 ${a.name} 是草稿，需要本人先启用`);
     if (spec.name === ctx.spec) throw new HttpError(400, "不能请教自己");
     // From another device the answer can take longer than a forwarded request waits: queue it like run_agent.
@@ -5361,7 +5381,7 @@ async function reviewAIsOf(ctx: ToolContext, raw: Record<string, Execution> | un
   const known = new Set([...reviewChecks(ctx.app).map((c) => c.name), ...REVIEW_AI_PARTS]);
   const unknown = Object.keys(raw).filter((k) => !known.has(k));
   if (unknown.length) throw new HttpError(400, `review_executions 里没有这些评审项：${unknown.join("、")}；可选：${[...known].join("、")}`);
-  return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, validateExecution(ctx.app, v, ctx.userId)!]));
+  return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, validateExecution(ctx.app, v, ctx.userId, false, policyScope(ctx.app, "review"))!]));
 }
 
 const roundReviewSchema = {
@@ -5411,10 +5431,10 @@ def({
   handler: async (ctx, a) => {
     // From another device the caller codes: this machine only prepares the worktree (peer-code.ts).
     if (ctx.peer && (a.execution || a.sync)) throw new HttpError(400, "设备的外部 Agent 交办的编码由它自己做：不能指定这台机器的编码 AI，Git 同步也用不上");
-    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "code"));
     await validateReviewChoice(ctx, a.review_tier, a.review_checks);
     if (a.sync_only && !a.sync) throw new HttpError(400, "sync_only 需要同时给出 sync（拉取或合并 / 变基到哪个分支）");
-    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId);
+    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId, false, policyScope(ctx.app, "review"));
     // A business space stands for its repository when it has just one (codeRepos).
     const ids = [...new Set((await import("./code.ts")).codeRepos(ctx.app, "", a.repo_spaces.map((r) => codeSpace(ctx, r))).map((r) => r.id))];
     // Without one, work on a branch belongs to the item its earlier delegations were done for.
@@ -5544,7 +5564,7 @@ def({
       const { startRereview } = await import("./rereview.ts");
       const r = await startRereview(ctx.app, a.rereview_of, {
         note: a.note, inputs: a.inputs, fetch: a.fetch, spaces: (id) => space(ctx, id), itemFor: (id) => itemFor(ctx, id), peerReviewer,
-        reviewTier: a.review_tier, reviewExecution: validateExecution(ctx.app, a.review_execution, ctx.userId), reviewExecutions,
+        reviewTier: a.review_tier, reviewExecution: validateExecution(ctx.app, a.review_execution, ctx.userId, false, policyScope(ctx.app, "review")), reviewExecutions,
       }, ctx.userId ?? OWNER, ctx.runId);
       if (peerReviewer) return `已开始准备复审，运行 ${r.id}：用 review_task（run_id=${r.id}）取材料（里面有上次以后的改动和要逐条判断的旧问题），评审后用 submit_review 逐项提交，旧问题的结论放在 prior 里。`;
       return `已开始复审，运行 ${r.id}（复审 ${a.rereview_of}）。完成后会通知；进度用 read_run 查看。`;
@@ -5552,7 +5572,7 @@ def({
     if (!a.repo_spaces?.length || !a.branch) throw new HttpError(400, "要写 repo_spaces 和 branch；复审已评审过的分支传 rereview_of");
     const repoSpaces = a.repo_spaces, branch = a.branch;
     const readSpaces = (a.read_spaces ?? []).map((r) => space(ctx, r));
-    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId);
+    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId, false, policyScope(ctx.app, "review"));
     const ids = [...new Set(repoSpaces.map((r) => space(ctx, r)))];
     const itemId = a.item_id ? itemFor(ctx, a.item_id) : undefined;
     // The design the branch is held against: the one named, else the item's latest that says how it should be done.
@@ -5731,8 +5751,8 @@ def({
       if (a.apply_first) throw new HttpError(403, "应用交办涉及推送，请在报告中交给本人确认");
       if (a.task) a = { ...a, task: a.task + "\n\n监工依据：" + a.basis };
     }
-    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
-    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "code"));
+    const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId, false, policyScope(ctx.app, "review"));
     if (a.onto_latest_target && !a.apply_first && !a.fix?.length && !a.later?.length && !a.wontfix?.length) {
       const { latestRound, roundStage } = await import("./code-steer.ts");
       const round = latestRound(ctx.app, a.run_id);
@@ -5969,7 +5989,7 @@ def({
     const r = getRun(ctx.app, a.run_id);
     for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
     const { requestSplit } = await import("./review-chain.ts");
-    const split = await requestSplit(ctx.app, r.id, { note: a.request, revise: true, userId: ctx.userId ?? OWNER, execution: validateExecution(ctx.app, a.execution, ctx.userId) });
+    const split = await requestSplit(ctx.app, r.id, { note: a.request, revise: true, userId: ctx.userId ?? OWNER, execution: validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "req-split")) });
     return `已安排${(split.input as { revise?: boolean }).revise ? "重新整理需求拆分" : "需求拆分"}，运行 ${split.id}；完成后在运行页的“变更”里看，进度用 read_run 查看。`;
   },
 });
@@ -6162,7 +6182,7 @@ def({
   }),
   handler: (ctx, a) => {
     const r = generateWiki(ctx.app, {
-      spaceId: wikiSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution, ctx.userId), pages: a.pages,
+      spaceId: wikiSpace(ctx, a.space), focus: a.focus, autoWrite: a.auto_write, sourceSpaces: a.source_spaces, ai: validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "wiki-write")), pages: a.pages,
       userId: ctx.userId, parentId: ctx.runId, readable: ctx.spaces, writable: ctx.writable ?? ctx.spaces,
     });
     const writes = (r as { writeRuns?: string[] }).writeRuns;
@@ -6182,7 +6202,6 @@ def({
     with_children: z.boolean().optional().describe("默认 true"),
   }),
   handler: async (ctx, a) => {
-    const execution = validateExecution(ctx.app, a.execution, ctx.userId)!;
     const [{ threadActor, releaseThreadSession }, { resolveRunProfile }] = await Promise.all([import("./sessions.ts"), import("./runner.ts")]);
     const root = getRun(ctx.app, a.run_id);
     const allowed = ctx.writable ?? ctx.spaces;
@@ -6190,6 +6209,12 @@ def({
     if (!visible(root)) throw new HttpError(403, "不能访问该运行的空间");
     if (root.kind === "code" || root.kind === "review") throw new HttpError(400, "编码交办换 AI 用 continue_code_run 的 execution / review_execution");
     const targets = [root, ...(a.with_children === false ? [] : listRuns(ctx.app, { parentId: root.id, limit: 500 }).filter((r) => visible(r) && r.kind !== "code" && r.kind !== "review"))];
+    const rootSpec = typeof root.input.spec === "string" ? findAgentSpec(ctx.app, root.input.spec) : null;
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, root.kind, undefined, rootSpec ?? undefined))!;
+    for (const target of targets) {
+      const spec = typeof target.input.spec === "string" ? findAgentSpec(ctx.app, target.input.spec) : null;
+      validateExecution(ctx.app, execution, ctx.userId, false, policyScope(ctx.app, target.kind, undefined, spec ?? undefined));
+    }
     if (targets.some(r => r.input.boardTaskId && ["queued", "running", "failed"].includes(r.status)))
       throw new HttpError(409, "任务板子任务换 AI 请用 work_review 退回并指定 execution；只切换发起运行可传 with_children=false");
     const done: string[] = [];
@@ -7251,7 +7276,7 @@ def({
     execution: executionSchema.optional().describe("评估用哪个 AI；不给时按 designer 角色的设置"),
   }),
   handler: async (ctx, a) => {
-    const execution = validateExecution(ctx.app, a.execution, ctx.userId);
+    const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "design"));
     const item = a.item_id ? getItem(ctx.app, itemFor(ctx, a.item_id)) : null;
     const target = writeSpace(ctx, a.space ?? item?.spaceId);
     const repos = [...new Set((a.repo_spaces ?? []).map((id) => space(ctx, id)))];

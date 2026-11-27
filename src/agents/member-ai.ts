@@ -1,3 +1,5 @@
+import { resolveRunProfile } from "./runner.ts";
+import { policyReason, policyScope } from "./ai-policy.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
 import { allProfiles } from "../core/config.ts";
@@ -25,6 +27,11 @@ export function setMemberAi(app: App, userId: string, patch: unknown): MemberAi 
   if (next.profile && result.data.profile !== undefined) {
     const profile = allProfiles(app.config).find(p => p.id === next.profile);
     if (!profile || !backendAvailable(profile, app.home)) throw new HttpError(400, "所选后端不可用：" + next.profile);
+  }
+  if (next.profile || next.model || next.effort) {
+    const effective = resolveRunProfile(app, { actor: { role: "assistant" }, profileId: next.profile, model: next.model, effort: next.effort });
+    const conflict = policyReason(policyScope(app, "ask"), effective);
+    if (conflict) throw new HttpError(400, conflict);
   }
   const saved = { profile: next.profile || undefined, model: next.model || undefined, effort: next.effort || undefined, guidance: next.guidance || undefined };
   updateUser(app, userId, { settings: { memberAi: saved } });

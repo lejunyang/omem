@@ -7,6 +7,7 @@ import { canWrite } from "../core/users.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
 import { itemAccess } from "../items/access.ts";
 import { addItemEvent, upsertItem } from "../items/store.ts";
+import { policyScope } from "./ai-policy.ts";
 import { validateExecution } from "./execution.ts";
 import { setRunOutput } from "./runs.ts";
 import type { SupervisorReport } from "./supervisor-schema.ts";
@@ -86,7 +87,7 @@ function supervisorAi(app: App, userId: string, ai?: SupervisorAi): SupervisorAi
   const profile = allProfiles(app.config).find(p => p.id === pick.profile);
   // Keep the chosen model even when the backend is temporarily down. The supervisor queues that exact choice.
   const e = validateExecution(app, { profile: pick.profile, model: pick.model ?? profile?.model,
-    effort: pick.effort ?? profile?.effort, source: "user", reason: "长任务的监工" }, userId, true)!;
+    effort: pick.effort ?? profile?.effort, source: "user", reason: "长任务的监工" }, userId, true, policyScope(app, "supervise"))!;
   return { profile: e.profile, model: e.model, effort: e.effort };
 }
 

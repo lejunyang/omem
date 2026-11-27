@@ -5,6 +5,7 @@ import { canWrite } from "../core/users.ts";
 import { HttpError, now, truncate, zonedParts, zoneMidnight } from "../core/util.ts";
 import { backendAvailable } from "./availability.ts";
 import { downReason, excludedReason, hasRoom } from "./capacity.ts";
+import { policyScope } from "./ai-policy.ts";
 import { validateExecution, type Execution } from "./execution.ts";
 import { getLongTask, type LongTask } from "./long-tasks.ts";
 import { createRun, getRun, queuedInLane, ResumeRunAt, updateQueuedRun, type RunContext } from "./runs.ts";
@@ -160,7 +161,7 @@ export async function runSupervisor(ctx: RunContext) {
   const selected = profile && { ...profile, ...task.ai };
   const execution: Execution = { ...task.ai, source: "flow", reason: "长任务指定的监工" };
   await ensureTopic(app, task);
-  try { validateExecution(app, execution, task.userId, true); }
+  try { validateExecution(app, execution, task.userId, true, policyScope(app, "supervise")); }
   catch (error) {
     if (error instanceof HttpError) return waitForAi(ctx, task, error.message);
     throw error;

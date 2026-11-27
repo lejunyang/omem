@@ -102,6 +102,8 @@ const FLOW_SIGNAL_INDEXES = `create index flow_signal_stage on flow_signals(item
    create index flow_signal_age on flow_signals(at);
    create index doing_flow_stages on item_stages(item_id,stage_id) where state='doing';`;
 
+const AI_CHOICE_INDEX_MIGRATION = `create index ai_choice_at on run_events(at) where type='status' and json_type(data,'$.choice')='object';`;
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2514,7 +2516,22 @@ export const migrations: readonly string[] = [
      where user_id!='owner' and state='logged-in' and refresh_at=expires_at-600000;
    update credential_holds set state='logged-in', refresh_at=0, error='正在重试续签：先前续签或供给失败'
      where user_id!='owner' and state='expired' and error='续签或供给失败，请重新授权';`,
-  `create table long_tasks (
+  AI_CHOICE_INDEX_MIGRATION,
+  // Resolve outcomes at read time so that late owner feedback and withdrawals are reflected.
+  `alter table decisions add column route text;
+   create view route_decision_outcomes as
+     select d.id, d.at, d.ref, json_extract(d.route,'$.classId') class_id, json_extract(d.route,'$.by') ordering,
+       case
+         when json_extract(r.output,'$.replacedBy') is not null then 'rerun'
+         when exists (select 1 from feedback f where f.run_id=d.ref and f.actor_kind='owner'
+           and f.on_bot=1 and f.polarity='negative' and f.removed_at is null) then 'negative'
+         when exists (select 1 from run_events e where e.run_id=d.ref and e.at>=d.at and e.type='status'
+           and json_type(e.data,'$.failover')='object') then 'replaced'
+         when r.status='done' then 'completed'
+         when r.status='failed' then 'failed'
+       end outcome
+     from decisions d left join runs r on r.id=d.ref where d.scene='route';`,
+  `create table if not exists long_tasks (
      id text primary key, space_id text not null references spaces(id), user_id text not null,
      thread_id text not null unique references conversations(id) on delete cascade,
      item_id text not null unique references items(id) on delete cascade,
@@ -2523,10 +2540,10 @@ export const migrations: readonly string[] = [
      budget text not null, notifications text not null, notes text not null default '[]',
      state text not null default '{}', created_at text not null, updated_at text not null
    );
-   create index long_tasks_space on long_tasks(space_id, updated_at desc);
-   create index long_tasks_user on long_tasks(user_id, updated_at desc);
-   create index long_tasks_open_items on long_tasks(item_id) where status in ('draft','active','paused');
-   create index long_tasks_updated on long_tasks(updated_at desc);`,
+   create index if not exists long_tasks_space on long_tasks(space_id, updated_at desc);
+   create index if not exists long_tasks_user on long_tasks(user_id, updated_at desc);
+   create index if not exists long_tasks_open_items on long_tasks(item_id) where status in ('draft','active','paused');
+   create index if not exists long_tasks_updated on long_tasks(updated_at desc);`,
   `create index if not exists supervised_code_rounds on runs(json_extract(input,'$.longTaskId'))
      where kind='code' and json_extract(input,'$.longTaskId') is not null;`,
 ];
@@ -2547,6 +2564,12 @@ export function openDb(path: string): Db {
   if (version === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
       !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
     version--;
+  }
+  // The supervisor branch used the two AI policy slots for long_tasks and its run index.
+  const policyStart = migrations.indexOf(AI_CHOICE_INDEX_MIGRATION);
+  if (version > policyStart && version <= policyStart + 2 &&
+      !db.prepare("select 1 from sqlite_schema where name='ai_choice_at' and type='index'").get()) {
+    version = policyStart;
   }
   for (let i = version; i < migrations.length; i++) {
     db.exec("begin");

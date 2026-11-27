@@ -1,3 +1,4 @@
+import { groupItems, groupPick, policyScope } from "../agents/ai-policy.ts";
 import { continuedUpstream, finishStage, overrideStageGate } from "./plugin-gates.ts";
 import { pollFlowSignal } from "./plugin-signals.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
@@ -394,19 +395,22 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
 
 async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Date) {
   const choice = s.control.escalated && d.escalate ? d.escalate.to : d.ai;
-  const pick = typeof choice === "string" ? app.config.agents.tiers[choice] : choice;
-  if (choice && !pick && !s.control.tierFallback?.includes(String(choice))) {
-    s = changeStage(app, f.itemId, d.id, s.state, { control: { ...s.control, tierFallback: [...s.control.tierFallback ?? [], String(choice)] } }, host, `档位 ${choice} 没有配置，用了默认的 AI`);
-  }
-  if (!pick) return { s, execution: undefined, waitUntil: null };
-  const execution = validateExecution(app, { ...pick, source: "flow", reason: `流程「${f.definition.name}」的「${d.name}」阶段指定` })!;
-  const { resolveRunProfile } = await import("../agents/runner.ts");
+  if (!choice) return { s, execution: undefined, waitUntil: null };
   const name = typeof d.by === "object" ? "run" in d.by ? d.by.run.agent ?? "assistant" : "agent" in d.by ? d.by.agent ?? "assistant" : "assistant" : "assistant";
   const role = (roleNames as readonly string[]).includes(name) ? name as RoleName : null;
   const spec = role ? null : findAgentSpec(app, name);
   if (!role && !spec) throw new HttpError(400, `没有 Agent 档案 ${name}`);
+  const scope = policyScope(app, "flow-stage", name, spec ?? undefined);
+  const pick = typeof choice === "string" ? groupPick(app, choice, scope, true) : choice;
+  if (!pick && typeof choice === "string" && groupItems(app, choice).length) throw new HttpError(400, "流程指定的组 " + choice + " 没有符合规则的后端");
+  if (choice && !pick && !s.control.tierFallback?.includes(String(choice))) {
+    s = changeStage(app, f.itemId, d.id, s.state, { control: { ...s.control, tierFallback: [...s.control.tierFallback ?? [], String(choice)] } }, host, `档位 ${choice} 没有配置，用了默认的 AI`);
+  }
+  if (!pick) return { s, execution: undefined, waitUntil: null };
+  const execution = validateExecution(app, { ...pick, source: "flow", reason: `流程「${f.definition.name}」的「${d.name}」阶段指定` }, undefined, false, scope)!;
+  const { resolveRunProfile } = await import("../agents/runner.ts");
   const profile = resolveRunProfile(app, { actor: spec ? { spec } : { role: role! }, ...executionArgs(execution) });
-  const actual = validateExecution(app, { ...execution, model: profile.model, effort: profile.effort })!;
+  const actual = validateExecution(app, { ...execution, model: profile.model, effort: profile.effort }, undefined, false, scope)!;
   const until = outOfQuotaUntil(app, profile, at);
   const daily = dailyCapReached(app, profile, at.getTime());
   return { s, execution: actual, waitUntil: until ?? (daily ? nextRoundAt(at, app.config.timezone, "day") : null) };

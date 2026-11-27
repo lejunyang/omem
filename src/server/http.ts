@@ -1,3 +1,6 @@
+import { groupsSchema, policySchema } from "../core/ai-policy-schema.ts";
+import { policyUsage, validatePolicy } from "../agents/ai-policy.ts";
+import { classIds, runClasses } from "../agents/run-classes.ts";
 import { embeddingId, modelChange, replaceIndex, retainedIndexPreview } from "../search/embedding-index.ts";
 import { testEmbedding, resumeEmbedding } from "../search/embeddings.ts";
 import { itemRunSummary } from "../items/places.ts";
@@ -3740,6 +3743,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       ...(visible("security") && { approvalTools: toolList().map(t => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }),
     };
   });
+  const { validateCommandNames } = await import("../agents/ai-spec.ts");
+  const { commandNames } = await import("../agents/commands.ts");
   server.put("/api/settings", async (req, reply) => {
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
@@ -3770,6 +3775,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.agents.networkPolicies = app.config.agents.networkPolicies;
     const save = prepareConfigSave(next, app.home);
     const candidate = save.candidate;
+    if (proposed.ai?.some(path => ["agents.groups", "agents.profiles", "ai.providers", "ai"].includes(path))) validateCommandNames(candidate, app.home, commandNames);
+    if (proposed.ai?.some(path => path === "agents.groups" || path === "agents.policy")) validatePolicy({ config: candidate }, candidate.agents.policy);
     // Which cloud backends may call tools over HTTP is the owner's, signed in as themselves (not a request trusted only for coming from this machine).
     if (JSON.stringify(candidate.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools) && (who(req) !== OWNER || authOf(req)?.via === "local"))
       throw new HttpError(403, "只有本人可以修改云端工具设置");
@@ -3787,11 +3794,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const preview = change ?? (access.owner ? retainedIndexPreview(app, next, candidate) : null);
     if (preview && (req.query as { confirmEmbedding?: string }).confirmEmbedding !== preview.token)
       return reply.code(409).send({ confirmation: "embedding-model", ...preview });
+    const guidance = (req.body as { agents?: { routing?: { guidance?: unknown } } }).agents?.routing?.guidance;
+    const guidanceHint = access.edit("ai") && typeof guidance === "string" && /禁止|不要用|别用|只用|必须用/.test(guidance)
+      ? { guidanceWarning: "写在这里只当倾向，要一定做到请转成规则" } : {};
     const hasChanges = Object.keys(changes).length > 0;
     if (hasChanges || change) save.write();
     if (change) replaceIndex(app, change.to);
     if (checkModel) resumeEmbedding(app);
-    if (!hasChanges) return { config: settingsView(app.config, access.view, access.owner), restart };
+    if (!hasChanges) return { config: settingsView(app.config, access.view, access.owner), restart, ...guidanceHint };
     audit(app, who(req), "settings.update", "settings", { changes });
     // A provider taken out takes its key with it.
     for (const id of Object.keys(readKeys(app.home))) if (!id.startsWith("mcp:") && !next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
@@ -3803,7 +3813,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       // The timers were made in the old zone.
       rezoneScheduler(app);
     }
-    return { config: settingsView(app.config, settingsAccess(req).view, access.owner), restart };
+    return { config: settingsView(app.config, settingsAccess(req).view, access.owner), restart, ...guidanceHint };
   });
 
   // ----------------------------------------------- AI providers and model categories (core/ai-keys.ts)
@@ -3844,6 +3854,27 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     await freshModels();
     return aiView();
   });
+  server.get("/api/ai/policy", async () => ({
+    classes: Object.fromEntries(classIds.map(id => [id, { ...runClasses[id], order: app.config.agents.policy.classes[id]?.order ?? (id === "coding" || id === "review" ? "fixed" : "choose") }])), groups: app.config.agents.groups, policy: app.config.agents.policy, usage: policyUsage(app),
+  }));
+  const putAiSettings = (field: "groups" | "policy", req: FastifyRequest) => {
+    const next = structuredClone(app.config);
+    if (field === "policy") next.agents.policy = q(policySchema, req.body);
+    else {
+      next.agents.groups = q(groupsSchema, req.body);
+      next.agents.tiers = {};
+      next.agents.routing.candidates = [];
+    }
+    const save = prepareConfigSave(next, app.home);
+    validatePolicy({ config: save.candidate }, save.candidate.agents.policy);
+    if (field === "groups") validateCommandNames(save.candidate, app.home, commandNames);
+    save.write();
+    Object.assign(app.config, save.candidate);
+    audit(app, who(req), "settings.update", "settings", { changes: { ai: ["agents." + field] } });
+    return { ok: true };
+  };
+  server.put("/api/ai/groups", async req => putAiSettings("groups", req));
+  server.put("/api/ai/policy", async req => putAiSettings("policy", req));
   server.put("/api/ai/keys/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     if (!app.config.ai.providers.some((p) => p.id === id)) throw new HttpError(404, "没有这个提供方");
@@ -3882,6 +3913,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/ai/decision/report", async (req) => {
     const b = q(z.object({ days: z.coerce.number().int().min(1).max(90).default(30) }), req.query);
     return (await import("../core/decision-log.ts")).decisionReport(app, b);
+  });
+
+  server.post("/api/ai/policy/propose", async req => {
+    const { startPolicyDraft, policyText } = await import("../agents/ai-policy-proposal.ts");
+    const { text } = q(z.object({ text: policyText }).strict(), req.body);
+    return { runId: startPolicyDraft(app, text).id };
   });
 
   // Settings → AI → 决策: try a question on the configured decision model.

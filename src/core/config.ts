@@ -1,3 +1,4 @@
+import { emptyGroups, groupsSchema, policySchema } from "./ai-policy-schema.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -137,6 +138,7 @@ export const accountSpecSchema = z
 
 export const agentProfileSchema = z.object({
   id: z.string().min(1),
+  aliases: z.array(z.string().trim().min(1).max(120).regex(/^[^/\s]+$/, "命令别名须是一个不带斜杠的词")).max(100).optional(),
   name: z.string().optional(),
   /**
    * acp: Agent Client Protocol over stdio. claude-cli / codex-cli: one-shot fallbacks. doubao: Doubao OpenAPI (cloud, no omem tools).
@@ -202,6 +204,7 @@ export const roleNames = [
   "ingest",
   "archivist",
   "archive-rule-writer",
+  "ai-policy-writer",
   "wiki-planner",
   "wiki-writer",
   "wiki-linter",
@@ -505,6 +508,8 @@ export const configSchema = z.object({
     .object({
       default: z.string().optional(),
       cloudTools: cloudToolsSchema.default(() => cloudToolsSchema.parse({})),
+      groups: groupsSchema.default(emptyGroups),
+      policy: policySchema.default(() => policySchema.parse({})),
       tiers: z.object({
         strong: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
         standard: z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() }).optional(),
@@ -614,7 +619,7 @@ export const configSchema = z.object({
       accountsDefault: z.enum(["owner", "own", "own-or-other"]).default("owner"),
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accountsDefault: "owner" as const, accounts: {}, tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accountsDefault: "owner" as const, accounts: {}, groups: emptyGroups(), policy: policySchema.parse({}), tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
@@ -913,7 +918,9 @@ export const configSchema = z.object({
         others: z.array(z.object({ provider: z.string().min(1), model: z.string().default("") })).max(8).optional(),
         pick: z.enum(["fixed", "random"]).optional(),
         fallback: z.enum(["general", "none"]).default("general"),
+        routeMinGap: z.number().min(0).max(1).optional(),
         thresholds: z.object({
+          route: z.number().min(0.5).max(0.99).default(DECISION_SCENES.route.default),
           heartbeat: z.number().min(0.5).max(0.99).default(DECISION_SCENES.heartbeat.default),
           watch: z.number().min(0.5).max(0.99).default(DECISION_SCENES.watch.default),
           follow: z.number().min(0.5).max(0.99).default(DECISION_SCENES.follow.default),
@@ -1444,7 +1451,7 @@ export const configSchema = z.object({
     envs: z.array(z.object({
       id: z.string().trim().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}$/).refine((s) => s.toLowerCase() !== "local", "local 是内置环境"),
       name: z.string().trim().min(1).max(100), note: z.string().max(12000),
-      ai: z.union([z.enum(["strong", "standard", "cheap"]), z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })]).optional(),
+      ai: z.union([z.string().min(1), z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })]).optional(),
       thirdParty: z.boolean(),
       /** Trials in this environment go to this paired device of the owner's (studies/remote.ts); it runs them with its own AI. */
       peer: z.string().trim().min(1).max(80).optional(),
@@ -1562,6 +1569,9 @@ export function loadConfig(home = omemHome()): Config {
  * been turned on anywhere yet, so this can go after a release or two.
  */
 export function moveOldSettings(raw: Record<string, any>) {
+  // The old tiers and routing candidates are not copied into `agents.groups`: an empty built-in group
+  // (and a missing `candidates` group) reads them where they are (agents/ai-policy.ts groupItems), so
+  // the settings page that still edits them keeps working. Saving groups (PUT /api/ai/groups) moves them.
   const old = raw?.lark?.mentions;
   if (!old || typeof old !== "object") return raw;
   delete raw.lark.mentions;
@@ -1649,6 +1659,7 @@ export function prepareConfigSave(config: Config, home: string) {
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
   const referenced = new Set([config.longTasks.supervisor?.profile, config.agents.default, ...Object.values(config.agents.roles),
+  ...config.agents.groups.flatMap(g => g.items.map(i => i.profile)),
     ...Object.values(config.agents.tiers).map(t => t.profile),
     ...Object.values(config.agents.roleModels).flatMap(models => Object.keys(models)),
     ...config.agents.fallback.map(p => p.profile), ...config.agents.routing.candidates.map(p => p.profile),
@@ -1836,7 +1847,7 @@ export function keyedProfiles(config: Config): AgentProfile[] {
         if (!relayed) env.OMEM_AI_BASE_URL = at.url;
         env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ model: `omem-key/${name}`, provider: { "omem-key": { npm, name: pr.name || pr.id, options: { baseURL, apiKey: "{env:OMEM_AI_KEY}" }, models: { [name]: {} } } } });
       }
-      out.push({ ...base, id: `${b}@${pr.id}`, name: label, args, model: profileModel, effort: saved?.effort ?? base.effort, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, ...(relayed ? { keyRelay: true } : {}), ...(keyModels ? { keyModels } : {}), source: `key:${pr.id}` });
+      out.push({ ...base, id: `${b}@${pr.id}`, name: label, aliases: saved?.aliases, args, model: profileModel, effort: saved?.effort ?? base.effort, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, ...(relayed ? { keyRelay: true } : {}), ...(keyModels ? { keyModels } : {}), source: `key:${pr.id}` });
     }
   }
   return out;

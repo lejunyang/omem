@@ -216,6 +216,8 @@ async function runAsk(ctx: RunContext) {
     // A reply that says nothing (only what it is about to do, a bare “收到”, only ways out): back to it once (reply-check.ts).
     answer = await reviseHollow(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id), prompt)).text);
   }
+  const notes = ctx.run.input.commandNotes as string[] | undefined;
+  if (notes?.length) answer = notes.join("\n") + "\n\n" + answer;
   // It said it has nothing to say (stay_quiet, only where nobody waits on the turn): nothing is posted.
   const quiet = quietReason(ctx.app, ctx.run.id);
   // Woken by a wake-up it set: nobody waits on it either.
@@ -660,6 +662,7 @@ registerHandler("archive", async ctx => {
     scheduleIngest(ctx.app, ctx.run.spaceId!, ready);
   }
 });
+registerHandler("ai-policy-draft", async ctx => (await import("./ai-policy-proposal.ts")).runPolicyDraft(ctx));
 registerHandler("archive-rule-draft", async ctx => {
   const r = await agent(ctx, "archive-rule-writer", ctx.run.spaceId!, `本人的要求：${String(ctx.run.input.description)}\n当前草稿：${JSON.stringify(ctx.run.input.current ?? {})}`, null);
   return { ...getRun(ctx.app, ctx.run.id).output, summary: r.text.trim() };

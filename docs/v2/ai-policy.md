@@ -1,6 +1,10 @@
 # AI 规则：先定能用哪些，再让模型排先后
 
-状态：设计（2026-11-27），未实现。和 [ai-models.md](ai-models.md) 的“运行前选 AI”“换后端的顺序”、[agent-accounts.md](agent-accounts.md) 的成员账号一起读。
+四期服务端已接入（2026-11-27）。设置与 Agent 档案的网页编辑入口单独交付。各期进度见 [实现状态](status.md)。和 [ai-models.md](ai-models.md) 的“运行前选 AI”“换后端的顺序”、[agent-accounts.md](agent-accounts.md) 的成员账号一起读。
+
+设置客户端读取 `GET /api/ai/policy` 的 `classes`、`groups`、`policy` 和 `usage`，按类别显示运行类型、角色、规则来源与近七天各 AI 的次数。类别规则和组分别通过 `PUT /api/ai/policy`（规则对象）和 `PUT /api/ai/groups`（组数组）保存。档案编辑器使用档案的 `class`、`ai.use`、`ai.deny` 和 `ai.strict`，按同一规则提示角色默认值冲突。
+
+一句话提案提交至 `POST /api/ai/policy/propose`，传 `{text}` 后用返回的 `runId` 查看运行；`output.askId` 指向本人确认卡。保存总体偏好仍走 `PUT /api/settings`，响应中的 `guidanceWarning` 可配合提案入口显示。决策报告 `GET /api/ai/decision/report` 的 `routes` 按类别提供模型排序和默认先后的完成数、已知结果数和待定数。
 
 ## 1. 现在的问题
 
@@ -56,7 +60,7 @@ groups:
       - { ai: antigravity · gemini-4-neon · high }
       - { ai: claude · claude-opus-5-5 · high }
   - id: supervise
-    name: 监工
+    name: 长任务候选
     items:
       - { ai: codex · gpt-6.2-astra · xhigh }
       - { ai: claude · claude-opus-5-5 · high }
@@ -65,7 +69,7 @@ groups:
 - 组内的先后由本人定；宿主按先后取第一个现在能用的（不在时段内、满了、额度快用完、刚出故障的往后放，现有的 `acquire` / `quotaAvoid` / `downReason` 不变）。
 - 旧的三个档位迁成只有一项的 `strong` / `standard` / `cheap` 组。流程里的 `ai: strong`、研究环境的 `ai:` 照旧能用。
 - 组名在所有能写 AI 的地方都能用：流程阶段的 `ai:`、Agent 档案、规则的“交给 Agent”、助手交办时的 `execution`、命令（第 5 节）、对话里说“用写作组”。
-- 现在的“任务选型候选”迁成一个名叫 `candidates`（候选）的组，适用说明留在每一项的 `note` 里；迁移后行为不变。
+- 现在的“任务选型候选”迁成一个名叫 `candidates`（候选）的组，适用说明留在每一项的 `note` 里。尚未设类别规则时，旧流程档位只供原调用方使用；旧候选组与角色默认 AI 一起参与选型，拿不准时仍以角色默认 AI 起步。
 
 ### 2.3 规则
 
@@ -91,7 +95,7 @@ policy:
 
 | 写法 | 排除什么 |
 | --- | --- |
-| `backend:claude` | 这个 Agent 程序的所有形态：ACP 版、命令行后备（claude-cli）、API key 生成的（claude@编号）、别的设备上的（peer 的 agent 是 claude） |
+| `backend:claude` | 这个 Agent 程序的所有形态：ACP 版、命令行后备（claude-cli）、API key 生成的（claude@编号）、别的设备上的（peer 的 agent 是 claude）及自定义编号。依次按 peer 的 agent、程序来源、状态目录类型、目录里的启动命令、后端编号识别程序 |
 | `model:gemini` | 这一家的模型，在哪个后端上跑都算（按 `families.ts` 认：gemini / claude / gpt / deepseek / doubao / qwen……） |
 | `ai:traex · deepseek-v4.1-flash` | 某个后端上的某个模型（强度不写就是全部） |
 | `key:<编号>` | 某个 API key 生成的全部后端 |
@@ -154,7 +158,7 @@ policy:
 /traex deepseek               traex · deepseek-v4.1-flash，强度不变
 /gemini neon                  gemini 是 antigravity 的别名
 /codex 方舟 seed high          用 API key「方舟」生成的 codex@<编号>，模型在这个 key 的模型里找
-/强                            用“强”组的第一个能用的；/写作、/监工 同理
+/强                            用“强”组的第一个能用的，例如 /写作 选择写作组
 /codex astra xhigh 帮我查一下…   只这一件事用它，不改会话
 /ai off                       恢复默认（/model off 照旧）
 ```
@@ -162,6 +166,11 @@ policy:
 解析规则：
 
 1. **后端**：命令词按后端的 id 和别名找（不分大小写；`cc` / `claude` → claude，`gemini` / `agy` / `antigravity` → antigravity），取最长的前缀，余下的当参数（所以 `/claudeopus5.5high` 能拆开）。拼错一个字母、名字至少 5 个字母、只像一个后端时也认，回复里写“按 /claude 理解”。不像任何后端的照旧当普通文字交给助手。组名（中文或 id）也能当命令词。
+
+   后端的编号、显示名、目录条目编号、启动命令的文件名（去路径和扩展名）、`source`、`peer.agent` 都会成为命令词。常用别名按实际程序匹配，自定义编号的 Antigravity 也可用 `/agy`、`/antigravity` 和 `/gemini`。在 `agents.profiles[].aliases` 可给后端增加名字，例如 `["谷歌"]`。通过 `PUT /api/settings` 保存；自定义别名和组编号、组名均不得占用已有命令或其他后端的自动名、自定义名。保存失败时返回冲突对象。
+
+   同一程序有多份时优先本机登录，并提示其他可用入口。可以用 `/codex@ark` 指定 key，或在后端后写设备编号或设备名。命中了已知后端而它们均不可用时，命令直接回复原因和目录中已有的安装提示。需要用一个词指定后端、模型和强度时，创建只含这一项的 AI 组。
+
 2. **强度**：参数末尾的 `minimal / low / medium / high / xhigh / max`（也认 低 / 中 / 高 / 极高 / 最高），先比长的（`xhigh` 不会被读成 `high`）。
 3. **API key**：参数里有词对上某个 key 的编号或名字时，换成这个 key 生成的那个后端（`codex@<编号>`）；也可以直接写 `/codex@ark`。同一后端只有一个 key 时不用写。模型按 key 的模型显示名找，接入点 ID 不用记。
 4. **模型**：余下的在这个后端（这份登录或这个 key）检测到的模型里找。两边都去掉符号、转小写后：是子串的最优先；没写版本号而有几个版本（`astra` 对上 gpt-6.2-astra 和 gpt-6-astra），取版本号最大的，回复里写“astra → gpt-6.2-astra（最新的）”；名字不同的几个都像（`seed` 对上三个 Doubao-Seed），回一张卡让本人点；一个都对不上，列出可选的。

@@ -330,6 +330,28 @@ describe("threads: continuity, merging, lanes, commands", async () => {
     }
   });
 
+  it("假 ACP 按单轮点名运行，写明越过的规则，下一轮回到原会话 AI", async () => {
+    const profiles = app.config.agents.profiles, deny = app.config.agents.policy.deny;
+    app.config.agents.profiles = [...profiles, { ...profiles.find(p => p.id === "fake")!, id: "second" }];
+    app.config.agents.policy.deny = [...deny, "backend:second"];
+    const send = (text: string) => receive(app, { conversationId: "ai-command-turn", text });
+    try {
+      await send("/fake");
+      const first = await waitForRun(app, (await send("/second 帮我整理")).runId!);
+      expect(first.error).toBeNull();
+      expect(first.ai?.profile).toBe("second");
+      expect(runEvents(app, first.id)).toContainEqual(expect.objectContaining({
+        type: "status", data: { text: "本人点名，越过了「全局规则 不用 backend:second」" },
+      }));
+      const next = await waitForRun(app, (await send("接着整理")).runId!);
+      expect(next.error).toBeNull();
+      expect(next.ai?.profile).toBe("fake");
+    } finally {
+      app.config.agents.profiles = profiles;
+      app.config.agents.policy.deny = deny;
+    }
+  }, 30000);
+
   it("answers with an agent spec, delegates to it and delivers back to the thread", async () => {
     saveSkill(app, { name: "weekly-report", description: "写周报时用", body: "1. 列出本周完成的事\n2. 下周计划" }, "user");
     saveAgentSpec(app, { name: "reporter", description: "写周报的 Agent", prompt: "你负责写周报。", skills: ["weekly-report"] }, "user");

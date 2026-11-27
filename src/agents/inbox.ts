@@ -5,6 +5,7 @@ import { canWrite, OWNER, personalSpaceId, turnSpaceFor } from "../core/users.ts
 import { HttpError, now, RUN_TITLE_MAX, truncate } from "../core/util.ts";
 import { all, one, run } from "../core/db.ts";
 import { injectionScore } from "../sources/guard.ts";
+import type { CommandTask } from "./ai-command.ts";
 import { reviewReply, runCommand } from "./commands.ts";
 import { createRun, queuedInLane, updateQueuedRun } from "./runs.ts";
 import { larkBy, userBy } from "../core/run-trigger.ts";
@@ -60,12 +61,15 @@ export type Inbound = Partial<ThreadAddress> & {
 
 export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; card?: Record<string, unknown>; started: "new" | "renewed" | null };
 
-export async function receive(app: App, inb: Inbound): Promise<Received> {
+export async function receive(app: App, inb: Inbound, selected?: CommandTask): Promise<Received> {
   const userId = inb.userId ?? OWNER;
   const item = inb.itemId ? requireReadableItem(app, inb.itemId, userId) : undefined;
   let thread: Thread;
   let started: Received["started"] = null;
-  if (inb.conversationId) {
+  if (selected) {
+    // A host question belongs to its authenticated sender and the original channel thread.
+    thread = selected.thread;
+  } else if (inb.conversationId) {
     const previous = findThread(app, inb.conversationId);
     thread = previous ?? createThread(app, { id: inb.conversationId, spaceId: inb.spaceId ?? personalSpaceId(userId), channel: inb.channel ?? "web", userId });
     if (!previous && item) {
@@ -90,9 +94,11 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     ? { sourceSpaces: item && item.spaceId !== thread.spaceId ? [thread.spaceId, item.spaceId] : [thread.spaceId] }
     : {};
   let text = inb.text.trim();
-  let freshTask = false;
+  let freshTask = !!selected;
+  let turnAi = selected?.turnAi;
+  let commandNotes = selected?.notes;
   // An in-chat review takes plain replies until it ends.
-  if (!text.startsWith("/") && thread.settings.review) {
+  if (!selected && !text.startsWith("/") && thread.settings.review) {
     const reply = reviewReply(app, thread, text, userId);
     if (reply !== null) {
       addMessage(app, thread.id, "user", text, null, { ...ownerOrigin, command: true });
@@ -100,15 +106,19 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
       return { thread: findThread(app, thread.id)!, messageId: null, runId: null, merged: false, reply, started };
     }
   }
-  if (text.startsWith("/")) {
+  if (!selected && text.startsWith("/")) {
     let reply = await runCommand(app, thread, text, inb);
     if (reply !== null && typeof reply !== "string") {
       addMessage(app, thread.id, "user", text, null, { ...ownerOrigin, command: true });
+      turnAi = reply.turnAi;
+      commandNotes = reply.notes;
+      if (thread.id !== reply.thread.id) {
+        started = "new";
+        inb = { ...inb, context: undefined };
+      }
       thread = reply.thread;
-      started = "new";
       text = reply.task;
       // Explicit fresh starts do not inherit surrounding group history or answer an old ask.
-      inb = { ...inb, context: undefined };
       freshTask = true;
       if (inb.externalMessageId && !thread.settings.lastMessageId) {
         thread = updateThread(app, thread.id, { settings: { lastMessageId: inb.externalMessageId } });
@@ -193,7 +203,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
   const waiting = queuedInLane(app, thread.id, "ask");
   // Bursts merge into a waiting turn of the same sender, or of someone whose access the sender's covers
   // (steer.ts mayJoinTurn): the turn keeps its own user's permissions.
-  if (waiting && !waiting.input.itemStepApproval && !waiting.input.aiLoginWait && mayJoinTurn(app, (waiting.input.userId as string | undefined) ?? OWNER, userId, [{ meta }])) {
+  if (waiting && !turnAi && !waiting.input.turnAi && !waiting.input.itemStepApproval && !waiting.input.aiLoginWait && mayJoinTurn(app, (waiting.input.userId as string | undefined) ?? OWNER, userId, [{ meta }])) {
     const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
     // A fixed window (a watched chat's batch) is never pushed back, only brought forward.
     const due = inb.fixedWindow ? app.db.prepare("select not_before from runs where id = ?").get(waiting.id) as { not_before: string | null } | undefined : undefined;
@@ -211,7 +221,7 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     kind: "ask",
     spaceId: turnSpaceFor(app, userId, thread.spaceId),
     title: truncate(text.replace(/\s+/g, " "), RUN_TITLE_MAX),
-    input: { conversationId: thread.id, messageIds: [messageId], ...(thread.settings.situation && thread.settings.itemId ? { itemId: thread.settings.itemId } : {}), ...(inb.fromAsk ? { fromAsk: true } : {}), ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
+    input: { conversationId: thread.id, messageIds: [messageId], ...(turnAi ? { turnAi } : {}), ...(commandNotes?.length ? { commandNotes } : {}), ...(thread.settings.situation && thread.settings.itemId ? { itemId: thread.settings.itemId } : {}), ...(inb.fromAsk ? { fromAsk: true } : {}), ...(userId === OWNER ? {} : { userId }), ...((inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId ? { continueCodeAskId: (inb as Inbound & { continueCodeAskId?: string }).continueCodeAskId } : {}) },
     lane: thread.id,
     userId,
     notBefore: mergeMs ? notBefore : null,

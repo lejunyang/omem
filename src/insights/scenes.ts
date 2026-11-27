@@ -9,7 +9,7 @@ export const sceneTable = {
   code: "编码", "req-split": "编码", design: "编码", review: "评审", "speaking-review": "评审", "note-review": "评审",
   brief: "文档与知识", "lark-resource-parse": "文档与知识",
   supervise: "提醒与跟进", "item-deadline-check": "提醒与跟进", "commit-claim": "提醒与跟进", "item-follow": "提醒与跟进", "item-takeover": "提醒与跟进", "flow-reconcile": "提醒与跟进", "flow-blocker-check": "提醒与跟进", heartbeat: "提醒与跟进", wake: "提醒与跟进", mention: "提醒与跟进", "item-settle": "提醒与跟进", "work-state": "提醒与跟进", "flow-stage": "提醒与跟进", "flow-runner": "提醒与跟进", "problem-follow": "提醒与跟进",
-  archive: "整理（后台）", "archive-rule-draft": "整理（后台）", "thread-summary": "整理（后台）", "learn-feed": "整理（后台）",
+  archive: "整理（后台）", "ai-policy-draft": "其他", "archive-rule-draft": "整理（后台）", "thread-summary": "整理（后台）", "learn-feed": "整理（后台）",
   ingest: "整理（后台）", "ingest-shadow": "整理（后台）", "wiki-plan": "整理（后台）", "wiki-write": "整理（后台）", "wiki-lint": "整理（后台）",
   "wiki-organize": "整理（后台）", "wiki-resolve": "整理（后台）", "wiki-migrate": "整理（后台）", "wiki-sweep": "整理（后台）",
   dream: "整理（后台）", sync: "整理（后台）", curate: "整理（后台）", "memory-review": "整理（后台）", "memory-organize": "整理（后台）", "skill-organize": "整理（后台）",

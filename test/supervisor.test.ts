@@ -20,6 +20,8 @@ import { addMember, createUser, linkIdentity } from "../src/core/users.ts";
 import { run, all, one } from "../src/core/db.ts";
 import { zonedParts } from "../src/core/util.ts";
 import { testApp } from "./helpers.ts";
+import { policySchema } from "../src/core/ai-policy-schema.ts";
+import * as dispatch from "../src/agents/dispatch.ts";
 import * as runner from "../src/agents/runner.ts";
 import type { App } from "../src/core/app.ts";
 
@@ -67,6 +69,30 @@ describe("长任务监工", () => {
       expect(call).not.toHaveBeenCalled();
       expect(all(app.db, "select text from messages where conversation_id=? and role='assistant'", task.threadId)).toContainEqual({ text: expect.stringContaining("stub") });
     } finally { call.mockRestore(); }
+  });
+
+  it("创建和唤醒使用监工类别，指定后端忙时沿用长任务的等待期限", async () => {
+    const app = testApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    const profile = { transport: "acp" as const, command: process.execPath, args: [], env: {}, idleTimeoutMs: 60000 };
+    app.config.agents.profiles.push({ ...profile, id: "primary" }, { ...profile, id: "alternate" });
+    app.config.agents.policy = policySchema.parse({ classes: {
+      agents: { deny: ["ai:primary"] }, supervise: { use: ["ai:alternate", "ai:primary"], strict: true },
+    } });
+    const backend = vi.spyOn(dispatch, "runBackend").mockRejectedValue(new Error("backend busy"));
+    try {
+      const task = startLongTask(app, { spaceId: "personal", userId: "owner", goal: "核对说明", ai: { profile: "primary" } });
+      const ctx = turn(app, task);
+      await expect(runSupervisor(ctx)).rejects.toMatchObject({ at: expect.any(String) });
+      expect(backend.mock.calls.map(call => call[1].id)).toEqual(["primary"]);
+      const output = getRun(app, ctx.run.id).output;
+      expect(output.queueSince).toEqual(expect.any(Number));
+      expect(output.aiPolicyWaitUntil).toBeUndefined();
+      setRunOutput(app, ctx.run.id, { queueSince: Date.now() - (app.config.agents.queueTimeoutMinutes + 1) * 60_000 });
+      await expect(runSupervisor(context(app, ctx.run.id))).rejects.toThrow(/本轮停止/);
+      expect(all(app.db, "select text from messages where conversation_id=?", task.threadId))
+        .toContainEqual({ text: expect.stringContaining("本轮停止") });
+    } finally { backend.mockRestore(); app.db.close(); }
   });
 
   it("报告保存决定和进度，任务书由本人确认后生效", async () => {
