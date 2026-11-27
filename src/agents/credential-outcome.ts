@@ -4,7 +4,7 @@ import { one, run } from "../core/db.ts";
 import { COMMAND_OUTPUT_LIMIT, now } from "../core/util.ts";
 import { applicationUrl, recordAccess } from "./credential-access.ts";
 import { credentialMethods, type CredentialCommand } from "./credential-registry.ts";
-import { canStartLogin, expireCommandCredential, startCredentialLogin } from "./credentials.ts";
+import { canStartLogin, credentialHold, expireCommandCredential, renewableLogin, startCredentialLogin } from "./credentials.ts";
 import { waitForCredential } from "./credential-wait.ts";
 import { executableName, field } from "./operation-policy.ts";
 
@@ -121,10 +121,13 @@ export async function credentialOutcome(app: App, user: string, runId: string, r
     // A conversation is stuck on it: omem starts the login now (the card carries the official link)
     // and the conversation goes on once it works (credential-wait.ts). Otherwise only a reminder.
     const requester = one<{ user_id: string | null }>(app.db, "select user_id from runs where id = ?", runId)?.user_id ?? user;
+    const renews = renewableLogin(user, method, credentialHold(app, user, method.kind));
     // Only one's own login (or the owner's): a lender is not asked to log in because a borrower's command failed.
     const waits = remind && (user === requester || user === OWNER || onBehalf) && canStartLogin(app, user, method) && waitForCredential(app, user, method.kind, runId, requester);
-    await expireCommandCredential(app, user, method, remind && !waits);
-    if (waits) {
+    await expireCommandCredential(app, user, method, remind && (!waits || renews));
+    if (renews) {
+      if (remind) notice = `${method.name}的访问令牌不可用，omem 会先自动续签。不要让对方重新登录；只有续签凭据确认失效才会发授权通知。`;
+    } else if (waits) {
       startCredentialLogin(app, user, method.kind, `运行 ${command.name} 时${method.name}报告${result.reason === "expired" ? "登录过期" : "没有登录"}。`)
         .catch(() => { /* Reported to them by the login itself. */ });
       notice = `已把${method.name}的登录链接发给${userName(app, user)}，授权完成后这段对话会自动接着做。不要自己发起登录，也不要为等授权设唤醒或轮询；先把这次没查到的告诉对方。`;

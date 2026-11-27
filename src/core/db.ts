@@ -2510,6 +2510,10 @@ export const migrations: readonly string[] = [
      after_ms integer not null default 0, checked_at integer, clues text,
      evidence text, updated_at text not null, primary key(item_id,chat_id)
    );`,
+  `update credential_holds set refresh_at=expires_at-1800000
+     where user_id!='owner' and state='logged-in' and refresh_at=expires_at-600000;
+   update credential_holds set state='logged-in', refresh_at=0, error='正在重试续签：先前续签或供给失败'
+     where user_id!='owner' and state='expired' and error='续签或供给失败，请重新授权';`,
 ];
 
 export type Db = DatabaseSync;

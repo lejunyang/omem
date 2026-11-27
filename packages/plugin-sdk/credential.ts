@@ -79,12 +79,17 @@ export type CredentialDef = {
    * done. Without it, the owner logs in on the machine themselves and omem only checks.
    */
   ownerLogin?(ctx: CredentialContext, show: (link: { url: string; code?: string }) => void): Promise<{ user: string; expiresAt?: number }>;
-  /** 10 minutes before `expiresAt` (at most once a minute) and when the person presses 检查: the new `expiresAt`, or null to ask them to log in again. */
+  /**
+   * Refreshes a member's access token, starting up to 30 minutes before `expiresAt`.
+   * Return null only when a new authorization is required. Throw on temporary failures so omem
+   * retries without prompting. A successful refresh is followed by provide.
+   */
   refresh?(ctx: CredentialContext): Promise<{ expiresAt?: number } | null>;
   /** Read-only: is this person still logged in? */
   /**
-   * `expiresAt`: when the login itself ends. Leave it out of login and refresh results, and give null here,
-   * when the tool renews a short-lived token on its own (omem then neither reminds nor marks it expired by date).
+   * `expiresAt`: for a member with a refresh callback, the access token deadline (not a reminder).
+   * Otherwise, it is the actual login deadline. Leave it out of login results and give null here
+   * if the tool handles renewal on its own and has no useful login deadline to report.
    */
   check?(ctx: CredentialContext): Promise<{ state: "ok" | "expired" | "missing"; user?: string; expiresAt?: number | null }>;
   /** When they log out (revoke what you hold); omem removes the secret and the declared state directories afterwards. */

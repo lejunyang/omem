@@ -12,7 +12,8 @@ import { agentProfileSchema, allProfiles } from "../src/core/config.ts";
 import { canonical } from "../src/agents/own-sandbox.ts";
 import { sandboxStatus } from "../src/agents/own-run.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
-import { allCredentials, checkCredential, credentialHold, credentialInstallDirs, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
+import { allCredentials, checkCredential, credentialHold, credentialInstallDirs, expireCommandCredential, logoutCredential, myCredentials, registerCredential, refreshCredential, startCredentialLogin, stopCredentialLogins, setCredentialSharing, selectedCredential, tickCredentialChecks, tickCredentialRefreshes } from "../src/agents/credentials.ts";
+import { requireCredential } from "../src/agents/credential-registry.ts";
 import type { CredentialDef } from "../packages/plugin-sdk/credential.ts";
 import { forgetPlugin, loadPlugins, setPluginEnabled, trustPlugin, untrustPlugin } from "../src/plugins/registry.ts";
 import { codeHash, setTrust, trustState } from "../src/plugins/trust.ts";
@@ -94,7 +95,7 @@ posixIt.each([
     account: { owns: ["." + id] } }));
   app.config.agents.profiles = profiles;
   const dirs = [".echo", ".echo-lite", ".acme/data"];
-  const refresh = vi.fn(async () => ({ expiresAt: Date.now() + 7200_000 }));
+  const refresh = vi.fn<NonNullable<CredentialDef["refresh"]>>(async () => ({ expiresAt: Date.now() + 7200_000 }));
   const logout = vi.fn(async () => {});
   const check = vi.fn(async () => ({ state: "missing" as const }));
   add({ provides: { backends, commands: [{ name: "acme", state: [".acme/data"] }] }, refresh, logout, check,
@@ -138,8 +139,10 @@ posixIt.each([
     expect(refresh).toHaveBeenCalledOnce();
 
     expect(await checkAccount(app, "ann", "echo")).toMatchObject({ state: "none", method: kind });
+    refresh.mockResolvedValueOnce(null);
+    expect(await tickCredentialRefreshes(app, Date.now() + 1000)).toBe(1);
     const credential = async () => (await server.inject({ url: "/api/credentials", headers })).json().credentials[0];
-    expect(await credential()).toMatchObject({ state: "none", supplied: true, checkedAt: expect.any(String) });
+    expect(await credential()).toMatchObject({ state: "expired", supplied: true, checkedAt: expect.any(String) });
     for (const profile of profiles) {
       expect(loggedIn(app, "ann", profile.id)).toBe(false);
       for (const requester of ["ann", "bob"]) expect(() => withAccount(app, requester, profile)).toThrow(/登录/);
@@ -155,7 +158,7 @@ posixIt.each([
     expect(logout).toHaveBeenCalledOnce();
     expect(credentialHold(app, "ann", kind)).toMatchObject({ state: "none", refreshAt: undefined });
     expect(await tickCredentialRefreshes(app, Date.now() + 86400_000)).toBe(0);
-    expect(refresh).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledTimes(2);
     const accounts = await accountList();
     for (const dir of dirs) expect(existsSync(join(home, dir, "login"))).toBe(false);
     for (const profile of profiles) {
@@ -421,21 +424,65 @@ it.skipIf(process.platform === "win32")("退出时重新校验账号目录，拒
   expect(existsSync(join(outside, "data"))).toBe(true);
   expect(credentialHold(app, "ann", "sample:sso").state).toBe("logged-in");
 });
-posixIt("续签后供给，失败变过期；同种状态一天最多通知一次", async () => {
-  const provide = vi.fn(async () => {}), refresh = vi.fn(async () => ({ expiresAt: Date.now() + 2 * 3600_000 }));
-  add({ provide, refresh }); await startCredentialLogin(app, "ann", "sample:sso");
-  await until(() => credentialHold(app, "ann", "sample:sso").state === "logged-in");
-  expect(provide).toHaveBeenCalledTimes(1);
+posixIt("提前半小时续签，过了短令牌期限仍重试，恢复不通知，确认失效才通知", async () => {
+  const kind = "sample:sso";
+  const hold = () => credentialHold(app, "ann", kind);
+  const notices = () => all(app.db, "select title from notifications where user_id='ann'");
+  const provide = vi.fn(async () => {});
+  const refresh = vi.fn<NonNullable<CredentialDef["refresh"]>>(async () => ({ expiresAt: Date.now() + 2 * 3600_000 }));
+  const check = vi.fn(async () => ({ state: "expired" as const }));
+  add({ provide, refresh, check, login: async () => ({ user: "demo", expiresAt: Date.now() + 2 * 3600_000 }) });
+  await startCredentialLogin(app, "ann", kind);
+  await until(() => hold().state === "logged-in");
+  const { expiresAt, refreshAt } = hold();
+  expect(expiresAt! - refreshAt!).toBe(30 * 60_000);
+  expect(notices()).toHaveLength(0);
+  expect(myCredentials(app, "ann").credentials[0]).toMatchObject({ state: "ok", expiresAt: undefined });
+  vi.useFakeTimers();
+  vi.setSystemTime(refreshAt!);
+  refresh.mockRejectedValueOnce(new Error("secret=not-for-logs"));
+  expect(await tickCredentialRefreshes(app)).toBe(1);
+  expect(hold()).toMatchObject({ state: "logged-in", expiresAt, refreshAt: Date.now() + 120_000, error: "正在重试续签：刷新访问令牌失败" });
+  expect(JSON.stringify(hold())).not.toContain("not-for-logs");
   expect(await tickCredentialRefreshes(app)).toBe(0);
-  await tickCredentialRefreshes(app, Date.now() + 3600_000);
-  expect(refresh).toHaveBeenCalledOnce(); expect(provide).toHaveBeenCalledTimes(2);
-  refresh.mockRejectedValue(new Error("secret=not-for-logs"));
-  await refreshCredential(app, "ann", "sample:sso");
-  expect(credentialHold(app, "ann", "sample:sso").state).toBe("expired");
-  expect(JSON.stringify(credentialHold(app, "ann", "sample:sso"))).not.toContain("not-for-logs");
-  expect(all(app.db, "select * from notifications where user_id='ann' and title like '%登录过期%' ")).toHaveLength(1);
-  await refreshCredential(app, "ann", "sample:sso");
-  expect(all(app.db, "select * from notifications where user_id='ann' and title like '%登录过期%' ")).toHaveLength(1);
+  vi.setSystemTime(expiresAt! + 1000);
+  provide.mockRejectedValueOnce(new Error("写入暂不可用"));
+  expect(await tickCredentialRefreshes(app)).toBe(1);
+  expect(hold()).toMatchObject({ state: "logged-in", refreshAt: Date.now() + 300_000, error: "正在重试续签：向工具供给新令牌失败" });
+  expect(loggedIn(app, "ann", "traex")).toBe(false);
+  await checkCredential(app, "ann", kind);
+  expect(check).not.toHaveBeenCalled();
+  expect(notices()).toHaveLength(0);
+  vi.setSystemTime(hold().refreshAt!);
+  expect(await tickCredentialRefreshes(app)).toBe(1);
+  expect(loggedIn(app, "ann", "traex")).toBe(true);
+  expect(hold().error).toBeUndefined();
+  const failures = all<{ detail: string }>(app.db, "select detail from audit_events where action='credentials.refresh.retry' and actor='ann' order by id");
+  expect(failures.map(row => JSON.parse(row.detail))).toEqual([
+    { phase: "刷新访问令牌", reason: "失败" }, { phase: "向工具供给新令牌", reason: "失败" },
+  ]);
+  expect(notices()).toHaveLength(0);
+  refresh.mockResolvedValueOnce(null);
+  vi.setSystemTime(hold().refreshAt!);
+  expect(await tickCredentialRefreshes(app)).toBe(1);
+  expect(hold()).toMatchObject({ state: "expired", refreshAt: undefined, error: "续签凭据已失效，需要重新授权" });
+  vi.setSystemTime(Date.now() + 86400_000);
+  await checkCredential(app, "ann", kind);
+  expect(notices()).toEqual([expect.objectContaining({ title: "示例授权 登录过期了" })]);
+});
+posixIt("命令拒绝短令牌时立即排续签，旧令牌不再出借，也不催重新授权", async () => {
+  const kind = "sample:sso", refresh = vi.fn(async () => ({ expiresAt: Date.now() + 3600_000 }));
+  add({ refresh });
+  await startCredentialLogin(app, "ann", kind);
+  await until(() => credentialHold(app, "ann", kind).state === "logged-in");
+  vi.useFakeTimers();
+  vi.setSystemTime(Date.now() + 1000);
+  await expireCommandCredential(app, "ann", requireCredential(kind));
+  expect(credentialHold(app, "ann", kind)).toMatchObject({ state: "logged-in", refreshAt: Date.now() });
+  expect(loggedIn(app, "ann", "traex")).toBe(false);
+  expect(await tickCredentialRefreshes(app)).toBe(1);
+  expect(loggedIn(app, "ann", "traex")).toBe(true);
+  expect(all(app.db, "select title from notifications where user_id='ann' and (title like '%到期%' or title like '%过期%')")).toHaveLength(0);
 });
 it("本人只检查本机 HOME；每日检查在重启后仍去重", async () => {
   const check = vi.fn(async () => ({ state: "ok" as const, user: "machine", expiresAt: Date.now() + 2 * 86400_000 }));
@@ -502,7 +549,7 @@ posixIt("续签不响应取消也在两分钟内结束，不堵住退出", async
   await startCredentialLogin(app, "ann", "sample:sso"); await until(() => credentialHold(app, "ann", "sample:sso").state === "logged-in");
   vi.useFakeTimers(); const job = refreshCredential(app, "ann", "sample:sso");
   await vi.advanceTimersByTimeAsync(120_001); await job;
-  expect(credentialHold(app, "ann", "sample:sso").state).toBe("expired");
+  expect(credentialHold(app, "ann", "sample:sso")).toMatchObject({ state: "logged-in", error: "正在重试续签：刷新访问令牌超时" });
   await logoutCredential(app, "ann", "sample:sso");
 });
 it.skipIf(process.platform === "win32")("安装目录只读、状态预建；本人默认清单显示 state；拒绝逃逸和符号链接", () => {

@@ -18,6 +18,9 @@ import { backendLoginReady, credentialReady, credentialWaits } from "./credentia
 export { registerCredential } from "./credential-registry.ts";
 import { credentialKindsForBackend, credentialMethod, credentialMethods, declaredPaths, defaultSharingScope, requireCredential, type CredentialMethod } from "./credential-registry.ts";
 const THREE_DAYS = 3 * 86400_000;
+const MINUTE = 60_000;
+const REFRESH_PENDING = "正在重试续签";
+const REFRESH_REJECTED = "续签凭据已失效，需要重新授权";
 /**
  * The service itself said the login no longer works (a command's outcome). A check that only reads
  * what is on disk (the owner's) cannot see that, so it does not undo it unless the login changed.
@@ -50,7 +53,23 @@ type Row = { user_id: string; kind: string; state: Hold["state"]; account_name: 
   expires_at: number | null; refresh_at: number | null; checked_at: string | null; check_day: string;
   last_used_at: string | null; error: string | null; sharing: string; notified: string; provision: string | null; supplied_backends: string };
 const day = (app: App, at = Date.now()) => zonedParts(at, app.config.timezone).date;
-const refreshAt = (expiresAt?: number) => expiresAt === undefined ? undefined : Math.max(expiresAt - 600_000, Date.now() + 60_000);
+function refreshAt(m: CredentialMethod, expiresAt?: number) {
+  if (expiresAt === undefined || !m.refresh) return expiresAt;
+  const at = Date.now();
+  const lead = Math.min(30 * MINUTE, Math.max(MINUTE, (expiresAt - at) / 2));
+  return Math.max(at + MINUTE, Math.floor(expiresAt - lead));
+}
+export const renewableLogin = (id: string, m: CredentialMethod, hold: Hold) => id !== OWNER && !!m.refresh && hold.state === "logged-in";
+export function credentialRefreshPending(id: string, m: CredentialMethod, hold: Hold) {
+  return renewableLogin(id, m, hold) &&
+    (hold.error?.startsWith(REFRESH_PENDING) === true || (hold.expiresAt ?? Infinity) <= Date.now());
+}
+function retryRefresh(app: App, id: string, m: CredentialMethod, hold: Hold, reason: string, rejectedAccess = false) {
+  const at = Date.now();
+  const expiresAt = rejectedAccess ? Math.min(at, hold.expiresAt ?? at) : hold.expiresAt;
+  const delay = rejectedAccess ? 0 : (expiresAt ?? Infinity) > at ? 2 * MINUTE : 5 * MINUTE;
+  save(app, id, m.kind, { ...hold, expiresAt, refreshAt: at + delay, checkedAt: now(), error: `${REFRESH_PENDING}：${reason}` });
+}
 function member(app: App, id: string) {
   const user = findUser(app, id);
   return id !== OWNER && activeUser(user) && user.kind === "person";
@@ -180,7 +199,7 @@ function serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 async function timed<T>(m: CredentialMethod, ms: number, work: (signal: AbortSignal) => Promise<T>) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(new Error("凭据操作超时")), ms);
+  const timer = setTimeout(() => ctrl.abort(new DOMException("凭据操作超时", "TimeoutError")), ms);
   const signal = AbortSignal.any([m.signal, ctrl.signal]);
   try { return await untilAbort(signal, () => work(signal)); }
   finally { clearTimeout(timer); ctrl.abort(); }
@@ -209,7 +228,7 @@ export const loginLink = (kind: string) => `#/account?login=${encodeURIComponent
 function reminder(app: App, id: string, m: CredentialMethod, state: "expired" | "expiring" | "failed") {
   const hold = credentialHold(app, id, m.kind), today = day(app);
   // A login is under way: its own card says how it ends.
-  if (hold.notified[state] === today || logins.has(keyOf(app, id, m.kind))) return;
+  if (hold.notified[state] === today || state === "expired" && hold.error === REFRESH_REJECTED && hold.notified.expired || logins.has(keyOf(app, id, m.kind))) return;
   const startable = canStartLogin(app, id, m);
   notify(app, { userId: id, title: `${m.name} ${state === "expired" ? "登录过期了" : state === "failed" ? "授权或检查失败" : "三天内到期"}`,
     body: startable ? `打开这条通知会开始重新登录 ${m.name}，在官方页面确认即可。${id === OWNER ? "" : "此前的账号文件会保留。"}`
@@ -223,7 +242,12 @@ export function expireCommandCredential(app: App, id: string, m: CredentialMetho
   return serial(key, async () => {
     const hold = credentialHold(app, id, m.kind);
     // A login that finished after the command failed replaced the login it failed with.
-    if (!canCheck(id, hold.state) || m.signal.aborted || (loggedInAt.get(key) ?? 0) >= reported) return;
+    if (!canCheck(id, hold.state) || hold.error === REFRESH_REJECTED || m.signal.aborted || (loggedInAt.get(key) ?? 0) >= reported) return;
+    if (renewableLogin(id, m, hold)) {
+      if (!credentialRefreshPending(id, m, hold) || (hold.expiresAt ?? Infinity) > Date.now())
+        retryRefresh(app, id, m, hold, "命令报告访问令牌不可用", true);
+      return;
+    }
     save(app, id, m.kind, { ...hold, state: "expired", refreshAt: undefined, error: COMMAND_EXPIRED });
     if (remind) reminder(app, id, m, "expired");
   });
@@ -257,13 +281,14 @@ export function inviteCredential(app: App, id: string, m: CredentialMethod, reas
 }
 function remindHold(app: App, id: string, m: CredentialMethod) {
   const s = credentialHold(app, id, m.kind);
+  if (renewableLogin(id, m, s)) return;
   if (s.state === "expired" || s.expiresAt !== undefined && s.expiresAt <= Date.now()) reminder(app, id, m, "expired");
   else if (s.state === "logged-in" && s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS) reminder(app, id, m, "expiring");
 }
 type LoginReply = { url?: string; code?: string; done?: boolean };
 type Pending = { method: CredentialMethod; abort: AbortController; reply: Promise<LoginReply>; url?: string; code?: string; notice?: string };
 const logins = new Map<string, Pending>();
-/** When each hold's last login through omem finished (expireCommandCredential). */
+/** When each hold last received a login through omem (expireCommandCredential). */
 const loggedInAt = new Map<string, number>();
 /** `why`: said before the link when omem starts the login on its own (inviteCredential). */
 export function startCredentialLogin(app: App, id: string, kind: string, why?: string, notifyPrivate = true): Promise<LoginReply> {
@@ -301,7 +326,7 @@ export function startCredentialLogin(app: App, id: string, kind: string, why?: s
       if (!owner && m.provide) await untilAbort(signal, () => m.provide!(ctx));
       signal.throwIfAborted();
       save(app, id, kind, { ...credentialHold(app, id, kind), ...result, suppliedBackends: m.provides.backends, expiresAt: result.expiresAt, state: "logged-in",
-        refreshAt: owner ? undefined : refreshAt(result.expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined, notified: {} });
+        refreshAt: owner ? undefined : refreshAt(m, result.expiresAt), checkedAt: now(), checkedDay: day(app), error: undefined, notified: {} });
       loggedInAt.set(key, Date.now());
       settleLoginCard(app, id, m, p, "done");
       remindHold(app, id, m);
@@ -353,20 +378,42 @@ export function refreshCredential(app: App, id: string, kind: string) {
   return serial(keyOf(app, id, kind), async () => {
     const s = credentialHold(app, id, kind);
     if (s.state !== "logged-in") return s;
+    let phase = "刷新访问令牌";
+    let recovered = false;
     try {
       if (m.refresh) {
         const result = await timed(m, 120_000, async signal => {
           const ctx = context(app, id, m, signal, "supply");
           const r = await untilAbort(signal, () => m.refresh!(ctx));
-          if (r === null) throw new Error("重新授权");
+          if (r === null) return null;
           const result = refreshResult.parse(r);
+          phase = "向工具供给新令牌";
           if (m.provide) await untilAbort(signal, () => m.provide!(ctx));
           return result;
         });
-        save(app, id, kind, { ...credentialHold(app, id, kind), ...result, suppliedBackends: m.provides.backends, expiresAt: result.expiresAt, refreshAt: refreshAt(result.expiresAt), checkedAt: now(), error: undefined });
+        const hold = credentialHold(app, id, kind);
+        if (result === null) {
+          const notified = { ...hold.notified };
+          delete notified.expired;
+          save(app, id, kind, { ...hold, notified, state: "expired", refreshAt: undefined, error: REFRESH_REJECTED, checkedAt: now() });
+        } else {
+          save(app, id, kind, { ...hold, ...result, suppliedBackends: m.provides.backends, expiresAt: result.expiresAt, refreshAt: refreshAt(m, result.expiresAt), checkedAt: now(), error: undefined });
+          loggedInAt.set(keyOf(app, id, kind), Date.now());
+          recovered = credentialRefreshPending(id, m, hold);
+        }
       } else if (s.expiresAt !== undefined && s.expiresAt <= Date.now()) save(app, id, kind, { ...credentialHold(app, id, kind), state: "expired", refreshAt: undefined });
       else save(app, id, kind, { ...credentialHold(app, id, kind), refreshAt: s.expiresAt });
-    } catch { save(app, id, kind, { ...credentialHold(app, id, kind), state: "expired", refreshAt: undefined, error: "续签或供给失败，请重新授权", checkedAt: now() }); }
+    } catch (error) {
+      if (!m.signal.aborted) {
+        const detail = error instanceof z.ZodError ? "返回格式无效" : error instanceof Error && error.name === "TimeoutError" ? "超时" : "失败";
+        retryRefresh(app, id, m, credentialHold(app, id, kind), phase + detail);
+        audit(app, id, "credentials.refresh.retry", kind, { phase, reason: detail });
+      }
+    }
+    if (recovered) {
+      credentialReady(app, id, kind, m.name);
+      for (const backend of m.provides.backends) backendLoginReady(app, id, backend);
+    }
     remindHold(app, id, m);
     return credentialHold(app, id, kind);
   });
@@ -379,22 +426,35 @@ export function checkCredential(app: App, id: string, kind: string) {
   return serial(keyOf(app, id, kind), async () => {
     const s = credentialHold(app, id, kind);
     if (!m.check || !canCheck(id, s.state)) return s;
+    if (renewableLogin(id, m, s) && s.error?.startsWith(REFRESH_PENDING)) {
+      run(app.db, "update credential_holds set check_day=? where user_id=? and kind=?", day(app), id, kind);
+      return { ...s, checkedDay: day(app) };
+    }
     try {
       const result = checkResult.parse(await timed(m, 120_000, signal => m.check!(context(app, id, m, signal, "check"))));
       const expiresAt = result.state === "missing" || result.expiresAt === null ? undefined : result.expiresAt ?? s.expiresAt;
       let state: Hold["state"] = result.state === "missing" ? "missing" : result.state === "expired" || expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : "logged-in";
+      if (state !== "logged-in" && renewableLogin(id, m, s)) {
+        retryRefresh(app, id, m, { ...s, checkedDay: day(app) }, "检查发现访问令牌不可用", true);
+        return credentialHold(app, id, kind);
+      }
       // The same login on disk the service already turned down: still expired until a new login.
-      const unchanged = s.state === "expired" && s.error === COMMAND_EXPIRED && expiresAt === s.expiresAt && (result.user ?? s.user) === s.user;
-      if (state === "logged-in" && unchanged) state = "expired";
+      const unchanged = s.state === "expired" && (s.error === REFRESH_REJECTED ||
+        s.error === COMMAND_EXPIRED && expiresAt === s.expiresAt && (result.user ?? s.user) === s.user);
+      if (unchanged) state = "expired";
       save(app, id, kind, { ...credentialHold(app, id, kind), state,
         suppliedBackends: id === OWNER ? m.provides.backends : s.suppliedBackends,
-        user: result.state === "missing" ? undefined : result.user ?? s.user, expiresAt, refreshAt: id === OWNER ? undefined : refreshAt(expiresAt), checkedAt: now(), checkedDay: day(app),
-        error: state === "expired" && unchanged ? COMMAND_EXPIRED : undefined });
+        user: result.state === "missing" && !unchanged ? undefined : result.user ?? s.user, expiresAt,
+        refreshAt: id === OWNER || state !== "logged-in" ? undefined : (expiresAt === s.expiresAt ? s.refreshAt : undefined) ?? refreshAt(m, expiresAt), checkedAt: now(), checkedDay: day(app),
+        error: unchanged ? s.error : undefined });
       if (state === "logged-in" && s.state !== "logged-in") {
         credentialReady(app, id, kind, m.name);
         for (const backend of s.suppliedBackends) backendLoginReady(app, id, backend);
       }
-    } catch { save(app, id, kind, { ...credentialHold(app, id, kind), checkedAt: now(), checkedDay: day(app), error: "检查失败，请稍后重试" }); reminder(app, id, m, "failed"); }
+    } catch {
+      save(app, id, kind, { ...credentialHold(app, id, kind), checkedAt: now(), checkedDay: day(app), error: s.error === REFRESH_REJECTED ? s.error : "检查失败，请稍后重试" });
+      if (!renewableLogin(id, m, s) && s.error !== REFRESH_REJECTED) reminder(app, id, m, "failed");
+    }
     remindHold(app, id, m);
     return credentialHold(app, id, kind);
   });
@@ -513,14 +573,15 @@ export function maybeSendCredentialOnboarding(app: App, id: string) {
 export type CredentialState = "unknown" | "none" | "ok" | "expiring" | "expired" | "logging-in";
 function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
   const p = logins.get(keyOf(app, id, m.kind));
-  const state: CredentialState = p ? "logging-in" : s.state === "expired" || s.expiresAt !== undefined && s.expiresAt <= Date.now() ? "expired"
+  const renewable = renewableLogin(id, m, s);
+  const state: CredentialState = p ? "logging-in" : s.state === "expired" || !renewable && (s.expiresAt ?? Infinity) <= Date.now() ? "expired"
     : id === OWNER && s.state === "none" ? "unknown"
-    : !usableCredential(app, id, m.kind, s) ? "none" : s.expiresAt !== undefined && s.expiresAt - Date.now() <= THREE_DAYS ? "expiring" : "ok";
+    : !usableCredential(app, id, m.kind, s) ? "none" : !renewable && (s.expiresAt ?? Infinity) - Date.now() <= THREE_DAYS ? "expiring" : "ok";
   const missing = declaredPaths(app, m).install.filter(d => !installed(d.path));
   // As canStartLogin, without reading the person again for every row (the caller is an active person).
   const login = id === OWNER ? !!m.ownerLogin : sandboxSupport().ok;
   return { kind: m.kind, plugin: m.plugin, name: m.name, describe: m.describe ?? "", required: !!m.required, state,
-    user: s.user, expiresAt: s.expiresAt, checkedAt: s.checkedAt, error: s.error, sharing: s.sharing,
+    user: s.user, expiresAt: renewable ? undefined : s.expiresAt, checkedAt: s.checkedAt, error: s.error, sharing: s.sharing,
     backends: m.provides.backends, commands: m.provides.commands.map(c => c.name), supplied: s.provision !== undefined, login,
     machine: id === OWNER, url: p?.url, code: p?.code,
     reason: id === OWNER ? (login ? undefined : "用的是这台机器上已有的登录") : !login ? "成员账号沙箱不可用" : undefined,

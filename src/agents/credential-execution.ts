@@ -15,7 +15,7 @@ import { confirmCredential } from "./credential-confirm.ts";
 import { recentApplicationUrl, applicationUrl, checkAccess, knownAccess, sharedHolders } from "./credential-access.ts";
 import { commandResource, credentialArgs, credentialCommand, credentialOutcome } from "./credential-outcome.ts";
 import { credentialMethods } from "./credential-registry.ts";
-import { availableLogin, credentialHold, credentialMemberEnv, inviteCredential, usableCredential } from "./credentials.ts";
+import { availableLogin, credentialHold, credentialMemberEnv, credentialRefreshPending, inviteCredential, usableCredential } from "./credentials.ts";
 import { launchRun } from "./egress-run.ts";
 import { decide, digest, operationWho } from "./operation-policy.ts";
 import { ownRun } from "./own-run.ts";
@@ -148,8 +148,9 @@ async function fallbackExecution(ctx: ToolContext & { runId: string }, entry: En
   const lends = hold.sharing.scope === "all" || hold.sharing.scope === "members" && hold.sharing.members.includes(requester);
   const usable = lends && availableLogin(app, OWNER, kind, hold) &&
     app.config.agents.accountIsolation !== "require" && app.config.security.egress.mode !== "all-sandboxed";
-  inviteCredential(app, requester, method, reason, { command: display, applyUrl, covered: usable });
-  const asked = reason === "denied" ? (applyUrl ? "已把申请链接发给他" : "") : `已提醒他授权${method.name}`;
+  const refreshing = reason !== "denied" && credentialRefreshPending(requester, method, credentialHold(app, requester, kind));
+  if (!refreshing) inviteCredential(app, requester, method, reason, { command: display, applyUrl, covered: usable });
+  const asked = refreshing ? "omem 正在自动续签" : reason === "denied" ? (applyUrl ? "已把申请链接发给他" : "") : `已提醒他授权${method.name}`;
   if (!usable || !eligible()) {
     return { execution: last, notice: `${name}${REASON_TEXT[reason]}${method.name}${reason === "none" ? "登录" : ""}${asked ? "，" + asked : ""}。` };
   }
@@ -179,6 +180,8 @@ export async function memberExecution(ctx: ToolContext & { runId: string }, entr
   const display = [command.name, ...args.filter((x) => !x.startsWith("-")).slice(0, 2)].join(" ");
   if (!sandboxSupport().ok) return { decision: "deny" as const, message: `这台机器不能在${name}的账号环境里运行命令（需要沙箱），这次跳过他` };
   if (!usableCredential(app, member, method.kind)) {
+    if (credentialRefreshPending(member, method, credentialHold(app, member, method.kind)))
+      return { decision: "deny" as const, message: `${name}的${method.name}正在自动续签；这次跳过他` };
     inviteCredential(app, member, method, "none", { command: display, applyUrl: null, covered: false });
     return { decision: "deny" as const, message: `${name}没有可用的${method.name}登录，已提醒他授权；这次跳过他` };
   }

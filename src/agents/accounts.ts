@@ -20,7 +20,7 @@ import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "
 import { launch, stop } from "./spawn.ts";
 import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
 import { backendLoginReady } from "./credential-wait.ts";
-import { credentialUse, selectCredential, selectedCredential, credentialBackendLogin, credentialAccountView, suppliedCredentialKind, checkCredential, credentialInstallDirs, credentialStateRels, heldCredentialDeclarations, retainedCredentialPaths, removeAllCredentials } from "./credentials.ts";
+import { credentialUse, selectCredential, selectedCredential, credentialBackendLogin, credentialAccountView, suppliedCredentialKind, checkCredential, credentialInstallDirs, credentialStateRels, heldCredentialDeclarations, retainedCredentialPaths, removeAllCredentials, renewableLogin } from "./credentials.ts";
 
 /**
  * Each omem user's own AI accounts (docs/v2/agent-accounts.md). A member logs in to a backend once
@@ -458,9 +458,12 @@ export async function checkAccount(app: App, userId: string, backend: string): P
   if (supplied) {
     const method = credentialMethod(supplied);
     if (!method) return { state: "none", method: supplied };
-    const { state, user, expiresAt, checkedAt, error, suppliedBackends } = await checkCredential(app, userId, supplied);
+    const hold = await checkCredential(app, userId, supplied);
+    const { state, user, expiresAt, checkedAt, error, suppliedBackends } = hold;
     if (!method.provides.backends.includes(backend) || !suppliedBackends.includes(backend)) return { state: "none", method: supplied, checkedAt };
-    return { state: state === "missing" ? "none" : expiresAt !== undefined && expiresAt <= Date.now() ? "expired" : state, user, expiresAt, checkedAt, error, method: supplied };
+    const renewable = renewableLogin(userId, method, hold);
+    return { state: state === "missing" ? "none" : (expiresAt ?? Infinity) <= Date.now() ? renewable ? "none" : "expired" : state,
+      user, expiresAt: renewable ? undefined : expiresAt, checkedAt, error, method: supplied };
   }
   if (isPlugin(s.method) && s.state !== "none") return refreshPluginLogin(app, userId, backend);
   return checkNative(app, userId, entry);
