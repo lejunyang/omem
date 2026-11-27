@@ -51,24 +51,24 @@ describe("长任务存储和授权", () => {
     expect(resolveThread(app, { channel: "lark", chatId: "group", topicId: "topic" }).thread.id).toBe(task.threadId);
   });
 
-  it("草案暂停再继续仍需确认，补充按原话追加，修改预算保留其余上限", () => {
+  it("草案暂停再继续仍需确认，补充按原话追加，修改预算保留其余上限", async () => {
     const app = setup(), task = startLongTask(app, input);
     const change = (c: Parameters<typeof changeLongTask>[2]) => changeLongTask(app, task.id, c);
-    expect(change({ action: "pause" }).status).toBe("paused");
+    expect((await change({ action: "pause" })).status).toBe("paused");
     expect(itemExpiry(app, getItem(app, task.itemId))).toBeNull();
     expect(dueItems(app, { withinDays: 30 }).map(entry => entry.item.id)).not.toContain(task.itemId);
-    expect(change({ action: "resume" }).status).toBe("draft");
+    expect((await change({ action: "resume" })).status).toBe("draft");
     expect(() => confirmLongTaskBrief(app, task.id, { constraints: ["只改说明"] })).toThrow(/完成条件/);
     confirmLongTaskBrief(app, task.id, { doneWhen: ["两个入口通过"], constraints: ["只改说明"] });
     const text = "  范围增加一页\n注意换行  ";
-    change({ action: "supplement", text });
-    change({ action: "supplement", text: "按原范围收尾" });
-    expect(change({ action: "budget", budget: { hours: 2.5 } })).toMatchObject({ status: "active", goal: input.goal,
+    await change({ action: "supplement", text });
+    await change({ action: "supplement", text: "按原范围收尾" });
+    expect(await change({ action: "budget", budget: { hours: 2.5 } })).toMatchObject({ status: "active", goal: input.goal,
       budget: { ...task.budget, hours: 2.5 }, supplements: [{ text, at: expect.any(String) }, { text: "按原范围收尾", at: expect.any(String) }] });
-    expect(() => change({ action: "budget", budget: { codeRounds: 0 } })).toThrow();
-    expect(change({ action: "end" }).status).toBe("ended");
+    await expect(change({ action: "budget", budget: { codeRounds: 0 } })).rejects.toThrow();
+    expect((await change({ action: "end" })).status).toBe("ended");
     expect(getItem(app, task.itemId).status).toBe("cancelled");
-    expect(() => change({ action: "resume" })).toThrow();
+    await expect(change({ action: "resume" })).rejects.toThrow();
   });
 
   it("每轮报告写入同一次运行和事项时间线，完成跟随事项一起关闭", () => {
@@ -84,11 +84,11 @@ describe("长任务存储和授权", () => {
     expect(one(app.db, "select json_extract(output,'$.supervisorReport.stage') stage from runs where id=?", round.id)).toEqual({ stage: "验收" });
   });
 
-  it("拉取保留任务书、补充与会话联系，远端运行和待确认卡留在原设备", () => {
+  it("拉取保留任务书、补充与会话联系，远端运行和待确认卡留在原设备", async () => {
     const local = setup(), remote = setup();
     const task = startLongTask(remote, input);
     confirmLongTaskBrief(remote, task.id, { doneWhen: ["有测试报告"] });
-    changeLongTask(remote, task.id, { action: "supplement", text: "优先核对异常路径" });
+    await changeLongTask(remote, task.id, { action: "supplement", text: "优先核对异常路径" });
     run(remote.db, "update long_tasks set state=? where id=?", JSON.stringify({ briefAsk: "remote-card" }), task.id);
     mergeLibrary(local, remote.home);
     expect(longTaskInThread(local, task.threadId)).toMatchObject({ id: task.id, itemId: task.itemId, status: "paused",

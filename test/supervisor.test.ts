@@ -4,6 +4,9 @@ import { answerAsk, getAsk, listAsks } from "../src/agents/asks.ts";
 import { createWorkerAsk } from "../src/agents/supervisor-code.ts";
 import { addTask, taskForFinding, updateTask } from "../src/agents/code-tasks.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
+import { handleCardAction } from "../src/channels/lark-actions.ts";
+import Fastify from "fastify";
+import { registerLongTaskRoutes } from "../src/server/long-tasks-http.ts";
 import { reattachThread, updateThread } from "../src/agents/threads.ts";
 import { type LongTask, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
 import { wakeSupervisor, checkSupervisorTimer, patchSupervisorState, runSupervisor } from "../src/agents/supervisor.ts";
@@ -98,6 +101,46 @@ describe("长任务监工", () => {
       expect(reply).toHaveBeenCalledTimes(1);
       expect(getRun(app, next.run.id).output.progressText).toBe(text);
     } finally { setLarkClient(null); }
+  });
+
+  it("话题命令、HTTP 和卡片按钮各更新同一张进度卡一次", async () => {
+    const { app, task } = await setup();
+    app.config.lark.ownerOpenId = "ou_owner";
+    reattachThread(app, task.threadId, "lark", "oc_example#topic");
+    updateThread(app, task.threadId, { settings: { lastMessageId: "om_anchor" } });
+    const reply = vi.fn(async () => ({ code: 0, data: { message_id: "om_progress" } }));
+    const patch = vi.fn(async (_request: { path: { message_id: string }; data: { content: string } }) => ({ code: 0 }));
+    setLarkClient({ im: { message: { reply, patch } } });
+    const server = Fastify();
+    registerLongTaskRoutes(server, app, () => task.userId);
+    const send = (text: string) => receive(app, { conversationId: task.threadId, text });
+    try {
+      run(app.db, "update long_tasks set status='active', confirmed_at=created_at where id=?", task.id);
+      await submitSupervisorReport(app, turn(app, task).run.id, { ...draftReport, brief: undefined, stage: "校对" });
+      await send("/监工 暂停");
+      expect(patch).toHaveBeenCalledTimes(1);
+      expect(patch.mock.calls[0][0].data.content).toContain("已暂停");
+      expect(patch.mock.calls[0][0].data.content).toContain('"action":"继续"');
+
+      const resumed = await server.inject({ method: "PATCH", url: "/api/long-tasks/" + task.id, payload: { action: "resume" } });
+      expect(resumed.json().status).toBe("active");
+      expect(patch).toHaveBeenCalledTimes(2);
+      expect(patch.mock.calls[1][0].data.content).toContain('"action":"暂停"');
+      await handleCardAction(app, { operator: { open_id: "ou_owner" }, context: { open_message_id: "om_progress" }, action: { value: { action: "暂停" } } });
+      expect(patch).toHaveBeenCalledTimes(3);
+      expect(patch.mock.calls[2][0].data.content).toContain('"action":"继续"');
+
+      await send("/监工 结束");
+      expect(patch).toHaveBeenCalledTimes(4);
+      const final = patch.mock.calls[3][0].data.content;
+      expect(final).toContain("已结束");
+      expect(final).not.toContain('"tag":"button"');
+      expect(patch.mock.calls.every(([request]) => request.path.message_id === "om_progress")).toBe(true);
+      expect(reply).toHaveBeenCalledTimes(1);
+    } finally {
+      setLarkClient(null);
+      await server.close();
+    }
   });
 
   it("同阶段续用会话，阶段变化或上下文到限时从任务书接手，信号原文置顶", async () => {

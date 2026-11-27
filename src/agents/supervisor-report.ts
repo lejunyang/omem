@@ -47,11 +47,23 @@ async function updateCard(app: App, task: LongTask, body: string) {
   });
 }
 
-export async function refreshSupervisorCard(app: App, task: LongTask) {
-  const last = supervisorState(app, task.id).lastReport;
-  if (!last) return;
-  const report = getRun(app, last).output.supervisorReport as Report;
-  if (report) await updateCard(app, task, supervisorProgressText(app, task, report));
+// Reports and owner controls can arrive while Feishu is still sending or patching this card.
+const cardUpdates = new Map<string, Promise<void>>();
+async function queueCardUpdate(app: App, task: LongTask, text: string, runId: string) {
+  const previous = cardUpdates.get(task.id) ?? Promise.resolve();
+  const next = previous.then(() => updateCard(app, task, text))
+    .catch(error => { addRunEvent(app, runId, "warning", { message: `更新长任务飞书进度卡失败：${String(error)}` }); });
+  cardUpdates.set(task.id, next);
+  try { await next; }
+  finally { if (cardUpdates.get(task.id) === next) cardUpdates.delete(task.id); }
+}
+
+export async function refreshSupervisorCard(app: App, id: string) {
+  const { lastReport } = supervisorState(app, id);
+  if (!lastReport) return;
+  const task = getLongTask(app, id);
+  const report = getRun(app, lastReport).output.supervisorReport as Report;
+  if (report) await queueCardUpdate(app, task, supervisorProgressText(app, task, report), lastReport);
 }
 
 export function flushSupervisorPush(app: App, task: LongTask) {
@@ -128,7 +140,7 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
     if (report.askOwner.length) offerOwnerQuestions(app, task, runId, report.askOwner);
   });
   const next = getLongTask(app, task.id);
-  await updateCard(app, next, text).catch(error => addRunEvent(app, runId, "warning", { message: `更新长任务飞书进度卡失败：${String(error)}` }));
+  await queueCardUpdate(app, next, text, runId);
   const prefs = task.notifications;
   if (prefs.summaryHours && next.status === "active") scheduleSupervisorTimer(app, next, "summary", new Date(Date.now() + prefs.summaryHours * 3600_000).toISOString());
   if ((prefs.milestones && (prior.stage !== report.stage || report.status === "done")) ||
@@ -175,13 +187,12 @@ registerAskHandler("supervisor-brief", async (app, ask, context) => {
   const changes = Object.fromEntries(Object.keys(proposed).map(key =>
     [key, String(ask.value?.[key] ?? "").split("\n").map(s => s.trim()).filter(Boolean)]));
   withinTx(app.db, () => {
+    let budget: LongTask["budget"] | undefined;
     if (task.status === "draft") {
-      const budget = { hours: Number(ask.value?.hours), codeRounds: Number(ask.value?.codeRounds), dailyWakes: Number(ask.value?.dailyWakes) };
-      if (budget.hours !== task.budget.hours || budget.codeRounds !== task.budget.codeRounds || budget.dailyWakes !== task.budget.dailyWakes)
-        changeLongTask(app, task.id, { action: "budget", budget });
+      budget = { hours: Number(ask.value?.hours), codeRounds: Number(ask.value?.codeRounds), dailyWakes: Number(ask.value?.dailyWakes) };
       for (const key of ["constraints", "mustAsk"]) changes[key] = String(ask.value?.[key] ?? "").split("\n").map(s => s.trim()).filter(Boolean);
     }
-    confirmLongTaskBrief(app, task.id, changes);
+    confirmLongTaskBrief(app, task.id, changes, budget);
     patchSupervisorState(app, task.id, { briefAsk: null });
   });
 });

@@ -5644,10 +5644,10 @@ def({
   name: "message_supervisor", write: true,
   description: "向指定长任务的监工转达本人补充的原话。在任务自己的话题里可以省略 task_id。",
   schema: z.object({ task_id: z.string().optional(), text: z.string().min(1) }),
-  handler: (ctx, a) => {
+  handler: async (ctx, a) => {
     if (!ownTurn(ctx)) throw new HttpError(403, "请在本人补充要求的会话里转达");
     const task = supervisorTask(ctx, a.task_id, true);
-    changeLongTask(ctx.app, task.id, { action: "supplement", text: a.text });
+    await changeLongTask(ctx.app, task.id, { action: "supplement", text: a.text });
     return `已把补充交给长任务 ${task.id} 的监工。`;
   },
 });
