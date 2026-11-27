@@ -238,6 +238,23 @@ describe("研究的工作区", () => {
     run(f.app.db, "update runs set status='done',finished_at=? where id=?", now(), retry.id); await advance(f.app, f.item.id);
     expect(getRun(f.app, f.stage().by!).input.execution).toMatchObject({ profile: "stage-ai", model: "large" });
   });
+
+  it("试验在入队后改为指定云端 AI 时，worker 阻塞阶段并说明原因", async () => {
+    const f = await setup(1, a => {
+      a.config.agents.profiles.push(agentProfileSchema.parse({ id: "demo-cloud", transport: "doubao", command: "unused" }));
+      mkdirSync(join(a.home, "secrets"), { recursive: true });
+      writeFileSync(join(a.home, "secrets", "doubao.json"), JSON.stringify({ demo: {} }));
+      a.config.studies.envs = [{ id: "registered", name: "登记环境", note: "执行示例命令", thirdParty: false }];
+    });
+    await f.select();
+    const r = getRun(f.app, f.stage().by!);
+    expect(r.input.cwd).toBeTruthy();
+    f.app.config.studies.envs[0].ai = { profile: "demo-cloud" };
+    const backend = vi.spyOn(runner, "runRole").mockRejectedValue(new Error("不应执行"));
+    await __testHandlers.get("study-trial")!({ app: f.app, run: r, signal: new AbortController().signal, event() {}, output() {} });
+    expect(backend).not.toHaveBeenCalled();
+    expect(f.stage()).toMatchObject({ state: "blocked", note: expect.stringContaining("需要本机工作区或本机命令") });
+  });
 });
 
 describe("从发现发起编码交办", () => {

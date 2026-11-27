@@ -608,7 +608,7 @@ export type Interaction = {
   chatId: string | null;
   conversationId: string | null;
   runId: string | null;
-  purpose: "agent" | "draft" | "model" | "ask" | "guest-approval" | "meeting-join" | "rule-script" | "command-gate" | "mention-reply" | "meeting-answer" | "watch-brief" | "watch-draft" | "watch-promote" | "listen-meeting" | "probe-proposal" | "first-look";
+  purpose: "supervisor" | "agent" | "draft" | "model" | "ask" | "guest-approval" | "meeting-join" | "rule-script" | "command-gate" | "mention-reply" | "meeting-answer" | "watch-brief" | "watch-draft" | "watch-promote" | "listen-meeting" | "probe-proposal" | "first-look";
   allowed: string[];
   payload: Record<string, unknown>;
   status: "open" | "done" | "expired";

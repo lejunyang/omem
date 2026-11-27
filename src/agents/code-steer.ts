@@ -29,9 +29,9 @@ export function markNotesDelivered(app: App, runId: string, taken: CodeNote[]) {
 
 export function notesText(notes: CodeNote[], timeZone?: string) {
   return [
-    "## 本人在你工作期间补充的要求",
+    notes.some(n => n.by === "supervisor") ? "## 工作期间收到的补充" : "## 本人在你工作期间补充的要求",
     "",
-    ...notes.map((n) => `- ${localStamp(n.at, timeZone, { short: true })} ${n.text}`),
+    ...notes.map((n) => `- ${localStamp(n.at, timeZone, { short: true })} ${n.by === "supervisor" ? "助手：" : ""}${n.text}`),
     "",
     "结合它们继续，不用停下重来；和原来的要求冲突时以这里为准。最后的说明里逐条交代怎么处理的。",
   ].join("\n");
@@ -70,7 +70,7 @@ export function addCodeNote(app: App, runId: string, text: string, by: string, i
   if (!note.text) throw new HttpError(400, "补充的内容不能为空");
   setRunOutput(app, r.id, { notes: [...notesOf(r), note] });
   if (by === OWNER && isTaskWork(app, r.id)) renewBudget(app, workRootOf(app, r.id), Number(r.input.round ?? 1));
-  addRunEvent(app, r.id, "status", { text: `本人补充：${truncate(note.text, 200)}${stage === "coding" ? "" : stage === "queued" ? "（这一轮开始编码时带上）" : "（编码已结束，下一轮带上）"}` });
+  addRunEvent(app, r.id, "status", { text: `${by === "supervisor" ? "助手" : "本人"}补充：${truncate(note.text, 200)}${stage === "coding" ? "" : stage === "queued" ? "（这一轮开始编码时带上）" : "（编码已结束，下一轮带上）"}` });
   return { runId: r.id, stage, note };
 }
 

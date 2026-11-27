@@ -14,7 +14,10 @@ import { addMember, createApiToken, createUser } from "../src/core/users.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { answerAsk, getAsk } from "../src/agents/asks.ts";
 import { createRun, getRun, trackAbort, __testHandlers } from "../src/agents/runs.ts";
-import { artifactInbox } from "../src/agents/artifacts.ts";
+import { artifactInbox, artifactPath, listArtifacts } from "../src/agents/artifacts.ts";
+import { confirmProbe, probeCloud } from "../src/agents/cloud-probe.ts";
+import { cloudTurn, cloudRequest } from "../src/agents/cloud-tools.ts";
+import { fakeCloudReceipt } from "./fake-cloud-probe.ts";
 import { readSkill, seedBuiltinSkills } from "../src/agents/specs.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { upsertItem } from "../src/items/store.ts";
@@ -75,6 +78,72 @@ async function summary(f: Awaited<ReturnType<typeof setup>>) {
   await reportStage(f.app, f.item.id, "summary", { state: "done", note: "本轮核验结束，没有新发现", evidence: [r] }, { actor: "assistant", userId: "owner", runId: r });
 }
 const ctx = (f: Awaited<ReturnType<typeof setup>>, id?: string): ToolContext => ({ app: f.app, runId: id ?? null, spaceId: "personal", spaces: ["personal"], writable: ["personal"], tools: null, actor: "agent", userId: "owner", role: "assistant" });
+
+it("HTTP 交试验、发现和阶段的正文保存为可追溯的运行产物", async () => {
+  const f = await setup();
+  await select(f, 1);
+  const app = f.app;
+  const profile = agentProfileSchema.parse({ id: "cloud-demo", transport: "doubao", command: "unused" });
+  app.config.agents.profiles.push(profile);
+  app.config.webUrl = "https://8.8.8.8";
+  const tools = ["read_source", "trial_report", "record_finding", "stage_report"] as const;
+  Object.assign(app.config.agents.cloudTools, { enabled: true, credentialIn: "message", backends: [profile.id], tools: [...tools] });
+  const probe = await probeCloud(app, profile.id, async (_app, _profile, req) => ({
+    text: fakeCloudReceipt(app, req.prompt.match(/challenge\/([\w-]+)/)![1], "header"), agent: "fake", stopReason: "end_turn",
+  }));
+  confirmProbe(app, profile.id, probe.id);
+  const turn = (id: string, names: readonly string[], calls: (request: (name: string, args: unknown) => ReturnType<typeof cloudRequest>) => Promise<void>) => {
+    run(app.db, "update runs set status='running' where id=?", id);
+    return cloudTurn(app, profile, { ...ctx(f, id), tools: new Set(names) }, { cwd: app.home, runId: id, prompt: "提交结果" }, () => {}, async req => {
+      const secret = req.prompt.match(/oct_[\w-]+/)![0];
+      await calls((name, args) => cloudRequest(app, secret, "header", name, args));
+      return { text: "已交", agent: "fake", stopReason: "end_turn" };
+    });
+  };
+
+  const attempt = f.s("try").control.runId!, trialId = f.s("try").control.trialId!;
+  await turn(attempt, ["read_source", "trial_report"], async request => {
+    const report = { trial: trialId, result: "failed", summary: "退出码与预期不同" };
+    for (const evidence of [["artifacts/REPORT.md"], ["X:\\sandbox\\report.txt"]])
+      expect(await request("trial_report", { ...report, evidence })).toMatchObject({ isError: true, text: expect.stringMatching(/沙箱.*evidence_text/) });
+    expect(await request("read_source", { source: "artifacts/REPORT.md" })).toMatchObject({ isError: true, text: expect.stringMatching(/沙箱.*evidence_text/) });
+    expect(await request("trial_report", { ...report, evidence_text: "a".repeat(4001) })).toMatchObject({ isError: true, text: expect.stringContaining("4000") });
+    expect(await request("trial_report", { ...report, evidence_text: "预期退出码 1，实际退出码 0\n" })).toMatchObject({ isError: false });
+  });
+  const [trialFile] = await listArtifacts(app, attempt);
+  expect(readFileSync(artifactPath(app, trialFile), "utf8")).toBe("预期退出码 1，实际退出码 0\n");
+  expect(JSON.parse(trial(app, trialId).evidence)).toEqual([trialFile.id]);
+  await terminal(f);
+
+  const wrap = f.s("summary").control.runId!;
+  await turn(wrap, ["record_finding", "stage_report"], async request => {
+    const finding = { item: f.item.id, kind: "defect", title: "退出码错误", trials: [trialId] };
+    expect(await request("record_finding", { ...finding, repro: "artifacts/repro.md" })).toMatchObject({ isError: true, text: expect.stringMatching(/沙箱.*evidence_text/) });
+    expect(await request("record_finding", { ...finding, repro: "执行示例命令", evidence_text: "stdout: 示例命令输出" })).toMatchObject({ isError: false });
+    const stage = { item: f.item.id, stage: "summary", state: "done", note: "已核对退出码并记录发现。" };
+    expect(await request("stage_report", { ...stage, evidence: ["sandbox/result.md"] })).toMatchObject({ isError: true, text: expect.stringMatching(/沙箱.*evidence_text/) });
+    expect(await request("stage_report", { ...stage, evidence_text: "1 条试验复现，1 条发现" })).toMatchObject({ isError: false });
+  });
+  const artifacts = await listArtifacts(app, wrap);
+  const findingFile = artifacts.find(a => a.caption === "发现证据")!, stageFile = artifacts.find(a => a.caption === "阶段证据")!;
+  expect(readFileSync(artifactPath(app, findingFile), "utf8")).toBe("stdout: 示例命令输出");
+  expect(findings(app, f.item.id)[0].repro).toContain(findingFile.url);
+  expect(readFileSync(artifactPath(app, stageFile), "utf8")).toBe("1 条试验复现，1 条发现");
+  expect(f.s("summary")).toMatchObject({ state: "done", evidence: [`run:${wrap}`], control: { links: [{ label: stageFile.caption, url: app.config.webUrl + stageFile.url }] } });
+});
+
+it("本机工具错误明确指出事项参数、试验 id、飞书 token 和无流程时的正确做法", async () => {
+  const app = fixture();
+  const item = upsertItem(app, undefined, { spaceId: "personal", title: "普通待办", kind: "todo" }, "user");
+  const local: ToolContext = { app, runId: null, spaceId: "personal", spaces: null, tools: null, actor: "agent" };
+  const trialId = "st0mwxabcde123456abcd";
+  expect(await callTool(local, "read_item", { item: item.id })).toMatchObject({ isError: true, text: expect.stringContaining("item_id") });
+  expect(await callTool(local, "read_item", { item_id: item.id })).toMatchObject({ isError: false });
+  expect(await callTool(local, "read_run", { run_id: trialId })).toMatchObject({ isError: true, text: expect.stringMatching(/试验 id.*read_ledger/) });
+  expect(await callTool(local, "read_page", { page: "DemoToken1234567890Abc" })).toMatchObject({ isError: true, text: expect.stringMatching(/飞书知识库节点 token.*lark_doc_fetch/) });
+  expect(await callTool(local, "stage_report", { item: item.id, stage: "review", state: "done", note: "已经核对。" })).toMatchObject({ isError: true, text: expect.stringMatching(/没有进行中的流程.*upsert_item.*id 和 note/) });
+  expect(await callTool(local, "record_finding", { item: item.id, kind: "gap", title: "示例", repro: "执行一条命令", trials: [trialId] })).toMatchObject({ isError: true, text: expect.stringMatching(/没有进行中的研究流程.*upsert_item/) });
+});
 
 describe("研究定义与内置材料", () => {
   it("阶段只授 study 工具，trials 支持档位、时间、预算和人话", () => {

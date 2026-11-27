@@ -23,3 +23,6 @@ export function backendCapabilities(profile: Pick<AgentProfile, "transport"> & P
   if (profile.transport === "doubao-cli" && profile.command && doubaoFeatures({ command: profile.command, args: profile.args ?? [], peer: profile.peer }).acp) return local;
   return transports[profile.transport];
 }
+
+/** Whether the backend can use the workspace and commands of this host. */
+export const hasHostTools = (profile: AgentProfile) => !profile.peer && backendCapabilities(profile).localTools;

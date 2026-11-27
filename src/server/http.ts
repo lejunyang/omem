@@ -55,6 +55,7 @@ import { registerArtifactRoutes } from "./artifact-http.ts";
 import { registerDesignRoutes } from "./design-http.ts";
 import { registerAgentAccountRoutes } from "./agent-accounts-http.ts";
 import { registerFlowRoutes, itemFlowSummaries } from "../flows/http.ts";
+import { registerLongTaskRoutes } from "./long-tasks-http.ts";
 import { registerStudyRoutes } from "../studies/http.ts";
 import { actCodeGit, codeGitActionSchema, readCodeGit } from "../agents/code-git.ts";
 import { branchIndexes, dropWorktreeSpace, indexBranch } from "../agents/worktree-index.ts";
@@ -2079,6 +2080,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   (await import("../rules/probes-http.ts")).registerProbeRoutes(server, app, who);
   // Metrics (src/data/): an item's numbers, omem's own use.
   (await import("../data/http.ts")).registerMetricRoutes(server, app, who);
+  registerLongTaskRoutes(server, app, who);
   registerStudyRoutes(server, app, who);
   attachPluginStreams(app, server.server);
   // Devices that dial in so this one can call them back, and the streams they open for it (core/peer-back.ts).

@@ -1,3 +1,4 @@
+import { checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "./supervisor-code.ts";
 import { classSchema, specAiSchema } from "../core/ai-policy-schema.ts";
 import { proposalArgs, startPolicyDraft, submitPolicyDraft } from "./ai-policy-proposal.ts";
 import { groupPick, policyScope } from "./ai-policy.ts";
@@ -25,6 +26,8 @@ import { archiveRuleSchema, isPrivateChat, sourceRoute, moveSource, prepareArchi
 import { archiveEvidence, matterSpace } from "../sources/homing.ts";
 import { readBoard, dispatchBoard, cancelBoard, reportPage, reviewBoard } from "./work-board.ts";
 import { workInConversation, refreshWork, createAgentWork, openWorkTopic, type AgentWork } from "./agent-work.ts";
+import { longTaskText } from "./supervisor-command.ts";
+import { changeLongTask, getLongTask, longTaskInThread, startLongTask, startLongTaskSchema } from "./long-tasks.ts";
 import { executionArgs, executionSchema, validateExecution, type Execution } from "./execution.ts";
 import { briefSchema } from "./pre-check.ts";
 import { designBodySchema } from "../designs/types.ts";
@@ -44,6 +47,7 @@ import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpace
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, activeUser, identityOwner, findUser, requireMembershipSpace, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema, reviseStudyFindingSchema, queueStudyFixesSchema } from "../studies/schema.ts";
+import { attachText, deleteArtifacts, evidenceTextSchema } from "./artifacts.ts";
 import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf, larkDomainFeature } from "../auth/features.ts";
@@ -53,7 +57,7 @@ import { larkActor } from "../channels/lark-cli.ts";
 import { commandPath } from "../channels/lark-cli-tools.ts";
 import { actingAs } from "../rules/run-as.ts";
 import { needConnection } from "../auth/connect-wait.ts";
-import { hiddenSourceIds, readableSourceIds, hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
+import { hiddenSourceIds, readableSourceIds, hitFilter, isRestricted, requireReadable, sourceReadable, visibleHits } from "../auth/visibility.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate, localStamp } from "../core/util.ts";
 import { checkBrief } from "./brief.ts";
 import { createCard } from "../learn/cards.ts";
@@ -105,9 +109,12 @@ import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, R
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
+import { reportSchema as supervisorReportSchema } from "./supervisor-schema.ts";
 import type { SearchOptions } from "../search/search.ts";
 
 export type ToolContext = {
+  /** The request came from a sandbox with no access to this host's files. */
+  via?: "cloud-http";
   /** Host-only identity of the ACP prompt currently using this token and the command wrappers. */
   commandTurn?: string;
   /** Account whose HOME the local process sees. Defaults to the machine login. */
@@ -217,6 +224,15 @@ const def = <S extends z.ZodObject>(t: { name: string; description: string; sche
   tools.push(t as unknown as Tool);
 };
 
+def({
+  name: "supervise_report", description: "长任务跟进每轮最后提交任务书建议、目标核对、决定及依据、进度和本人问题。",
+  schema: supervisorReportSchema, write: true,
+  handler: async (ctx, report) => {
+    if (ctx.role !== "supervisor" || !ctx.runId) throw new HttpError(403, "只有跟进角色可以交本轮报告");
+    return (await import("./supervisor-report.ts")).submitSupervisorReport(ctx.app, ctx.runId, report);
+  },
+});
+
 function space(ctx: ToolContext, requested?: string | null) {
   const id = requested || ctx.spaceId;
   if (!findSpace(ctx.app, id)) throw new HttpError(400, `没有空间 ${id}；用 list_spaces 查看`);
@@ -303,6 +319,35 @@ function renderMemorySource(ctx: ToolContext, id: string): string {
   if (!r) throw new HttpError(404, `记忆不存在：${id}`);
   const refs = r.source_refs ? (JSON.parse(r.source_refs) as string[]) : [];
   return `记忆 ${r.id} · ${r.space_id}:${r.kind}${r.subject ? ` · ${r.subject}` : ""} · ${r.status} · ${r.created_at.slice(0, 10)}\n来源：${refs.join("、") || "（无）"}\n引用格式：[文字](mem:${r.id})\n\n${r.content}`;
+}
+
+async function larkMessageSource(ctx: ToolContext, messageId: string, requested?: string) {
+  const target = requested ? space(ctx, requested) : null;
+  const scope = ctx.spaces && JSON.stringify(ctx.spaces);
+  const rows = all<{ id: string; line: number }>(ctx.app.db, `
+    with copies as (
+      select source_id, line from lark_message_lines where message_id=?
+      union all select m.source_id, m.line from lark_messages m where m.message_id=? and m.source_id is not null and m.line is not null
+        and not exists(select 1 from lark_message_lines l where l.source_id=m.source_id and l.message_id=m.message_id)
+    )
+    select s.id, c.line from copies c join sources s on s.id=c.source_id
+    where s.kind='chat' and s.deleted_at is null and c.line > 0
+      and (? is null or s.space_id=?) and (? is null or s.space_id in (select value from json_each(?)))
+    order by s.space_id=? desc, s.updated_at desc, s.id limit 32`, messageId, messageId, target, target, scope, scope, ctx.spaceId);
+  for (const row of rows) if (await sourceReadable(ctx.app, ctx.userId ?? OWNER, row.id)) return row;
+  throw new HttpError(404, "没找到这条飞书消息的可读聊天原件。确认消息已采集，或用 search 搜已采集的聊天正文。");
+}
+
+const studyIds: Record<string, string> = { t: "试验", d: "方向", f: "发现" };
+const studyIdLabel = (ref: string) => studyIds[/^s([tdf])[a-z0-9]{9}[0-9a-f]{10}$/.exec(ref)?.[1] ?? ""];
+
+function evidencePath(value: string) {
+  return !/[:\r\n]/.test(value.replace(/^[A-Za-z]:[\\/]/, "")) &&
+    (/^(?:[.~]?[\\/]|\$OMEM_ARTIFACTS\b|[A-Za-z]:[\\/])/.test(value) || /^[^\s]+[\\/][^\s]+$/.test(value) || /^[^\s]+\.[a-z0-9]{1,8}$/i.test(value));
+}
+const cloudPathHint = "这是你那边沙箱里的文件，宿主读不到。把要交的正文放进对应交结果工具的 evidence_text 参数。";
+function checkEvidencePaths(ctx: ToolContext, refs: string[]) {
+  if (ctx.via === "cloud-http" && refs.some(evidencePath)) throw new HttpError(400, cloudPathHint);
 }
 
 function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
@@ -588,18 +633,30 @@ def({
 
 def({
   name: "read_source",
-  description: "读取一个来源的内容：原件 id/路径（可按 from/to 读指定行），或 msg:<消息id>（本人/助理说过的话）、mem:<记忆id>。引用记忆或对话来源时先读它核对。",
+  description: "读取一个来源的内容：原件 id/路径（可按 from/to 读指定行），也可用 msg:<消息id> 读取会话原话或已采集的飞书消息，或用 mem:<记忆id> 读记忆。",
   schema: z.object({
-    source: z.string(),
+    source: z.string({ error: "source 必填，填 search 返回的原件 id 或 msg:<消息 id>" }),
     from: z.number().int().min(1).optional(),
     to: z.number().int().min(1).optional(),
     space: z.string().optional(),
   }),
   handler: async (ctx, a) => {
-    const id = resolveSource(ctx, a.source, a.space);
-    if (!id.startsWith("__")) await requireReadable(ctx.app, ctx.userId ?? OWNER, id);
-    const from = a.from ?? 1;
-    const to = Math.min(a.to ?? from + 399, from + 399);
+    const messageId = /^msg:(om_[\w-]+)$/.exec(a.source)?.[1];
+    if (/^om_[\w-]+$/.test(a.source)) throw new HttpError(400, "这是飞书消息 id；source 填 msg:<消息 id> 读取采集到的原文。");
+    if (/^(?:run:)?r[a-z0-9]{9}[0-9a-f]{10}$/.test(a.source)) throw new HttpError(400, "这是运行 id；用 read_run 的 run_id 参数读取。");
+    const study = studyIdLabel(a.source);
+    if (study) throw new HttpError(400, `这是研究的${study} id；用 read_ledger，item 填所属研究的事项 id。`);
+    const location = messageId ? await larkMessageSource(ctx, messageId, a.space) : null;
+    let id: string;
+    try { id = location?.id ?? resolveSource(ctx, a.source, a.space); }
+    catch (e) {
+      if (e instanceof HttpError && e.status === 404 && ctx.via === "cloud-http" && evidencePath(a.source))
+        throw new HttpError(404, `宿主找不到这条原件路径。如果它是你那边沙箱里的文件，宿主读不到。${["trial_report", "stage_report", "record_finding"].some(name => ctx.tools?.has(name)) ? "把要交的正文放进交结果工具的 evidence_text 参数。" : "用 search 找已收录的材料，再把原件 id 填入 source。"}`);
+      throw e;
+    }
+    if (!location && !id.startsWith("__")) await requireReadable(ctx.app, ctx.userId ?? OWNER, id);
+    const from = a.from ?? location?.line ?? 1;
+    const to = Math.min(a.to ?? (location && a.from === undefined ? location.line : from + 399), from + 399);
     const view = ctx.view;
     if (id.startsWith("__msg__:")) {
       const at = one<{ created_at: string }>(ctx.app.db, "select created_at from messages where id = ?", id.slice(8))?.created_at;
@@ -1414,6 +1471,7 @@ def({
     "继续一个已经在独立工作会话里进行的工作（本人补充了要求，或你看了报告认为还要再推进）：传 work_id（或 own_topic=true 且不传 name，取本会话最近一个仍在进行的工作），在原工作会话里排下一轮，同一个 Agent 接着它上一轮的会话，name 不传沿用上一轮的 Agent；不要为同一件事新开一个工作会话。上一轮它回头找你代做的（缺工具），这一轮用 extra_tools 借给它，或你先做完那一步再交办。",
   schema: z.object({
     execution: executionSchema.optional(),
+    basis: z.string().trim().min(1).max(3000).optional().describe("助手派活的依据：任务书条目、本人补充或运行 ID"),
     name: z.string().optional().describe("Agent 档案名，或 assistant；继续已有工作时不传就沿用上一轮的 Agent"),
     task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入。继续已有工作时写这一轮要做什么：本人的新要求或你判断还需要推进的事"),
     space: z.string().optional(),
@@ -1422,6 +1480,7 @@ def({
     extra_tools: extraToolsSchema,
   }),
   handler: async (ctx, a) => {
+    if (ctx.role === "supervisor" && (a.work_id || !a.name)) throw new HttpError(400, "在本长任务的话题里用 name 和 task 派活");
     if (a.work_id || (a.own_topic && !a.name)) return continueAgentWork(ctx, a);
     if (!a.name) throw new HttpError(400, "要交给哪个 Agent：传 name（档案名或 assistant）；继续已有的工作传 work_id");
     const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "agent", undefined, findAgentSpec(ctx.app, a.name) ?? undefined));
@@ -1437,6 +1496,13 @@ def({
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
     if (!conversationId) throw new HttpError(400, "只能在一个会话里交办 Agent");
+    if (ctx.role === "supervisor" && ctx.runId) {
+      const { checkSupervisorBasis } = await import("./supervisor-code.ts");
+      checkSupervisorBasis(ctx.app, ctx.runId, ctx.runId, a.basis);
+      const { queueSupervisedAgent } = await import("./agent-work.ts");
+      const id = queueSupervisedAgent(ctx.app, ctx.runId, { agent: spec.name, task: a.task + "\n\n跟进依据：" + a.basis, execution, assistantScope, extraTools });
+      return `已在长任务话题里派给 ${spec.name}，运行 ${id}；结束后由助手接手。`;
+    }
     if (a.own_topic) {
       const { startAgentWork, workInConversation, queueAgentRound } = await import("./agent-work.ts");
       // The owner may continue an existing work from a different conversation (a new Feishu topic):
@@ -1763,6 +1829,8 @@ def({
   description: "读取 Wiki 页面全文，以及反向链接、引用原件和是否过期。",
   schema: z.object({ page: z.string().describe("页面路径（slug），可写成 space/slug"), space: z.string().optional() }),
   handler: async (ctx, a) => {
+    const larkHint = "page 填 omem Wiki 的路径（slug）。手里是飞书知识库节点 token 时，用 lark_doc_fetch 的 doc 参数传完整飞书链接；已收录的文档可用 search 找到原件 id，再用 read_source。";
+    if (/^https?:\/\/[^/]+\/(?:wiki|docx)\//i.test(a.page)) throw new HttpError(400, larkHint);
     let sp = a.space;
     let slug = a.page.replace(/^wiki:/, "");
     if (!sp && slug.includes("/") && findSpace(ctx.app, slug.split("/")[0])) [sp, slug] = [slug.split("/")[0], slug.split("/").slice(1).join("/")];
@@ -1772,7 +1840,14 @@ def({
     const wv = await import("../wiki/verify.ts");
     const draft = wv.draftTarget(ctx.app, ctx.runId, id, checkSlug(slug)) ? wv.draftOf(ctx.app, ctx.runId!) : null;
     if (draft) return `页面 ${id}/${draft.slug} 的草稿（还没发布，你这次提交的版本）·${draft.kind}\n---\n# ${draft.title}\n> ${draft.summary}\n\n${draft.body}`;
-    const p = readPage(ctx.app, id, slug);
+    let p: ReturnType<typeof readPage>;
+    try { p = readPage(ctx.app, id, slug); }
+    catch (e) {
+      const tail = slug.split("/").at(-1) ?? "";
+      if (e instanceof HttpError && e.status === 404 && /^[A-Za-z0-9]{20,}$/.test(tail) && /[A-Z]/.test(tail))
+        throw new HttpError(404, `没找到 Wiki 页面，这看起来是飞书知识库节点 token。${larkHint}`);
+      throw e;
+    }
     // Which pages are actually used: counted for the runs that answer or act (the nightly audit looks at those first).
     if (ctx.actor === "agent" && !ctx.view && !upkeepRoles.has(ownProfile(ctx) ?? ""))
       run(ctx.app.db, "insert into page_reads(space_id, slug, day, n) values(?,?,?,1) on conflict(space_id, slug, day) do update set n = n + 1", id, p.slug, new Date().toISOString().slice(0, 10));
@@ -1937,9 +2012,11 @@ function runSteps(events: { type: string; data: unknown }[], status: string): st
 def({
   name: "read_run",
   description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。按任务板报告的续页提示传 offset 读取下一段。",
-  schema: z.object({ run_id: z.string(), offset: z.number().int().nonnegative().optional().describe("任务板报告的起点，首段为 0，续页用上页给出的值") }),
+  schema: z.object({ run_id: z.string({ error: "run_id 必填，填 list_runs 或 read_item 返回的运行 id" }).describe("运行的 id（r 开头）"), offset: z.number().int().nonnegative().optional().describe("任务板报告的起点，首段为 0，续页用上页给出的值") }),
   handler: async (ctx, a) => {
-    const r = getRun(ctx.app, a.run_id);
+    const id = a.run_id.replace(/^run:/, ""), study = studyIdLabel(id);
+    if (study) throw new HttpError(400, `run_id 收到的是研究的${study} id。用 read_ledger，item 填研究的事项 id；run_id 只填运行 id（r 开头）。`);
+    const r = getRun(ctx.app, id);
     if (r.spaceId) space(ctx, r.spaceId);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
     if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
@@ -2524,13 +2601,14 @@ def({
   },
 });
 def({
-  name: "trial_report", description: "只交这个试验的结果：passed / failed / blocked / unclear；拿不准标 unsure。evidence 填 $OMEM_ARTIFACTS 里的文件路径或 src: 引用；findings 只是候选，由小结归并。", write: true, schema: trialReportSchema,
+  name: "trial_report", description: "只交这个试验的结果：passed / failed / blocked / unclear；拿不准标 unsure。把证据正文直接填 evidence_text；evidence 填 src: 引用或宿主 $OMEM_ARTIFACTS 里的文件路径。findings 只是候选，由小结归并。", write: true, schema: trialReportSchema,
   handler: async (ctx, a) => {
     // A trial another of the owner's devices sent here (studies/remote-host.ts): kept with the run, fetched by that device.
     const remote = await import("../studies/remote-host.ts");
     if (remote.isPeerTrialRun(ctx.app, ctx.runId)) return remote.reportPeerTrial(ctx.app, ctx.runId!, a, flowActor(ctx).actor);
     const store = await import("../studies/store.ts");
     flowItem(ctx, store.trial(ctx.app, a.trial).item_id, "write");
+    if (ctx.via === "cloud-http" && a.evidence?.some(ref => !ref.startsWith("src:"))) throw new HttpError(400, cloudPathHint);
     await flowRefs(ctx, (a.evidence ?? []).filter((r) => r.startsWith("src:")));
     return (await import("../studies/service.ts")).reportTrial(ctx.app, a, flowActor(ctx));
   },
@@ -2551,12 +2629,23 @@ def({
   },
 });
 def({
-  name: "record_finding", description: "把有复现依据的试验归并成发现。repro 是 Markdown 正文，分“条件 / 现象 / 为什么是问题 / 建议”几段，命令和输出放代码块，可以放 read_ledger 给出的图片。遇到相近标题先读：same_as 合并到已有发现，distinct_from 列明确不同的已有发现 id；至少一个本研究有结果的试验。", write: true, schema: recordFindingSchema,
+  name: "record_finding", description: "把有复现依据的试验归并成发现。repro 是 Markdown 正文，分“条件 / 现象 / 为什么是问题 / 建议”几段，命令和输出放代码块，可以放 read_ledger 给出的图片。额外的文本证据填 evidence_text，宿主会把产物链接附在发现后面。遇到相近标题先读：same_as 合并到已有发现，distinct_from 列明确不同的已有发现 id；至少一个本研究有结果的试验。", write: true, schema: recordFindingSchema,
   handler: async (ctx, a) => {
     flowItem(ctx, a.item, "write");
     (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
     const { studyOperation } = await import("../flows/engine.ts");
-    return studyOperation(ctx.app, a.item, async () => (await import("../studies/store.ts")).recordFinding(ctx.app, a));
+    const { itemFlow } = await import("../flows/store.ts");
+    const store = await import("../studies/store.ts");
+    return studyOperation(ctx.app, a.item, async () => {
+      const flow = itemFlow(ctx.app, a.item);
+      if (!flow || flow.endedAt || !store.isStudy(flow)) throw new HttpError(409, "事项没有进行中的研究流程。用 upsert_item 的 id 和 note 给普通事项记发现，或直接回复本人。");
+      checkEvidencePaths(ctx, [a.repro]);
+      if (!a.evidence_text) return store.recordFinding(ctx.app, a);
+      if (!ctx.runId) throw new HttpError(400, "evidence_text 需要一个交结果的运行；也可以把文字直接写在 repro 里");
+      const artifact = await attachText(ctx.app, ctx.runId, a.evidence_text, { source: "agent", by: flowActor(ctx).actor, caption: "发现证据" });
+      try { return store.recordFinding(ctx.app, a, `[${artifact.caption}](${artifact.url})`); }
+      catch (error) { deleteArtifacts(ctx.app, { ids: [artifact.id] }); throw error; }
+    });
   },
 });
 def({
@@ -2623,7 +2712,11 @@ async function flowRefs(ctx: ToolContext, list: string[], itemId?: string) {
       const d = (await import("../designs/store.ts")).getDesign(ctx.app, ref.slice(7));
       if (d.userId !== (ctx.userId ?? OWNER) || allowed && !allowed.includes(d.spaceId)) throw new HttpError(403, "不能引用该方案");
     } else {
-      const r = getRun(ctx.app, ref.replace(/^(?:run:|code-work:)/, ""));
+      const id = ref.replace(/^(?:run:|code-work:)/, "");
+      const study = studyIdLabel(id);
+      if (study) throw new HttpError(400, `evidence 里填的是研究的${study} id。用 read_ledger 找对应证据，再在 evidence 填原件引用或运行 id，正文走 evidence_text。`);
+      if (/^https?:\/\//i.test(id)) throw new HttpError(400, "evidence 请填原件引用或运行 id。要让本人打开网页、文档或表格，把 http(s) 链接放在 links。");
+      const r = getRun(ctx.app, id);
       if (runUser(ctx.app, r.id) !== (ctx.userId ?? OWNER) || allowed && (!r.spaceId || !allowed.includes(r.spaceId))) throw new HttpError(403, "不能引用该运行");
     }
   }
@@ -2709,12 +2802,16 @@ def({
   },
 });
 def({
-  name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段通常要本人确认，只有对账核实普通本人阶段的结果后可直接完成。blocked：做不下去，waiting_on 写等谁或等什么；等本人看、改或确认某份东西（表格、文档、预览页）时，把它的地址放进 links，卡片上直接能点开；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：写原因；不能代本人跳过，只有定向对账核实本人明确说这一段这次不做，并能引用原话时，才可补记普通本人阶段的跳过，不能代过显式确认。",
-  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), links: z.array(z.object({ label: z.string().trim().min(1).max(80).describe("一句话说是什么，如“埋点核对表”"), url: z.string().trim().max(2000).describe("http(s) 地址") })).max(10).optional().describe("要本人打开的产物：表格、文档、预览页。传了就替换这一段之前交的链接，传空数组清掉"), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional(),
+  name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要直接附证据正文用 evidence_text。要本人确认或由本人承担的阶段通常要本人确认，只有对账核实普通本人阶段的结果后可直接完成。blocked：做不下去，waiting_on 写等谁或等什么；等本人看、改或确认某份东西（表格、文档、预览页）时，把它的地址放进 links，卡片上直接能点开；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：写原因；不能代本人跳过，只有定向对账核实本人明确说这一段这次不做，并能引用原话时，才可补记普通本人阶段的跳过，不能代过显式确认。",
+  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), evidence_text: evidenceTextSchema, links: z.array(z.object({ label: z.string().trim().min(1).max(80).describe("一句话说是什么，如“埋点核对表”"), url: z.string().trim().max(2000).describe("http(s) 地址") })).max(10).optional().describe("要本人打开的产物：表格、文档、预览页。传了就替换这一段之前交的链接，传空数组清掉"), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional(),
     retry_at: z.string().min(1).max(40).optional().describe("仅 blocked：暂时等外部恢复时填带时区的 ISO 8601 最早重试时间；note 写已做的步骤和最后的错误，宿主最多自动重试三次，到上限才问本人。"),
     already_resolved: z.boolean().optional().describe("只供流程对账：确有依据说明卡住或等开始的助手阶段已在别处完成或被现实越过时，随 done / skip 补记，不再问要不要开始。note 写谁做了什么，evidence 附依据。不能替本人拍板或绕过宿主检查。") }), handler: async (ctx, a) => {
     checkBrief(a.note, "note ");
-    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.evidence ?? [], a.item);
+    flowItem(ctx, a.item, "flow");
+    const flow = (await import("../flows/store.ts")).itemFlow(ctx.app, a.item);
+    if (!flow || flow.endedAt) throw new HttpError(409, "事项没有进行中的流程。用 upsert_item 的 id 和 note 记进展；要改状态再传 status。");
+    checkEvidencePaths(ctx, a.evidence ?? []);
+    await flowRefs(ctx, a.evidence ?? [], a.item);
     return JSON.stringify(await (await import("../flows/engine.ts")).reportStage(ctx.app, a.item, a.stage, { ...a, waitingOn: a.waiting_on }, flowActor(ctx)));
   },
 });
@@ -2980,7 +3077,7 @@ def({
 def({
   name: "read_item",
   description: "读取一件事项的全貌：完整字段、当前来源、全部时间线、材料、工作文件，以及它在哪些会话和群里进行（places：每处最近的一句话或摘要）、正在为它跑的运行（runs）、它的上层（parent）和挂在下面的事项（children）；工作线另有“现在”（now）和还没定的下一步（next）。纠正前先读。跨空间发现仍只读。",
-  schema: z.object({ item_id: z.string() }),
+  schema: z.object({ item_id: z.string({ error: "请用 item_id 填 list_items 或 search 返回的事项 id" }).describe("事项 id") }),
   handler: async (ctx, a) => {
     const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
     const readable = itemScope(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces).spaceIds ?? null;
@@ -4262,7 +4359,12 @@ def({
       target = who.id;
       context = { askedBy: me, toName: who.name };
     }
-    const ask = createAsk(ctx.app, { runId: ctx.runId, userId: target, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true, ui, ...(context ? { context } : {}) });
+    const askQuestion = !a.to && ctx.role !== "supervisor" ? createWorkerAsk : createAsk;
+    const ask = askQuestion(ctx.app, { runId: ctx.runId, userId: target, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true, ui, ...(context ? { context } : {}) });
+    if (ask.toName === "助手" && !a.to) {
+      const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 40) * 1000);
+      return got.status === "pending" ? `已交给助手跟进（${ask.id}）。可以先做别的部分，再用 wait_answer 等回答。` : describeAnswer(got);
+    }
     if (context) {
       const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 0) * 1000);
       return got.status === "pending" ? `已去问 ${context.toName}（${ask.id}），问题只发给了 ta。告诉本人你去问了谁、问了什么；ta 回答后会作为新消息回到这个会话。` : describeAnswer(got);
@@ -4283,7 +4385,7 @@ def({
     const ask = getAsk(ctx.app, a.ask_id);
     if (ask.userId !== (ctx.userId ?? OWNER) && ask.askedBy !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不是这次运行提的问题");
     const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? ASK_WAIT_MAX) * 1000, ctx.userId ?? OWNER);
-    return got.status === "pending" ? `本人还没回答（${ask.id}）。` : describeAnswer(got);
+    return describeAnswer(got);
   },
 });
 
@@ -5403,6 +5505,7 @@ def({
     "交办编码任务：每个涉及的代码仓库空间各有一条工作分支（新建的从仓库目录当前的提交切出，或接着已有分支），在 omem 自动管理的工作区里由同一个编码 Agent 一起实现并按功能提交，分别运行检查，再按评审档位由一个或几个评审项（功能、业务、架构、规范、历史，或本人建的专项）各自独立审查。之后的轮次在同一条分支上接着提交；分支在仓库目录检出时每轮结束会快进过去。最后本人确认时推送（apply_code_run）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
   write: true,
   schema: z.object({
+    goal: z.string().trim().min(1).max(2000).optional().describe("助手派活时，写任务书的目标或完成条件原文，供修改项沿用"),
     execution: executionSchema.optional().describe("编码 AI 的临时选择"),
     review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
     review_executions: reviewAIsSchema,
@@ -5460,10 +5563,13 @@ def({
       if (baseline.origin === "own" && baseline.workId) throw new HttpError(409, `方案 ${baseline.id} 已经是交办 ${baseline.workId} 的基线`);
     }
     if (a.sync) checkedBranchSync(ctx, ids, a.sync);
+    const supervised = longTaskForRun(ctx.app, ctx.runId);
+    const goal = a.goal ?? supervised?.goal;
+    if (supervised && a.goal && a.goal !== supervised.goal && !supervised.brief.doneWhen.includes(a.goal)) throw new HttpError(400, "goal 要写任务书的目标或完成条件原文");
     const r = queueCodeWork(ctx.app, {
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, reviewExecutions: await reviewAIsOf(ctx, a.review_executions), ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, contextItemId: scoped.contextItemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: { ...a.sync, ...normalizeBranchSync(a.sync) }, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, ...(supervised ? { goal } : {}), execution, reviewExecution, reviewExecutions: await reviewAIsOf(ctx, a.review_executions), ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, contextItemId: scoped.contextItemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: { ...a.sync, ...normalizeBranchSync(a.sync) }, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
@@ -5624,6 +5730,55 @@ def({
   },
 });
 
+// A task can be addressed from a different conversation. Its id never grants access to it.
+function supervisorTask(ctx: ToolContext, id: string | undefined, write: boolean) {
+  const thread = runThread(ctx);
+  const task = id ? getLongTask(ctx.app, id) : thread ? longTaskInThread(ctx.app, thread) : null;
+  const user = ctx.userId ?? OWNER;
+  if (!task || !itemAccess(ctx.app, user, task, "read")) throw new HttpError(404, "找不到长任务；在其他会话请传 task_id");
+  space(ctx, task.spaceId);
+  if (write) {
+    if (task.userId !== user || !canWrite(ctx.app, user, task.spaceId)) throw new HttpError(403, "需要任务发起人和所在空间的编辑权限");
+    inScope(ctx, task.spaceId, "长任务", "items.edit");
+  }
+  return task;
+}
+
+def({
+  name: "start_long_task", write: true,
+  description: "本人要求持续跟进一件长任务时，按原话创建目标和工作话题。返回编号与话题，助手会起草任务书请本人确认。",
+  schema: startLongTaskSchema.omit({ spaceId: true, threadId: true }).extend({ space: z.string().optional() }),
+  handler: (ctx, a) => {
+    if (!ownTurn(ctx)) throw new HttpError(403, "请在本人提出长任务的会话里创建");
+    const { space: target, ...options } = a;
+    const spaceId = writeSpace(ctx, target, "items.edit");
+    const thread = runThread(ctx);
+    const parent = thread ? findThread(ctx.app, thread) : null;
+    const task = startLongTask(ctx.app, { ...options, userId: ctx.userId ?? OWNER, spaceId,
+      threadId: parent?.spaceId === spaceId ? parent.id : undefined });
+    return longTaskText(ctx.app, task);
+  },
+});
+
+def({
+  name: "message_supervisor", write: true,
+  description: "向指定长任务转达本人的补充原话，唤醒助手跟进。在任务自己的话题里可以省略 task_id。",
+  schema: z.object({ task_id: z.string().optional(), text: z.string().min(1) }),
+  handler: async (ctx, a) => {
+    if (!ownTurn(ctx)) throw new HttpError(403, "请在本人补充要求的会话里转达");
+    const task = supervisorTask(ctx, a.task_id, true);
+    await changeLongTask(ctx.app, task.id, { action: "supplement", text: a.text });
+    return `已将补充记入长任务 ${task.id}。`;
+  },
+});
+
+def({
+  name: "long_task_status",
+  description: "读长任务的目标、状态、跟进的 AI、预算和最近一次进展。在任务自己的话题里可以省略 task_id。",
+  schema: z.object({ task_id: z.string().optional() }),
+  handler: (ctx, a) => longTaskText(ctx.app, supervisorTask(ctx, a.task_id, false)),
+});
+
 def({
   name: "improve_start",
   description: "给一次编码交办建立改进目标（先用一轮交办把度量命令跑通，这一轮结束后再调用）：宿主现在量一次作为基线，之后每一轮由 improve_round 决定留下还是回退、还剩几轮、什么时候停。度量命令在交办的工作区里运行，最后一个非空行的最后一个数就是结果；退出码不是 0、超时或那一行没有数，算度量失败。",
@@ -5670,6 +5825,7 @@ def({
     "接着一次编码交办或分支评审往下做，一个工具几种用法（run_id 都是交办或评审的任一运行 id，也可以是最初发起交办的 ask 运行 id）：\n- 开下一轮（默认）：评审要求修改，或本人看了结果要调整。复用同一次交办的工作区和编码 Agent 会话，不要重新 delegate_code。task 写这一轮要做的事。\n- 按评审结论改：fix 写要改的问题编号（read_run 的评审问题 #编号），later / wontfix 同时把问题标成暂不改或不改（不改要写业务理由，之后的评审不再提），task 写本人补充的要求。交办编码续在原工作区；分支评审基于该分支交办编码（只出意见的评审本身不能续轮）。只在本人明确要改时用。\n- 交给正在跑的这一轮（when=now）：本人在交办进行中说了新要求、纠正或补充，原话为主；编码 Agent 下一次调用 omem 工具时收到，已经在评审时随下一轮交给它。\n- 只改之后的评审（不写 task，只写 review_tier / review_checks / split / rotate_models / review_executions）：本人说“后面从简 / 别再拆需求 / 这轮只要功能评审 / 业务评审换个模型”时用，不开新的一轮，还没开始评审的这一轮就按新的来，之后沿用。",
   write: true,
   schema: z.object({
+    basis: z.string().trim().min(1).max(3000).optional().describe("跟进的依据：引用任务书条目、本人补充的原文或本长任务运行 ID"),
     run_id: z.string().describe("交办或分支评审的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
     task: z.string().max(20000).optional().describe("这一轮要做什么、本人补充的要求或原话；只改之后的评审、只给问题定改不改时不写"),
     when: z.enum(["next", "now"]).optional().describe("now：交给正在进行的这一轮（不等它结束、不另开一轮）；默认 next：开下一轮"),
@@ -5688,6 +5844,13 @@ def({
     ...roundReviewSchema,
   }),
   handler: async (ctx, a) => {
+    const by = ctx.role === "supervisor" ? "supervisor" : ctx.userId ?? OWNER;
+    if (ctx.role === "supervisor") {
+      checkSupervisorBasis(ctx.app, ctx.runId, a.run_id, a.basis);
+      if (!["code", "review"].includes(getRun(ctx.app, a.run_id).kind)) throw new HttpError(400, "请指定编码交办或评审的运行 ID");
+      if (a.apply_first) throw new HttpError(403, "应用交办涉及推送，请在报告中交给本人确认");
+      if (a.task) a = { ...a, task: a.task + "\n\n跟进依据：" + a.basis };
+    }
     const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "code"));
     const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId, false, policyScope(ctx.app, "review"));
     if (a.onto_latest_target && !a.apply_first && !a.fix?.length && !a.later?.length && !a.wontfix?.length) {
@@ -5702,7 +5865,7 @@ def({
         if (roundStage(round) === "ended" && a.task?.trim()) {
           const spaces = checkedBranchSync(ctx, (round.input.repos as string[] | undefined) ?? [round.spaceId!], sync);
           queueBranchSync(ctx.app, round, spaces, sync);
-          const note = loop.ownerNote(ctx.app, round.id, a.task, ctx.userId ?? OWNER, { asTask: true });
+          const note = loop.ownerNote(ctx.app, round.id, a.task, by, { asTask: true });
           return `已登记同步到目标分支和 ${note?.task.title ?? "本人补充"}，接手后先同步再改（${note?.next?.id ?? round.id}）。${switched}`;
         }
         const next = await (await import("./code.ts")).queueMoveToTarget(ctx.app, round.id, ctx.userId ?? OWNER, sync.mode);
@@ -5718,7 +5881,7 @@ def({
       const { requestCodeSync } = await import("./code.ts");
       if (stage === "ended" && a.task?.trim() && (await import("./code-tasks.ts")).isTaskWork(ctx.app, round.id)) {
         queueBranchSync(ctx.app, round, spaces, a.sync);
-        const task = (await import("./code-loop.ts")).ownerNote(ctx.app, round.id, a.task, ctx.userId ?? OWNER, { asTask: true });
+        const task = (await import("./code-loop.ts")).ownerNote(ctx.app, round.id, a.task, by, { asTask: true });
         return `已登记同步和 ${task?.task.title ?? "本人补充"}，接手后先同步再改（${task?.next?.id ?? round.id}）。`;
       }
       const root = String(round.input.continueFrom ?? round.id);
@@ -5745,6 +5908,7 @@ def({
     const seed = getRun(ctx.app, a.run_id);
     let askId = a.run_id;
     if (seed.kind === "code") askId = seed.parentId ?? a.run_id;
+    if (seed.kind === "code" && seed.input.longTaskId) askId = String(seed.input.continueFrom ?? seed.id);
     const rounds = codeChainRounds(ctx.app, askId).filter((r) => r.kind === "code");
     const last = rounds.at(-1);
     if (!last) throw new HttpError(400, "这不是一次交办编码任务");
@@ -5755,6 +5919,7 @@ def({
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     // Waiting for its design to be confirmed: going on means coding without waiting (designs/work.ts).
     if (last.output.verdict === "awaiting-design") {
+      if (ctx.role === "supervisor") throw new HttpError(403, "方案在等本人确认，请在报告中说明");
       const { skipDesign } = await import("../designs/work.ts");
       skipDesign(ctx.app, last.id, ctx.userId ?? OWNER, task);
       return `交办 ${last.id} 不再等方案确认，现在开始编码（方案保留着，只作参考，不再是这次交办的基线；这段话交给编码 Agent）。要按方案改就别用这个，用 settle_design 转达本人的确认或意见。`;
@@ -5768,8 +5933,8 @@ def({
     const switched = taskWork ? (await import("./code-loop.ts")).setWorkAI(ctx.app, last.id, { execution, reviewExecution }) : "";
     if (taskWork && !a.sync && !a.onto_latest_target && !a.apply_first) {
       const loop = await import("./code-loop.ts");
-      if (!a.new_item) return [loop.workNote(ctx.app, last.id, task, ctx.userId ?? OWNER), switched].filter(Boolean).join("\n");
-      const made = loop.ownerNote(ctx.app, last.id, task, ctx.userId ?? OWNER, { asTask: true })!;
+      if (!a.new_item) return [loop.workNote(ctx.app, last.id, task, by), switched].filter(Boolean).join("\n");
+      const made = loop.ownerNote(ctx.app, last.id, task, by, { asTask: true })!;
       return `${revisionHandoff(made, taskLabel(made.task.seq))}${switched}`;
     }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
@@ -5818,6 +5983,7 @@ function revisionHandoff(made: NonNullable<ReturnType<typeof import("./code-loop
 /** continue_code_run with when=now: the owner's words to the round in progress (code-steer.ts addCodeNote). */
 async function messageRound(ctx: ToolContext, a: ContinueArgs) {
   if (!a.task?.trim()) throw new HttpError(400, "when=now 要写 task：交给编码 Agent 的话");
+    const by = ctx.role === "supervisor" ? "supervisor" : ctx.userId ?? OWNER;
     steerable(ctx, a.run_id);
     let joinedItem: string | undefined;
     if (a.item_id) {
@@ -5831,11 +5997,11 @@ async function messageRound(ctx: ToolContext, a: ContinueArgs) {
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
     const taskWork = isTaskWork(ctx.app, a.run_id);
     if (taskWork && a.new_item) {
-      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER, { asTask: true, item: joinedItem })!;
+      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, by, { asTask: true, item: joinedItem })!;
       return revisionHandoff(made, taskLabel(made.task.seq));
     }
     const { addCodeNote } = await import("./code-steer.ts");
-    const r = addCodeNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER, joinedItem);
+    const r = addCodeNote(ctx.app, a.run_id, a.task!, by, joinedItem);
     if (getRun(ctx.app, r.runId).output.verdict === "awaiting-design") {
       const wait = getRun(ctx.app, r.runId).output.designWait as { designId?: string } | undefined;
       return `交办在等方案${wait?.designId ? ` ${wait.designId}` : ""} 确认，还没开始编码：这段补充记下了，开始编码时交给编码 Agent。是对方案的意见就用 settle_design（comment）转达，写方案的会话会改一版；本人要不等方案直接改，用 continue_code_run（不带 when）。`;
@@ -6779,6 +6945,7 @@ def({
       task: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，merge 到已有的修改项时填它的编号（如 T5），这时不填 into"),
       note: z.string().max(1000).optional().describe("理由；驳回必须写"),
       owner: z.object({ question: z.string().min(1).max(1000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("只在按修改项推进的交办里用：接受的问题要本人决定时，给本人的问题和两三个选项"),
+      goal: z.string().trim().min(1).max(2000).optional().describe("长任务中，此问题对应的目标或完成条件原文；跟进原项时默认继承"),
       follows: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，accept / defer 的问题是某个已完成修改项没改好或改出来的新问题时，填那一项（如 T5）"),
     })).max(300),
     verdict: z.enum(["approve", "revise", "escalate"]),
@@ -6827,6 +6994,12 @@ def({
     // A finding that restates a task the work already has joins that task (checked before any ruling is recorded).
     const t = await import("./code-tasks.ts");
     const rootId = tasks ? t.workRootOf(ctx.app, r.id) : null;
+    const goals: Record<string, string> = {};
+    const supervised = rootId && longTaskForRun(ctx.app, rootId);
+    for (const x of a.rulings) if (x.goal) {
+      if (!supervised || (x.goal !== supervised.goal && !supervised.brief.doneWhen.includes(x.goal))) throw new HttpError(400, "goal 要对应本长任务的目标或完成条件原文");
+      goals[x.id] = x.goal;
+    }
     const follows: Record<string, number> = {};
     for (const x of a.rulings) {
       if (x.follows === undefined) continue;
@@ -6835,7 +7008,7 @@ def({
       t.getTask(ctx.app, rootId!, seq);
       follows[String(x.id)] = seq;
     }
-    const rulings = a.rulings.map(({ follows: _, ...x }) => {
+    const rulings = a.rulings.map(({ follows: _, goal: _goal, ...x }) => {
       if (x.task === undefined) return { ...x, task: undefined };
       if (!rootId) throw new HttpError(400, `问题 ${x.id}：只有按修改项推进的交办才能合并到修改项`);
       if (x.decision !== "merge") throw new HttpError(400, `问题 ${x.id}：填了 task 就要用 merge`);
@@ -6847,7 +7020,7 @@ def({
     applyRulings(ctx.app, r.id, round, rulings);
     for (const x of rulings) if (x.task) t.joinTask(ctx.app, rootId!, x.id, x.task);
     const owner = Object.fromEntries(a.rulings.filter((x) => x.owner).map((x) => [String(x.id), x.owner!]));
-    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}), ...(Object.keys(follows).length ? { follows } : {}) } });
+    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}), ...(Object.keys(follows).length ? { follows } : {}), ...(Object.keys(goals).length ? { goals } : {}) } });
     if (design && a.decisions?.length) {
       const ds = await import("../designs/store.ts");
       for (const x of a.decisions) {
@@ -6880,6 +7053,8 @@ def({
   description: "编码 Agent 拆分修改项，交给当前编码会话；写预计路径供独立分组，回合还有待做项时直接接着做。",
   schema: z.object({
     tasks: z.array(z.object({
+      goal: z.string().trim().min(1).max(2000).optional().describe("长任务书的目标或完成条件原文，省略时沿用交办目标"),
+      deadline: z.string().datetime({ offset: true }).optional().describe("任务书或助手给本项指定的时限"),
       title: z.string().min(1).max(200).describe("一句话：这一项要做成什么"),
       done_when: z.string().max(2000).optional().describe("完成标准：怎样算做完（可核对）。只写在仓库和工作区里能做到、能验证的；把结果挂回事项、写工作文件、通知本人这些由发起的助手做，不拆成修改项"),
       files: z.array(z.string().max(500)).max(30).optional().describe("预计改的文件"),
@@ -6899,7 +7074,11 @@ def({
       const bad = [...new Set(named.map((x) => x.decision!).filter((id) => !d.body.decisions.some((y) => y.id === id)))];
       if (bad.length) throw new HttpError(400, `方案 ${d.id} 没有决定 ${bad.join("、")}；有的是 ${d.body.decisions.map((y) => y.id).join("、")}`);
     }
-    const made = a.tasks.map((x) => t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", origin: { ...(x.files?.length ? { files: x.files } : {}), ...(x.decision ? { decision: x.decision } : {}) } }, "coder"));
+    const supervised = longTaskForRun(ctx.app, rootId);
+    const inheritedGoal = getRun(ctx.app, rootId).input.goal as string | undefined;
+    if (supervised && a.tasks.some(x => x.goal && x.goal !== supervised.goal && !supervised.brief.doneWhen.includes(x.goal)))
+      throw new HttpError(400, "修改项的 goal 要对应任务书的目标或完成条件原文");
+    const made = a.tasks.map((x) => t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", origin: { ...(supervised ? { goal: x.goal ?? inheritedGoal ?? supervised.goal, deadline: x.deadline } : {}), ...(x.files?.length ? { files: x.files } : {}), ...(x.decision ? { decision: x.decision } : {}) } }, "coder"));
     const taken = made.map(task => t.updateTask(ctx.app, rootId, task.seq, { state: "coding", coderRun: r.id }));
     const w = a.rounds ? t.estimateBudget(ctx.app, rootId, a.rounds) : t.workState(ctx.app, rootId);
     const groups = (await import("./code-helpers.ts")).parallelTaskHint(ctx.app, r.id, taken);
@@ -7318,6 +7497,7 @@ def({
   description: "发起交办的助手处理修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决、同一处修了几层，编码 Agent 或评审负责人认为要本人定的）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（不合理的评审改动、等别的团队、缺外部字段）、later 记成以后再做（问题成立但和这次要的关系不大：不挡交付，同一分支下一次交办会接上）、owner 只在要本人在业务或功能上取舍、要新的授权或越出原需求时，写 question 和两三个 options。评审提的待做项（还没做的）也可以直接 skip 驳回或 later 放下，写清理由；同一处你放下两次后再被提出，会直接问本人。add 新增一项（不填 task，写 title 和 note 作完成标准）：需求要求了却没有哪一项在做、或评审漏了的必要修复。「等你决定」的项（卡片已经发给本人）只在本人这一轮回答了才转达（retry / skip），本人回答前不动它。retry 和 add 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
   write: true,
   schema: z.object({
+    basis: z.string().trim().min(1).max(3000).optional().describe("跟进的依据：引用任务书条目、本人补充的原文或本长任务运行 ID"),
     run_id: z.string().describe("这次交办的任一运行 id"),
     task: z.union([z.string(), z.number()]).optional().describe("修改项编号，如 T3；add 时不填"),
     action: z.enum(["retry", "skip", "owner", "later", "add"]),
@@ -7327,18 +7507,23 @@ def({
     options: z.array(z.string().min(1).max(60)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
   handler: async (ctx, a) => {
+    if (ctx.role === "supervisor") {
+      checkSupervisorBasis(ctx.app, ctx.runId, a.run_id, a.basis);
+      if (a.action === "owner") throw new HttpError(400, "需要本人决定的问题请合并到 supervise_report 的 askOwner");
+      a = { ...a, note: a.note + "\n\n跟进依据：" + a.basis };
+    }
     const t = await import("./code-tasks.ts");
     const rootId = t.workRootOf(ctx.app, a.run_id);
     if (t.workOwner(ctx.app, rootId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能处理本人的交办");
     if (a.action === "add") {
       if (!a.title?.trim()) throw new HttpError(400, "add 要写 title（这一项要做成什么）");
-      const made = (await import("./code-loop.ts")).addAssistantTask(ctx.app, rootId, { title: a.title, doneWhen: a.note, ownerWords: ownerAskedThisTurn(ctx) }, "assistant");
+      const made = (await import("./code-loop.ts")).addAssistantTask(ctx.app, rootId, { title: a.title, doneWhen: a.note, ownerWords: ownerAskedThisTurn(ctx) }, ctx.role === "supervisor" ? "supervisor" : "assistant");
       return `已新增 ${t.taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮已排上（${made.next.id}）` : "，下一轮做"}。`;
     }
     if (a.task === undefined) throw new HttpError(400, `${a.action} 要填 task（修改项编号）`);
     const seq = t.parseTaskRef(a.task);
     if (a.action === "owner") checkBrief(a.question, "question ");
-    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action as "retry" | "skip" | "owner" | "later", text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), question: a.question, options: a.options }, "assistant");
+    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action as "retry" | "skip" | "owner" | "later", text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), question: a.question, options: a.options }, ctx.role === "supervisor" ? "supervisor" : "assistant");
     const label = t.taskLabel(seq);
     if (a.action === "owner") return `已把 ${label} 交给本人（发了卡片）。`;
     if (a.action === "later") return `${label} 记成以后再做${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;

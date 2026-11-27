@@ -12,10 +12,11 @@ export function sceneWords(scene: InstructionScene, tools: Set<string>) {
 }
 
 /** Validate every alternative, including a section hidden by a tool or capability. */
-export function toolSections(text: string, tools: Set<string>, localTools = true, scene: string[] = [], matched?: string[]) {
+export function toolSections(text: string, tools: Set<string>, localTools = true, scene: string[] = [], matched?: string[], unavailable?: ReadonlySet<string>) {
+  const available = (body: string) => !unavailable || ![...body.matchAll(/\b[a-z][a-z0-9_]*\b/g)].some(([word]) => unavailable.has(word));
   return text.replace(/\r\n/g, "\n").split(/(?=^## )/m).flatMap(part => {
     const header = /^(## [^\n]*\n)((?:<!-- (?:tools|needs|when): [^\n]*? -->\n?)+)/.exec(part);
-    if (!header) return [part];
+    if (!header) return available(part) ? [part] : [];
     let allowed = true;
     const alternatives: boolean[] = [];
     for (const [, kind, value] of header[2].matchAll(/<!-- (tools|needs|when): (.*?) -->/g)) {
@@ -31,8 +32,8 @@ export function toolSections(text: string, tools: Set<string>, localTools = true
         allowed &&= value === "local" ? localTools : value === "tools" && tools.size > 0;
       }
     }
-    if (!allowed || (alternatives.length && !alternatives.includes(true))) return [];
     const body = header[1] + part.slice(header[0].length);
+    if (!allowed || (alternatives.length && !alternatives.includes(true)) || !available(body)) return [];
     if (alternatives.length) matched?.push(body.trimEnd());
     return [body];
   }).join("").trim();

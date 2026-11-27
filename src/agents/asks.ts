@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { all, one, run, tx } from "../core/db.ts";
+import { all, one, run, tx, withinTx } from "../core/db.ts";
 import { HttpError, newId, now, truncate, webLink } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 import { fieldsText, hasUi, normalizeAnswers, summarizeAnswers, viewText, type AskUi, type ViewComponent } from "./ui-blocks.ts";
@@ -93,7 +93,7 @@ type Row = {
 };
 
 export function toAsk(r: Row, requester?: string): Ask {
-  const context = JSON.parse(r.context ?? "{}") as { operationApproval?: unknown; askedBy?: string; toName?: string; lapsed?: string; handler?: string; stageCard?: Ask["stageCard"] };
+  const context = JSON.parse(r.context ?? "{}") as { operationApproval?: unknown; askedBy?: string; toName?: string; supervisorTaskId?: string; lapsed?: string; handler?: string; stageCard?: Ask["stageCard"] };
   // A delegated approver sees the decision, not data returned using the requester's privileges.
   const hidePayload = context.operationApproval && context.askedBy !== r.user_id && requester !== context.askedBy;
   return {
@@ -123,7 +123,7 @@ export function toAsk(r: Row, requester?: string): Ask {
     ui: context.stageCard ? { ...stageCardUi(context.stageCard), ...(r.ui ? (JSON.parse(r.ui) as AskUi) : {}) } : r.ui ? (JSON.parse(r.ui) as AskUi) : null,
     value: r.value ? (JSON.parse(r.value) as Record<string, unknown>) : null,
     askedBy: context.askedBy ?? null,
-    toName: context.toName ?? null,
+    toName: context.supervisorTaskId ? "助手" : context.toName ?? null,
     lapsed: context.lapsed ?? null,
   };
 }
@@ -580,6 +580,28 @@ export function describeAnswer(a: Ask): string {
 
 /** An answer nobody waited for: a message in the conversation, so the next turn has it. */
 async function deliverAnswer(app: App, ask: Ask) {
+  if (ask.answeredBy === "supervisor" && ask.runId) {
+    const { getRun } = await import("./runs.ts");
+    const worker = getRun(app, ask.runId);
+    const code = worker.input.helperOf ?? worker.input.codeRunId ?? (worker.kind === "code" ? worker.id : null);
+    if (typeof code === "string" || worker.kind === "agent") {
+      const { workNote } = await import("./code-loop.ts");
+      const { resumeAgentAfterSupervisorAnswer } = await import("./agent-work.ts");
+      if (typeof code !== "string") {
+        withinTx(app.db, () => {
+          if (run(app.db, "update asks set consumed=1 where id=? and consumed=0", ask.id).changes)
+            resumeAgentAfterSupervisorAnswer(app, worker, describeAnswer(ask));
+        });
+      } else if (run(app.db, "update asks set consumed=1 where id=? and consumed=0", ask.id).changes) {
+        try { workNote(app, code, describeAnswer(ask), "supervisor"); }
+        catch (e) {
+          run(app.db, "update asks set consumed=0 where id=?", ask.id);
+          throw e;
+        }
+      }
+      return;
+    }
+  }
   if (ask.askedBy && ask.askedBy !== ask.userId) ask = getAsk(app, ask.id, ask.askedBy);
   run(app.db, "update asks set consumed = 1 where id = ?", ask.id);
   if (!ask.conversationId) {

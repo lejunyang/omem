@@ -6,6 +6,8 @@ import { upsertSource } from "../src/sources/store.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import { remember } from "../src/memory/store.ts";
+import { run } from "../src/core/db.ts";
+import { createSpace } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
 
 const apps: ReturnType<typeof testApp>[] = [];
@@ -80,6 +82,24 @@ describe("reference excerpts", () => {
 });
 
 describe("read_source for msg: and mem: refs", () => {
+  it("用飞书消息 id 定位到有权限的聊天副本和行", async () => {
+    const app = fresh();
+    createSpace(app, { id: "project", name: "项目 A" });
+    const primary = upsertSource(app, { spaceId: "personal", kind: "chat", uri: "lark:oc_demo", title: "原会话", text: "早先的讨论\n私有副本" });
+    const copy = upsertSource(app, { spaceId: "project", kind: "chat", uri: "lark:oc_demo", title: "项目群", text: "项目会话\n另一个讨论\n验收结果已通过\n后续讨论" });
+    const messageId = "om_example";
+    run(app.db, "insert into lark_messages(message_id,chat_id,create_ms,source_id,line) values(?,?,?,?,?)", messageId, "oc_demo", 1, primary.id, 2);
+    run(app.db, "insert into lark_message_lines(source_id,message_id,line) values(?,?,?)", copy.id, messageId, 3);
+    const ctx: ToolContext = { app, runId: null, spaceId: "project", spaces: ["project"], tools: null, actor: "agent", userId: "owner" };
+    const r = await callTool(ctx, "read_source", { source: `msg:${messageId}` });
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain(`src:${copy.id}#L3-L3`);
+    expect(r.text).toContain("验收结果已通过");
+    expect(r.text).not.toMatch(/另一个讨论|后续讨论|私有副本/);
+    expect(await callTool({ ...ctx, spaces: [] }, "read_source", { source: `msg:${messageId}` })).toMatchObject({ isError: true });
+    expect(await callTool(ctx, "read_source", { source: messageId })).toMatchObject({ isError: true, text: expect.stringContaining("source 填 msg:") });
+  });
+
   it("reads conversation messages and memories instead of looking them up as sources", async () => {
     const app = testApp();
     apps.push(app);

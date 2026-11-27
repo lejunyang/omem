@@ -1,3 +1,5 @@
+import { checkTaskDuration } from "./drift.ts";
+import { workBudgetStop, longTaskForRun, signalCodeWork } from "./supervisor-code.ts";
 import type { App } from "../core/app.ts";
 import type { Execution } from "./execution.ts";
 import { all, one } from "../core/db.ts";
@@ -365,6 +367,13 @@ async function nextStep(app: App, run: Run, rc: RoundContext): Promise<{ verdict
       notifyOwner(app, rootId, run, "交办暂停：修改没有收敛", `最近三次阶段评审要改的问题没有减少（${(w.stages ?? []).slice(-3).join(" → ")}）。看一下修改项，决定继续、调整方案还是先停下。`);
       return finish("paused", { reviewStop: "not-converging" });
     }
+    const supervisor = longTaskForRun(app, rootId);
+    const stop = supervisor && workBudgetStop(app, supervisor, rootId);
+    if (stop) {
+      setWorkState(app, rootId, { paused: "budget" });
+      signalCodeWork(app, rootId, stop);
+      return finish("paused", { reviewStop: "budget" });
+    }
     if (roundOf(run) >= w.until) {
       setWorkState(app, rootId, { paused: "budget" });
       notifyOwner(app, rootId, run, `交办暂停：自动推进到了第 ${roundOf(run)} 轮`, `还有 ${todo.length} 项待做${owner.length ? `、${owner.length} 项等你决定` : ""}。说“继续”再推进 ${w.budget} 轮。`);
@@ -495,6 +504,7 @@ registerAskHandler("work-deliver", async (app: App, ask: Ask, ctx) => {
 });
 
 function notifyOwner(app: App, rootId: string, run: Run, title: string, body: string) {
+  if (signalCodeWork(app, rootId, title + "：" + body, ["polishing", "not-converging"].includes(String(workState(app, rootId).paused)))) return;
   notify(app, { userId: workOwner(app, rootId), title, body, link: `#/runs/${run.id}` });
 }
 
@@ -791,7 +801,31 @@ export function answerTask(app: App, rootId: string, seq: number, a: { choice?: 
  * At start: a card left for a task that no longer waits on the owner (it moved on, or now waits on the
  * assistant) closes, and the assistant is woken for tasks waiting on it that no turn is taking.
  */
+const durationChecks = new WeakSet<App>();
+
+function watchTaskDurations(app: App) {
+  if (durationChecks.has(app)) return;
+  durationChecks.add(app);
+  const check = () => {
+    const coding = all<{ work_id: string; seq: number }>(app.db, `select t.work_id,t.seq from runs r join code_tasks t
+      on t.work_id=coalesce(json_extract(r.input,'$.continueFrom'),r.id)
+      where r.kind='code' and r.status='running' and json_extract(r.input,'$.longTaskId') is not null
+      and t.state='coding' and json_extract(t.origin,'$.slow') is null`);
+    for (const row of coding) {
+      const t = getTask(app, row.work_id, row.seq);
+      const note = checkTaskDuration(app, t);
+      if (!note) continue;
+      signalCodeWork(app, t.workId, note, true);
+      updateTask(app, t.workId, t.seq, { origin: { ...t.origin, slow: true } });
+    }
+  };
+  const timer = setInterval(check, 60_000);
+  timer.unref();
+  app.events.once("close", () => clearInterval(timer));
+}
+
 export function reconcileWaiting(app: App) {
+  watchTaskDurations(app);
   let closed = 0;
   let woken = 0;
   let moved = 0;
@@ -884,13 +918,13 @@ export function ownerNote(app: App, runId: string, text: string, by: string, opt
   if (by === OWNER) renewBudget(app, rootId, roundOf(last));
   const current = coding && !last.input.peerCoder && !last.input.syncOnly && !last.input.moveToTarget;
   const first = text.trim().split("\n")[0];
-  let task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: "owner", origin: { note: text.trim(), ...(opts.item ? { item: opts.item } : {}) } }, by);
+  let task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: by === "supervisor" ? "build" : "owner", origin: { note: text.trim(), ...(opts.item ? { item: opts.item } : {}) } }, by);
   if (current) {
     task = updateTask(app, rootId, task.seq, { state: "coding", coderRun: last.id });
-    addCodeNote(app, last.id, `本人补充修改项 ${taskLabel(task.seq)}：${text}`, by);
+    addCodeNote(app, last.id, `${by === "supervisor" ? "助手" : "本人"}补充修改项 ${taskLabel(task.seq)}：${text}`, by);
     return { task, next: null, current, handedTo: last };
   }
-  addRunEvent(app, last.id, "status", { text: `本人补充记为待做项 ${taskLabel(task.seq)}：${truncate(first, 120)}` });
+  addRunEvent(app, last.id, "status", { text: `${by === "supervisor" ? "助手" : "本人"}补充记为待做项 ${taskLabel(task.seq)}：${truncate(first, 120)}` });
   if (stage !== "ended") return { task, next: null };
   return { task, next: advanceWork(app, rootId, { owner: true }) };
 }

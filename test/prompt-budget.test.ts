@@ -6,12 +6,14 @@ import type { RunKind } from "../src/agents/runs.ts";
 import { prepareRun, type PreparedRun } from "../src/agents/runner.ts";
 import { seedBuiltinSkills } from "../src/agents/specs.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
+import { agentSpecSchema } from "../src/agents/specs.ts";
 import { testApp } from "./helpers.ts";
 
 // Measurements with the fixed fixture below. The shell bridge preamble is 39 characters
 // longer than MCP's. Allow each measurement up to 64 extra characters across all five blocks.
 // Re-measured affected roles after integrating quiet outcomes, change receipts and the new role sections.
 const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground: number, noneChat: number, noneBackground: number]> = {
+  supervisor: ["supervise", 5044, 5044, 2001, 2001],
   "commit-claim": ["commit-claim", 4630, 4735, 2206, 2206],
   // The item-follow role now classifies actual next steps and records their completion conditions.
   "item-follow": ["item-follow", 6004, 6109, 3602, 3602],
@@ -20,9 +22,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   // Mid-round branch sync: the assistant passes `sync` and waits on the round, the coder calls sync_branch.
   // 情境 became 持续跟进的规则: the assistant's note on save_situation says what to call it with the owner.
   // 实测 2026-11-25：中途交付和编码补充的说明已计入。
-  // 实测 2026-11-28：合并 AI 规则（长期 AI 规则一段）和 main 上“帮你回复”、卡片的说明之后。
-  // 实测 2026-11-28：工作文件一节加了查数结果放哪一句。
-  "assistant": ["agent", 21352, 20653, 1679, 1581],
+  // main 的预算已计入长期 AI 规则和查数结果的存放约定。MCP 对话另含长任务跟进工具说明。
+  "assistant": ["agent", 21526, 20653, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   "ai-policy-writer": ["ai-policy-draft", 2763, 2763, 1748, 1748],
@@ -139,5 +140,13 @@ it("bounds the HTTP instructions for each cloud role including every allowed too
       revokeToolToken(on.token);
     }
   }
+  const prep = prepareRun(app, {
+    actor: { spec: { ...agentSpecSchema.parse({ name: "demo", description: "核对材料", tools: ["search", "stage_report", "attach_artifact"] }),
+      prompt: "## 检索\n<!-- tools: search -->\n用 search 找材料。\n\n## 交阶段\n<!-- tools: stage_report -->\n用 stage_report 交结论。\n\n## 交附件\n<!-- tools: search attach_artifact -->\n用 attach_artifact 交附件。\n" } },
+    profileId: "doubao", spaceId: "personal", runId: "budget", scene: { chat: false, kind: "flow-stage" },
+  });
+  expect(prep.system).toContain("用 search 找材料");
+  expect(prep.system).not.toMatch(/stage_report|attach_artifact|omem_call|omem_help/);
+  revokeToolToken(prep.token);
   app.db.close();
 });

@@ -1,9 +1,12 @@
 import type { Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { getLongTask, longTaskInThread } from "./long-tasks.ts";
+import { wakeSupervisor } from "./supervisor.ts";
+import { longTaskForRun, workBudgetStop } from "./supervisor-code.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { now, truncate } from "../core/util.ts";
 import { addMessage, createThread, getThread } from "./threads.ts";
-import { createRun, runUser, queuedInLane, updateQueuedRun, type Run } from "./runs.ts";
+import { createRun, getRun, runUser, queuedInLane, updateQueuedRun, type Run } from "./runs.ts";
 
 /**
  * Multi-agent work handed off by the main assistant. It is one conversation (a Feishu topic, or
@@ -139,21 +142,57 @@ export type AgentRoundInput = {
   extraTools?: string[];
 };
 
+/** Keep a supervisor's handoffs in its confirmed work topic. Reports return through onWorkRunSettled. */
+export function queueSupervisedAgent(app: App, runId: string, round: AgentRoundInput) {
+  return withinTx(app.db, () => {
+    const parent = getRun(app, runId);
+    const task = getLongTask(app, String(parent.input.longTaskId));
+    if (task.status !== "active" || parent.output.supervisorReport) throw new Error("本轮当前不能派活");
+    const stop = workBudgetStop(app, task);
+    if (stop) throw new Error(stop);
+    const thread = getThread(app, task.threadId);
+    const work: AgentWork = workOfRun(app, parent) ?? {
+      askRunId: runId, rootConversationId: thread.parentId ?? thread.id, workConversationId: thread.id,
+      larkKey: thread.key, larkMessageId: thread.settings.lastMessageId ?? null, title: task.goal,
+      rounds: [], awaitingUser: false, runs: 0,
+    };
+    return queueAgentRound(app, work, { ...round, spaceId: task.spaceId, queuedBy: runId }, task.id);
+  });
+}
+
 /** Queue the next agent round inside an existing work conversation. */
-export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): string {
+export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput, longTaskId?: string): string {
   if (work.runs >= MAX_AGENT_WORK_RUNS) throw new Error(`多 Agent 循环已达上限 ${MAX_AGENT_WORK_RUNS} 轮`);
   const r = createRun(app, {
     kind: "agent",
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
     userId: a.assistantScope.userId,
-    input: { ...(a.boardDevice ? { boardDevice: a.boardDevice } : {}), ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
+    input: { ...(longTaskId ? { longTaskId } : {}), ...(a.boardDevice ? { boardDevice: a.boardDevice } : {}), ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
     parentId: work.askRunId,
   });
-  const id = r.id;
-  const next: AgentWork = { ...work, runs: work.runs + 1, rounds: [...work.rounds, { runId: id, agent: a.agent, status: "queued" }] };
-  saveWork(app, next, [id, work.askRunId, ...work.rounds.map((r) => r.runId)]);
-  return id;
+  recordAgentRound(app, work, r.id, a.agent);
+  return r.id;
+}
+
+function recordAgentRound(app: App, work: AgentWork, runId: string, agent: string) {
+  const next: AgentWork = { ...work, runs: work.runs + 1, rounds: [...work.rounds, { runId, agent, status: "queued" }] };
+  saveWork(app, next, [work.askRunId, ...next.rounds.map(r => r.runId)]);
+}
+
+/** An answer arrived after the worker ended. Consume it and reserve the next round in the same transaction. */
+export function resumeAgentAfterSupervisorAnswer(app: App, worker: Run, answer: string) {
+  const task = longTaskForRun(app, worker.id)!;
+  const stop = workBudgetStop(app, task);
+  if (stop) {
+    wakeSupervisor(app, task.id, `工作运行 ${worker.id} 已收到回答。\n${answer}\n${stop}`, { immediate: true });
+    return;
+  }
+  const next = createRun(app, { kind: "agent", title: "按助手的回答继续", spaceId: worker.spaceId,
+    parentId: worker.parentId, userId: task.userId, lane: worker.lane, input: { ...worker.input, longTaskId: task.id,
+      resumeFromRun: worker.id, task: `${worker.input.task ?? ""}\n\n${answer}` } });
+  const work = workOfRun(app, worker);
+  if (work) recordAgentRound(app, refreshWork(app, work.askRunId)!, next.id, String(worker.input.spec));
 }
 
 /**
@@ -238,6 +277,12 @@ export function onWorkRunSettled(app: App, run: Run): { work: AgentWork; coordin
   markRound(app, work, run.id, status);
   // Rounds of an older version's digest step are bookkeeping only; cancelled rounds wait for the owner.
   if ((run.input as { role?: string }).role || run.status === "cancelled") return { work };
+  const task = longTaskInThread(app, work.workConversationId);
+  if (task) {
+    const note = `工作运行 ${run.id} ${status === "done" ? "已完成" : "失败"}：${truncate(String(run.output.answer ?? run.error ?? ""), 2000)}`;
+    addWorkMessage(app, work, { role: "assistant", text: note, runId: run.id, meta: { record: true } });
+    return { work, coordinateRunId: wakeSupervisor(app, task.id, note) };
+  }
   return { work, coordinateRunId: queueCoordination(app, work, run) };
 }
 

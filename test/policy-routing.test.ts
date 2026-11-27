@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { rmSync } from "node:fs";
-import type { AgentEvent } from "../src/agents/types.ts";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { agentRunError, type AgentEvent } from "../src/agents/types.ts";
 import { runRole } from "../src/agents/runner.ts";
 import * as dispatch from "../src/agents/dispatch.ts";
 import { addRunEvent, createRun, runEvents } from "../src/agents/runs.ts";
@@ -9,11 +10,52 @@ import { setKey } from "../src/core/ai-keys.ts";
 import { resetDecisionCooldownForTests, setDecisionFetchForTests } from "../src/core/decision.ts";
 import { all } from "../src/core/db.ts";
 import { testApp } from "./helpers.ts";
+import { confirmProbe, probeCloud } from "../src/agents/cloud-probe.ts";
+import { fakeCloudReceipt } from "./fake-cloud-probe.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
   setDecisionFetchForTests(null);
   resetDecisionCooldownForTests();
+});
+
+it.each(["automatic", "quota", "pinned"] as const)("本机工作区限制覆盖自动选型、额度换后端和流程指派：%s", async route => {
+  const app = testApp();
+  app.baseUrl = "http://127.0.0.1:1";
+  try {
+    const [local, cloud, backup] = ["local", "cloud", "backup"].map(id => ({
+      id, transport: id === "cloud" ? "doubao" as const : "acp" as const, command: process.execPath, args: [], env: {}, idleTimeoutMs: 1000,
+    }));
+    app.config.agents.profiles.push(local, cloud, backup);
+    app.config.agents.default = local.id;
+    app.config.agents.fallback = [{ profile: cloud.id }, { profile: backup.id }];
+    app.config.webUrl = "https://8.8.8.8";
+    mkdirSync(join(app.home, "secrets"), { recursive: true });
+    writeFileSync(join(app.home, "secrets", "doubao.json"), JSON.stringify({ demo: {} }));
+    Object.assign(app.config.agents.cloudTools, { enabled: true, backends: [cloud.id], credentialIn: "message", tools: ["trial_report"] });
+    const probe = await probeCloud(app, cloud.id, async (_app, _profile, req) => ({
+      text: fakeCloudReceipt(app, req.prompt.match(/challenge\/([\w-]+)/)![1], "header"), agent: cloud.id, stopReason: "end_turn",
+    }));
+    confirmProbe(app, cloud.id, probe.id);
+    if (route === "automatic") {
+      const profiles = [cloud, backup, local];
+      app.config.agents.groups.push(...profiles.map(p => ({ id: p.id, name: p.id, items: [{ profile: p.id, note: "" }] })));
+      app.config.agents.policy = policySchema.parse({ classes: { flows: { use: profiles.map(p => p.id), order: "fixed", strict: true } } });
+    }
+    const backend = vi.spyOn(dispatch, "runBackend").mockImplementation(async (_app, profile) => ({ agent: profile.id, text: "完成", stopReason: "end_turn" }));
+    if (route === "quota") backend.mockRejectedValueOnce(agentRunError("达到额度上限", "quota"));
+    const trial = createRun(app, { kind: "study-trial", title: "示例试验" });
+    const task = runRole(app, { role: "assistant", spaceId: "personal", task: "运行示例项目的测试", runId: trial.id, choose: "tasks",
+      addTools: ["trial_report"], requiredTools: ["trial_report"],
+      ...(route === "pinned" ? { execution: { profile: cloud.id, source: "flow", reason: "试验阶段指定" } } : {}),
+    });
+    if (route === "pinned") await expect(task).rejects.toThrow("本机工作区");
+    else await expect(task).resolves.toMatchObject({ profileId: backup.id });
+    expect(backend.mock.calls.map(call => call[1].id)).toEqual(route === "pinned" ? [] : route === "quota" ? [local.id, backup.id] : [backup.id]);
+  } finally {
+    app.db.close();
+    rmSync(app.home, { recursive: true, force: true });
+  }
 });
 
 it.each([

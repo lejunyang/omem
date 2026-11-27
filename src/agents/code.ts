@@ -1,3 +1,4 @@
+import { createCodeRound } from "./supervisor-code.ts";
 import { requireReviewModel } from "./models.ts";
 import { receiveMemberGit } from "./member-git.ts";
 import { abortBranchSync, activeBranchSync, checkSyncBranch, hasBranchSyncRequests, openBranchSyncRound, queueBranchSync, roundSyncReport, runQueuedBranchSync, takeBranchSyncSteering, type BranchSync } from "./code-round-sync.ts";
@@ -19,7 +20,7 @@ import { businessOf, childSpaces, findSpace, getSpace, type Space } from "../cor
 import { HttpError, stripAnsi, truncate } from "../core/util.ts";
 import { resolveRunProfile, runRole } from "./runner.ts";
 import type { ReviewEstimate, ReviewMetrics, ReviewPlan } from "./review.ts";
-import { addRunEvent, createRun, getRun, ResumeRunAt, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
+import { addRunEvent, getRun, ResumeRunAt, runUser, setRunOutput, type Run, type RunContext } from "./runs.ts";
 import { dropWorktreeSpace, indexWorktree, worktreeSpacesOf, type WorktreeRef } from "./worktree-index.ts";
 import { leasedTo, leaseWorkspace, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "./workspaces.ts";
 import { branchWorktree, changeBase, checkedOutAt, confirmBranchRun, isBranchWork, planBranch, releaseBranchRun, settleRound, temporaryWorkBranch, siblingsText, withDiffBase } from "./code-branch.ts";
@@ -176,7 +177,7 @@ export function createBranchReview(app: App, req: BranchReviewRequest, parentId?
   const home = homeSpace(app, req.space, scoped.itemId, ids);
   codeRepos(app, home, ids);
   const branches = Object.fromEntries(ids.map((id) => [id, { branch: req.branches?.[id] ?? req.branch, ...(req.base ? { base: req.base } : {}) }]));
-  const r = createRun(app, {
+  const r = createCodeRound(app, {
     kind: "code",
     spaceId: home,
     title: truncate(req.title?.trim() || `评审分支 ${req.branch}`, 80),

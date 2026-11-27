@@ -37,7 +37,7 @@
 | 评审 `review` | review、quality-audit、outcome-review、flow-review、profile-review | 同上，另有换家评审 |
 | 调查与交办 `agents` | agent（Agent 档案）、peer-agent | 内容差别大 |
 | 流程与研究 `flows` | flow-stage、flow-runner、flow-reconcile、study-trial | 阶段里可写 `ai:` |
-| 监工 `supervise` | 长任务的监工（[supervisor.md](supervisor.md)） | 要强、要稳定 |
+| 长任务跟进 `supervise` | 长任务的跟进（[supervisor.md](supervisor.md)） | 要强、要稳定 |
 
 不进类别、不经规则的只有内部运行：探测（probe）、复盘的对比臂（replay、replay-arm：它们本来就是在比模型）。
 
@@ -60,7 +60,7 @@ groups:
       - { ai: antigravity · gemini-4-neon · high }
       - { ai: claude · claude-opus-5-5 · high }
   - id: supervise
-    name: 监工
+    name: 跟进
     items:
       - { ai: codex · gpt-6.2-astra · xhigh }
       - { ai: claude · claude-opus-5-5 · high }
@@ -158,7 +158,7 @@ policy:
 /traex deepseek               traex · deepseek-v4.1-flash，强度不变
 /gemini neon                  gemini 是 antigravity 的别名
 /codex 方舟 seed high          用 API key「方舟」生成的 codex@<编号>，模型在这个 key 的模型里找
-/强                            用“强”组的第一个能用的；/写作、/监工 同理
+/强                            用“强”组的第一个能用的；/写作、/跟进 同理
 /codex astra xhigh 帮我查一下…   只这一件事用它，不改会话
 /ai off                       恢复默认（/model off 照旧）
 ```
@@ -179,7 +179,7 @@ policy:
 
 `/topic` 也认 AI：`/topic codex astra xhigh 任务…` 开话题，并把这个话题定在这个 AI 上。
 
-`/help` 只列五个常用的（`/topic`、`/<后端> 模型 强度`、`/监工`、`/stop`、`/new`），其他在 `/help all`。
+`/help` 只列五个常用的（`/topic`、`/<后端> 模型 强度`、`/跟进`、`/stop`、`/new`），其他在 `/help all`。
 
 ## 6. Agent 档案
 

@@ -1,3 +1,4 @@
+import { createCodeRound } from "./supervisor-code.ts";
 import { existsSync } from "node:fs";
 import type { App } from "../core/app.ts";
 import { findingEvent } from "../plugins/event-store.ts";
@@ -7,7 +8,7 @@ import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { isBranchReview, worktreesOf } from "./code.ts";
 import { canReborrowWorkspace, isBranchWork } from "./code-branch.ts";
 import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
-import { createRun, getRun, runUser, type Run } from "./runs.ts";
+import { getRun, runUser, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
 import { markNotesDelivered, notesText, pendingNotes, type RoundReview } from "./code-steer.ts";
 import { workOwner } from "./code-tasks.ts";
@@ -381,7 +382,7 @@ export async function startFix(app: App, runId: string, req: { findingIds: numbe
     if (!next) throw new HttpError(409, "原交办记录不完整，无法继续");
     return accepted(next.run);
   }
-  const r = createRun(app, {
+  const r = createCodeRound(app, {
     kind: "code",
     spaceId: root.spaceId,
     title: truncate(`${applied ? "接着改" : "按评审修改"}：${root.title}`, 80),
@@ -473,7 +474,7 @@ export function queueStandaloneFix(app: App, rootId: string, expectedLastId: str
     const sessionId = rounds.map(r => r.output.coderSessionId).filter(Boolean).at(-1);
     const notes = pendingNotes(app, last.id);
     const roundNotes = notes.length ? notesText(notes, app.config.timezone) : undefined;
-    const next = createRun(app, {
+    const next = createCodeRound(app, {
       kind: "code", spaceId: last.spaceId, userId: workOwner(app, rootId, userId),
       title: truncate(`交办第 ${rounds.length + 1} 轮：${task.split("\n")[0]}`, 80),
       input: {

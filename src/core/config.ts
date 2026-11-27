@@ -23,7 +23,7 @@ export const cloudToolsSchema = z.object({
    */
   privateAddress: z.boolean().default(false),
   tools: z.array(z.enum(cloudToolNames)).max(cloudToolNames.length).default(["search", "read_source"]),
-  ttlMinutes: z.number().int().min(1).max(30).default(15),
+  ttlMinutes: z.number().int().min(1).max(30).default(15).describe("云端工具凭据的续期窗口（分钟）。运行仍在执行时可续期，运行结束即作废"),
   maxCalls: z.number().int().min(1).max(100).default(32),
   backends: z.array(z.string().min(1)).max(100).default([]),
   credentialIn: z.enum(["channel", "message"]).default("channel"),
@@ -196,6 +196,7 @@ export const DEFAULT_FEEDBACK_EMOJI = {
 };
 
 export const roleNames = [
+  "supervisor",
   "commit-claim",
   "item-follow",
   "flow-reconcile",
@@ -390,6 +391,10 @@ export const ownSandboxSchema = z.object({
   excludeKinds: z.array(z.string().trim().min(1).max(100)).max(64).optional(),
 }).strict();
 export const fullAccessMode = z.enum(["per-role", "sandboxed", "all"]);
+
+export const supervisorAiSchema = z.object({
+  profile: z.string().min(1), model: z.string().min(1).optional(), effort: z.string().min(1).optional(),
+});
 
 export const configSchema = z.object({
   /**
@@ -1432,6 +1437,10 @@ export const configSchema = z.object({
       infer: z.boolean().default(true),
     })
     .default({ expiry: true, days: { todo: 14, decision: 7, watch: 7, waiting: 14, reminder: 1 }, infer: true }),
+  longTasks: z.object({
+    supervisor: supervisorAiSchema.optional().describe("长任务跟进用的 AI"),
+    checkMinutes: z.number().int().positive().default(40),
+  }).prefault({}),
   /**
    * The owner's work state (docs/v2/work-state.md): the nightly `work-state` job hands the role of
    * that name `days` of facts (chats the owner spoke in, documents, coding, items, meetings, asks)
@@ -1650,7 +1659,7 @@ export function prepareConfigSave(config: Config, home: string) {
 
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
-  const referenced = new Set([config.agents.default, ...Object.values(config.agents.roles),
+  const referenced = new Set([config.longTasks.supervisor?.profile, config.agents.default, ...Object.values(config.agents.roles),
   ...config.agents.groups.flatMap(g => g.items.map(i => i.profile)),
     ...Object.values(config.agents.tiers).map(t => t.profile),
     ...Object.values(config.agents.roleModels).flatMap(models => Object.keys(models)),

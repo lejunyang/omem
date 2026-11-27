@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
+import { closeSync, copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { HttpError, newId, now, sameSecret } from "../core/util.ts";
 import { getRun } from "./runs.ts";
+import { z } from "zod";
 
 /**
  * Run artifacts (docs/v2/artifacts.md): screenshots, recordings, test reports and logs a run hands
@@ -126,6 +127,23 @@ export function artifactInbox(app: App, runId: string): string {
 }
 
 type Meta = { task?: number | null; req?: string | null; caption?: string; source: ArtifactSource; by: string };
+
+export const evidenceTextSchema = z.string().max(4000).refine(value => value.trim().length > 0, "证据正文不能为空").optional()
+  .describe("直接提交证据正文（最多 4000 字符）。宿主保存为运行产物。填文本内容，文件路径不适用");
+
+export async function attachText(app: App, runId: string, content: string, meta: Meta): Promise<Artifact> {
+  const workId = await workOf(app, runId), spaceId = getRun(app, runId).spaceId;
+  const dir = mkdtempSync(join(artifactInbox(app, runId), ".evidence-"));
+  const name = "证据.md", file = join(dir, name);
+  try {
+    writeFileSync(file, content, { mode: 0o600 });
+    const { artifact, skipped } = take(app, runId, workId, spaceId, file, name, meta, true);
+    if (!artifact) throw new HttpError(400, `证据没有收下：${skipped}`);
+    return artifact;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 /** Bytes a delegation (or a run outside one) already keeps. */
 const used = (app: App, runId: string, workId: string | null) =>
