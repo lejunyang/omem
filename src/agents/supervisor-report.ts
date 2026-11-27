@@ -59,8 +59,9 @@ export function flushSupervisorPush(app: App, task: LongTask) {
   if (!state.pendingPush) return;
   const plan = deliveryPlan(app, { outlet: "lark" });
   if (plan.when === "later" && plan.at) return scheduleSupervisorTimer(app, task, "push", plan.at);
-  notify(app, { graceDone: true, userId: task.userId, entity: "item", entityId: task.itemId, title: "长任务进展", body: state.pendingPush, link: `#/items/${task.itemId}` });
-  patchSupervisorState(app, task.id, { lastPush: now(), pendingPush: null });
+  const highlights = state.pendingHighlights?.length ? "\n\n**免打扰期间的进展**\n" + state.pendingHighlights.map(entry => "- " + entry).join("\n") : "";
+  notify(app, { graceDone: true, userId: task.userId, entity: "item", entityId: task.itemId, title: "长任务进展", body: state.pendingPush + highlights, link: `#/items/${task.itemId}` });
+  patchSupervisorState(app, task.id, { lastPush: now(), pendingPush: null, pendingHighlights: null });
 }
 
 export function sendSupervisorSummary(app: App, task: LongTask) {
@@ -132,7 +133,10 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
   if (prefs.summaryHours && next.status === "active") scheduleSupervisorTimer(app, next, "summary", new Date(Date.now() + prefs.summaryHours * 3600_000).toISOString());
   if ((prefs.milestones && (prior.stage !== report.stage || report.status === "done")) ||
     (prefs.owner && report.askOwner.length) || (prefs.corrections && report.actions.length)) {
-    patchSupervisorState(app, task.id, { pendingPush: text });
+    const highlights = deliveryPlan(app, { outlet: "lark" }).when === "later" ?
+      [...new Set([...(supervisorState(app, task.id).pendingHighlights ?? []), `${report.stage} · ${labels[report.status]}`,
+        ...report.actions, ...report.askOwner.map(q => q.question)])] : undefined;
+    patchSupervisorState(app, task.id, { pendingPush: text, pendingHighlights: highlights });
     flushSupervisorPush(app, task);
   }
   if (next.status === "active") scheduleSupervisorTimer(app, next, "check", new Date(Date.now() + app.config.longTasks.checkMinutes * 60_000).toISOString());
@@ -173,7 +177,8 @@ registerAskHandler("supervisor-brief", async (app, ask, context) => {
   withinTx(app.db, () => {
     if (task.status === "draft") {
       const budget = { hours: Number(ask.value?.hours), codeRounds: Number(ask.value?.codeRounds), dailyWakes: Number(ask.value?.dailyWakes) };
-      changeLongTask(app, task.id, { action: "budget", budget });
+      if (budget.hours !== task.budget.hours || budget.codeRounds !== task.budget.codeRounds || budget.dailyWakes !== task.budget.dailyWakes)
+        changeLongTask(app, task.id, { action: "budget", budget });
       for (const key of ["constraints", "mustAsk"]) changes[key] = String(ask.value?.[key] ?? "").split("\n").map(s => s.trim()).filter(Boolean);
     }
     confirmLongTaskBrief(app, task.id, changes);

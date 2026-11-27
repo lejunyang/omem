@@ -1,15 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { getRun, setRunOutput } from "../src/agents/runs.ts";
-import { listAsks } from "../src/agents/asks.ts";
+import { addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { answerAsk, getAsk, listAsks } from "../src/agents/asks.ts";
+import { createWorkerAsk } from "../src/agents/supervisor-code.ts";
+import { addTask, taskForFinding, updateTask } from "../src/agents/code-tasks.ts";
 import { setLarkClient } from "../src/channels/lark-send.ts";
 import { reattachThread, updateThread } from "../src/agents/threads.ts";
 import { type LongTask, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
 import { wakeSupervisor, checkSupervisorTimer, patchSupervisorState, runSupervisor } from "../src/agents/supervisor.ts";
-import { submitSupervisorReport } from "../src/agents/supervisor-report.ts";
+import { flushSupervisorPush, submitSupervisorReport } from "../src/agents/supervisor-report.ts";
 import { reportSchema } from "../src/agents/supervisor-schema.ts";
 import { receive } from "../src/agents/inbox.ts";
 import { pendingWakes } from "../src/agents/wakes.ts";
 import { run, all } from "../src/core/db.ts";
+import { zonedParts } from "../src/core/util.ts";
 import { testApp } from "./helpers.ts";
 import * as runner from "../src/agents/runner.ts";
 import type { App } from "../src/core/app.ts";
@@ -134,5 +137,81 @@ describe("长任务监工", () => {
     await checkSupervisorTimer(app, task.id, "check");
     expect(all(app.db, "select id from runs where kind='supervise'")).toHaveLength(1);
     expect(pendingWakes(app)).toEqual([]);
+  });
+
+  it("定时检查只把最近有事实的在跑工作交给监工", async () => {
+    const { app, task } = await setup();
+    const ctx = turn(app, task);
+    const child = createRun(app, { kind: "code", title: "编辑说明", parentId: ctx.run.id });
+    patchSupervisorState(app, task.id, { lastWake: new Date(Date.now() - 45 * 60000).toISOString() });
+    run(app.db, "update runs set status='done' where id=?", ctx.run.id);
+    run(app.db, "delete from run_events where run_id=?", child.id);
+    await checkSupervisorTimer(app, task.id, "check");
+    expect(all(app.db, "select id from runs where kind='supervise' and status='queued'")).toHaveLength(0);
+    addRunEvent(app, child.id, "check", { text: "类型检查通过" });
+    await checkSupervisorTimer(app, task.id, "check");
+    expect(all(app.db, "select id from runs where kind='supervise' and status='queued'")).toHaveLength(1);
+  });
+
+  it("工作者的问题先留给监工，必须由本人决定的合成一张卡，答复写回原问题", async () => {
+    const { app, task } = await setup();
+    run(app.db, "update long_tasks set status='active' where id=?", task.id);
+    const ctx = turn(app, task);
+    const worker = createRun(app, { kind: "code", title: "编码", parentId: ctx.run.id });
+    const questions = ["是否扩大目录？", "是否改业务约束？"].map(question => {
+      const ask = createWorkerAsk(app, { runId: worker.id, question });
+      return { questionId: ask.id, question, options: ["维持", "变更"], prefer: "维持", why: "沿用任务书" };
+    });
+    expect(listAsks(app, { status: "pending" })).toHaveLength(0);
+    await submitSupervisorReport(app, ctx.run.id, { ...draftReport, brief: undefined, status: "needs-owner", askOwner: questions });
+    const cards = listAsks(app, { conversationId: task.threadId, status: "pending" });
+    expect(cards).toHaveLength(1);
+    expect(cards[0].ui?.fields).toMatchObject([{ type: "choice", default: "维持" }, { type: "choice", default: "维持" }]);
+    await answerAsk(app, cards[0].id, { by: "owner", value: { q0: "变更", q1: "维持" } });
+    expect(questions.map(q => getAsk(app, q.questionId).answer)).toEqual(["变更", "维持"]);
+    expect(getLongTask(app, task.id).supplements.at(-1)?.text).toContain("是否扩大目录？：变更");
+  });
+
+  it("免打扰结束后一条摘要带上各阶段的纠偏", async () => {
+    const { app, task } = await setup();
+    const hour = zonedParts(Date.now(), app.config.timezone).hour;
+    app.config.notify.quietStart = hour;
+    app.config.notify.quietEnd = (hour + 1) % 24;
+    run(app.db, "update long_tasks set status='active' where id=?", task.id);
+    for (const action of ["收回范围外的改动", "补齐目标对应关系"]) {
+      const ctx = turn(app, task);
+      await submitSupervisorReport(app, ctx.run.id, { ...draftReport, brief: undefined, status: "drifting", actions: [action] });
+    }
+    const notices = () => all<{ body: string }>(app.db, "select body from notifications where title='长任务进展'");
+    expect(notices()).toHaveLength(0);
+    app.config.notify.quietEnd = hour;
+    flushSupervisorPush(app, task);
+    flushSupervisorPush(app, task);
+    expect(notices()).toHaveLength(1);
+    expect(notices()[0].body).toContain("收回范围外的改动");
+    expect(notices()[0].body).toContain("补齐目标对应关系");
+  });
+
+  it("立即上报缺少目标、跟进超过两层和耗时超出同一交办中位数的原项", async () => {
+    const { app, task } = await setup();
+    run(app.db, "update long_tasks set status='active' where id=?", task.id);
+    const supervisor = turn(app, task);
+    const worker = createRun(app, { kind: "code", title: "校对说明", parentId: supervisor.run.id });
+    const newFinding = taskForFinding(app, worker.id, { id: 1, title: "额外修改", suggestion: "", file_path: null, check_name: "评审" }, "review-lead");
+    let parent = newFinding;
+    for (let i = 0; i < 3; i++) {
+      const next = addTask(app, worker.id, { title: "继续修复", kind: "fix", origin: { goal: task.goal } }, "review-lead");
+      parent = updateTask(app, worker.id, next.seq, { origin: { ...next.origin, follows: parent.seq } });
+    }
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60000).toISOString();
+    for (const duration of [2, 4, 6]) addTask(app, worker.id, { kind: "build", title: "已完成项", state: "done",
+      origin: { startedAt: ago(30 + duration), finishedAt: ago(30) } }, "coder");
+    const slow = addTask(app, worker.id, { title: "核验示例", kind: "build", state: "coding", origin: { startedAt: ago(13) } }, "coder");
+    updateTask(app, worker.id, slow.seq, { state: "done" });
+    const queued = all<{ input: string }>(app.db, "select input from runs where kind='supervise' and status='queued'");
+    expect(queued).toHaveLength(1);
+    const events = JSON.parse(queued[0].input).events;
+    for (const note of ["来源不明", "跟进修复超过两层", "中位数的三倍"])
+      expect(events).toContainEqual({ drift: true, note: expect.stringContaining(note) });
   });
 });

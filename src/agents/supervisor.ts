@@ -5,6 +5,7 @@ import { canWrite } from "../core/users.ts";
 import { HttpError, now, truncate, zonedParts, zoneMidnight } from "../core/util.ts";
 import { backendAvailable } from "./availability.ts";
 import { downReason, excludedReason, hasRoom } from "./capacity.ts";
+import { validateExecution, type Execution } from "./execution.ts";
 import { getLongTask, type LongTask } from "./long-tasks.ts";
 import { createRun, getRun, queuedInLane, ResumeRunAt, updateQueuedRun, type RunContext } from "./runs.ts";
 import { getThread } from "./threads.ts";
@@ -13,7 +14,7 @@ type WakeEvent = { note: string; drift: boolean };
 type Session = { id: string; stage: string; ai: LongTask["ai"] };
 type SupervisorState = {
   day?: string; wakes?: number; lastWake?: string; session?: Session; stage?: string;
-  briefAsk?: string; cardId?: string; lastPush?: string; pendingPush?: string; lastReport?: string;
+  briefAsk?: string; cardId?: string; lastPush?: string; pendingPush?: string; pendingHighlights?: string[]; lastReport?: string;
 };
 
 export function supervisorState(app: App, id: string): SupervisorState {
@@ -156,9 +157,15 @@ export async function runSupervisor(ctx: RunContext) {
   if (ctx.run.output.supervisorReport) return { summary: "本轮报告已保存" };
   const profile = allProfiles(app.config).find(p => p.id === task.ai.profile);
   const selected = profile && { ...profile, ...task.ai };
+  const execution: Execution = { ...task.ai, source: "flow", reason: "长任务指定的监工" };
+  await ensureTopic(app, task);
+  try { validateExecution(app, execution, task.userId, true); }
+  catch (error) {
+    if (error instanceof HttpError) return waitForAi(ctx, task, error.message);
+    throw error;
+  }
   const unavailable = !selected || !backendAvailable(selected, app.home) ? "后端不可用" :
     excludedReason(app, selected) ?? downReason(app, selected) ?? (!hasRoom(app, selected) ? "等待模型空位" : null);
-  await ensureTopic(app, task);
   if (unavailable) return waitForAi(ctx, task, unavailable);
   withinTx(app.db, () => {
     patchSupervisorState(app, task.id, { day, wakes: wakes + (ctx.run.output.counted ? 0 : 1), lastWake: now() });
@@ -185,7 +192,7 @@ export async function runSupervisor(ctx: RunContext) {
   const result = await runRole(app, { role: "supervisor", task: prompt, runId: ctx.run.id, userId: task.userId, spaceId: task.spaceId,
     spaces: [task.spaceId], readScope: [task.spaceId], fullAccess: false, profileId: task.ai.profile, persistSession: true,
     queueUntil: Number(getRun(app, ctx.run.id).output.queueSince) + app.config.agents.queueTimeoutMinutes * minute,
-    resumeSessionId: resume, execution: { ...task.ai, source: "flow", reason: "长任务指定的监工" }, signal: ctx.signal,
+    resumeSessionId: resume, execution, signal: ctx.signal,
     denyTools: task.status === "draft" ? ["delegate_code","message_code_run","continue_code_run","settle_code_task","run_agent"] : [],
     onEvent: e => ctx.event(e.type, e),
   }).catch(async error => {
