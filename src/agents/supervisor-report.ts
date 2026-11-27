@@ -1,12 +1,11 @@
 import type { SupervisorReport as Report } from "./supervisor-schema.ts";
 import type { App } from "../core/app.ts";
-import { run, withinTx } from "../core/db.ts";
+import { withinTx } from "../core/db.ts";
 import { deliveryPlan, notify } from "../core/notify.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
-import { addItemEvent, upsertItem } from "../items/store.ts";
 import { cancelAsk, createAsk, registerAskHandler } from "./asks.ts";
-import { getLongTask, type LongTask } from "./long-tasks.ts";
-import { getRun, setRunOutput } from "./runs.ts";
+import { confirmLongTaskBrief, changeLongTask, getLongTask, saveLongTaskReport, type LongTask } from "./long-tasks.ts";
+import { getRun } from "./runs.ts";
 import { patchSupervisorState, scheduleSupervisorTimer, supervisorFacts, supervisorUsage, supervisorState } from "./supervisor.ts";
 import { getThread } from "./threads.ts";
 import type { UiField } from "./ui-blocks.ts";
@@ -95,20 +94,8 @@ registerAskHandler("supervisor-questions", async (app, ask, context) => {
     if (q.questionId) await answerWorkerQuestion(app, task.id, q.questionId, picked);
     choices.push(q.question + "：" + picked);
   }
-  const { changeLongTask } = await import("./long-tasks.ts");
   await changeLongTask(app, task.id, { action: "supplement", text: choices.join("\n") });
 });
-
-function recordReport(app: App, task: LongTask, runId: string, report: Report, text: string) {
-  const note = { at: now(), runId, stage: report.stage, plan: report.progress.next, decisions: report.decisions,
-    actions: report.actions, setAside: report.setAside ?? [], overruled: report.overruled ?? [] };
-  run(app.db, "update long_tasks set notes=json_insert(notes,'$[#]',json(?)),updated_at=? where id=?", JSON.stringify(note), note.at, task.id);
-  addItemEvent(app, task.itemId, "supervise", text, "supervisor", [], runId);
-  if (report.status === "done") {
-    run(app.db, "update long_tasks set status='done',updated_at=? where id=?", note.at, task.id);
-    upsertItem(app, task.itemId, { status: "done" }, "agent", runId);
-  }
-}
 
 export async function submitSupervisorReport(app: App, runId: string, report: Report) {
   const round = getRun(app, runId);
@@ -131,9 +118,8 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
   const prior = supervisorState(app, task.id);
   const text = supervisorProgressText(app, task, report);
   withinTx(app.db, () => {
-    setRunOutput(app, runId, { supervisorReport: report, progressText: text });
+    saveLongTaskReport(app, task.id, runId, report, text);
     patchSupervisorState(app, task.id, { lastReport: runId, stage: report.stage });
-    recordReport(app, task, runId, report, text);
     if (report.brief) proposeBrief(app, task, runId, report.brief);
     if (report.askOwner.length) offerOwnerQuestions(app, task, runId, report.askOwner);
   });
@@ -161,6 +147,8 @@ function proposeBrief(app: App, task: LongTask, runId: string, proposed: Proposa
     type: "textarea", id: key, label: briefLabels[key], default: values.join("\n"), required: key === "doneWhen",
   }));
   if (task.status === "draft") {
+    fields.push({ type: "textarea", id: "mustAsk", label: "必须问本人的事", default: task.brief.mustAsk.join("\n"), required: true });
+    if (!proposed.constraints) fields.push({ type: "textarea", id: "constraints", label: "约束", default: task.brief.constraints.join("\n"), required: false });
     fields.push({ type: "number", id: "hours", label: "总时长（小时）", required: true, min: 0.01, default: task.budget.hours },
       { type: "number", id: "codeRounds", label: "工作轮数", required: true, min: 1, default: task.budget.codeRounds },
       { type: "number", id: "dailyWakes", label: "监工每天最多被叫醒几次", required: true, min: 1, default: task.budget.dailyWakes });
@@ -179,13 +167,15 @@ registerAskHandler("supervisor-brief", async (app, ask, context) => {
   const proposed = context.proposed as Proposal;
   const changes = Object.fromEntries(Object.keys(proposed).map(key =>
     [key, String(ask.value?.[key] ?? "").split("\n").map(s => s.trim()).filter(Boolean)]));
-  const { confirmLongTaskBrief, changeLongTask } = await import("./long-tasks.ts");
-  if (task.status === "draft") {
-    const budget = { hours: Number(ask.value?.hours), codeRounds: Number(ask.value?.codeRounds), dailyWakes: Number(ask.value?.dailyWakes) };
-    await changeLongTask(app, task.id, { action: "budget", budget });
-  }
-  await confirmLongTaskBrief(app, task.id, changes);
-  patchSupervisorState(app, task.id, { briefAsk: null });
+  withinTx(app.db, () => {
+    if (task.status === "draft") {
+      const budget = { hours: Number(ask.value?.hours), codeRounds: Number(ask.value?.codeRounds), dailyWakes: Number(ask.value?.dailyWakes) };
+      changeLongTask(app, task.id, { action: "budget", budget });
+      for (const key of ["constraints", "mustAsk"]) changes[key] = String(ask.value?.[key] ?? "").split("\n").map(s => s.trim()).filter(Boolean);
+    }
+    confirmLongTaskBrief(app, task.id, changes);
+    patchSupervisorState(app, task.id, { briefAsk: null });
+  });
 });
 
 
@@ -193,7 +183,6 @@ registerAskHandler("supervisor-ai", async (app, ask, context) => {
   const task = getLongTask(app, String(context.longTaskId));
   const values = ask.value ?? {};
   const profile = String(values.profile ?? "").trim();
-  const { changeLongTask } = await import("./long-tasks.ts");
   await changeLongTask(app, task.id, { action: "ai", ai: { profile,
     model: String(values.model ?? "").trim() || undefined, effort: String(values.effort ?? "").trim() || undefined } });
 });
