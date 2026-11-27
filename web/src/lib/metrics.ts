@@ -74,7 +74,7 @@ const DIM_NAMES: Record<string, string> = {
 const DIM_VALUES: Record<string, Record<string, string>> = {
   status: { done: "做完", failed: "失败", cancelled: "取消", running: "进行中", queued: "排队中" },
   trigger: { chat: "对话", web: "网页", lark: "飞书", schedule: "定时", mention: "有人找你", guest: "访客", rule: "规则", heartbeat: "定时巡检", api: "接口", peer: "别的设备" },
-  label: { resolved: "解决了", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "无关", silent: "没人接话", unjudged: "看不出", 未判: "还没判" },
+  label: { resolved: "解决了", next: "接着往下", supplement: "要补充", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "无关", silent: "没人接话", unjudged: "看不出", 未判: "还没判" },
   decision: { sent: "照发", edited: "改了再发", dropped: "没发", auto: "自动答", none: "没回", "owner-replied": "你自己回的" },
   channel: { web: "网页", lark: "飞书", mcp: "外部 Agent", api: "接口" },
 };

@@ -5,6 +5,19 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 进度块的任务行对齐（2026-11-28）
+
+- 运行页“分头在做的”、事项和工作页“在做的”（`ProgressBoard`）：同一块里的任务行共用列宽（`.pg-tasks` 定列，各行 `subgrid`），结果列至少 6em，产出列不再随“已接受”“29 条取舍”“阻塞”的宽度左右错开；圆点对齐标题第一行，不再在产出占两三行时掉到中间。研究的试验行在列里缩进（圆点平移、标题加内边距），不加宽圆点那一列。演示数据上 1440 和 390 宽度核对过，没有溢出。
+
+## 回扫回答代替每晚复查：按件判、两种新标注、任务类型、查数记录；工作文件可以改路径（2026-11-28）
+
+- 设计在 docs/v2/reply-sweep.md。发出满一天的回答按会话分段（一个会话当天的回答，最多 15 次一段，几个短会话可以一起，一次一个运行，同一会话按时间先后），`outcome-reviewer` 读整段对话交 `review_reply_outcomes(tasks)`：分件（能接上之前的件）、每次回答的标注和缺的是什么、件的结论、类型、主题、查数记录。原来按信号挑三十条复查的逻辑去掉了（`reviewCandidates`、`pickForReview`、随机抽查），`replies.outcome.review` 去掉 `sample`，`max` 改成每天最多回扫几次回答（默认 200），`batch` 默认 15。
+- 标注：“被追问”拆成“接着往下”（`next`，算有用）和“要补充”（`supplement`）；第一遍小模型也用新的六种，旧的 `followup` 照原样留着、数据页单列。回扫同意记 `checked_pick = 'sweep'`，不同就改判（`revised_by` 是“回扫（模型）”），会盖过此前模型的改判，不碰本人的和表情的。
+- 新表 `reply_tasks`、`task_types`、`data_queries`，`reply_outcomes` 加 `task_id`、`missing`、`swept_at`、`sweep_tries`，都随拉取同步。类型两级，起始为空，回扫自动建（一段最多三个，本人删掉过的不再建），本人可改名、挪层级、合并（件跟过去）、删除（`/api/task-types`）。
+- 回补：`POST /api/replies/sweep {since, until?, limit?, perDay?, reset?}` 先补登记更早的回答（标“没判”），从最早的开始扫，到条数上限或扫完就停；`reset` 清掉那一段回扫的结论、件和查数记录。`GET /api/replies/sweep`、`/api/reply-tasks`、`/api/data-queries` 看进度和结果。两回都没交结论的回答按第一遍留着。
+- 数据页：“谁触发的”显示飞书姓名（`askerOf`：成员按邮箱认成成员），模型名归一（`modelKey`），“回扫过的”“回扫同意第一遍的占比”“还没回扫的”。
+- `move_file`（“收进材料”组）和 `POST /api/sources/:id/move` 的 `path`：工作文件改路径或空间，id 不变，移动记录写着从哪条路径到哪条。数据相关的放法（`数据/数据源目录.md`、`数据/观测计划/`、`数据/采集/`、`数据/查数/`、`数据/报表/`）写进 `roles/_common.md` 和技能 data-sources、observation-plan。
+
 ## 监工命令沿用话题的 AI 写法（2026-11-28）
 
 从 `src/agents/supervisor-command.ts` 读起。创建和换监工都用 `parseAiSpec` 按发起人解析后端、别名、组、设备或密钥。任务保存选中的具体 AI。指定后端时，英文目标另起一行。模型简称有多个候选时，回复会列出完整型号。

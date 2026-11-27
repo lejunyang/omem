@@ -84,11 +84,11 @@ type RunContextInfo = {
   source: Brief | null;
   work: { id: string; title: string; rounds: { runId: string; agent: string; kind: string; status: string; title: string }[] } | null;
 };
-type ReplyOutcome = { label: string | null; text: string; dueAt: string; first: { label: string; confidence: number | null; by: string } | null; revised: { label: string; by: string; why: string } | null; checked?: { verdict: "confirmed" | "revised"; label: string; by: string; why: string } | null; evidence: { who: string; text: string }[] };
+type ReplyOutcome = { label: string | null; text: string; dueAt: string; first: { label: string; confidence: number | null; by: string } | null; revised: { label: string; by: string; why: string } | null; checked?: { verdict: "confirmed" | "revised"; label: string; by: string; why: string; pick?: string } | null; evidence: { who: string; text: string }[]; missing?: string | null };
 const detail = ref<{ can?: { operate: boolean; edit: boolean }; run: Run; events: RunEvent[]; children: Run[]; board?: { workId: string; taskId?: string }; patches?: { space: string; patch: string }[]; context?: RunContextInfo; reply?: ReplyOutcome | null } | null>(null);
 /** What a reply came to, judged from what people said after it; the owner may overrule the label. */
-const REPLY_LABELS: Record<string, string> = { resolved: "解决了", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "看不出", silent: "没人接话", unjudged: "没判" };
-const REVISABLE = ["resolved", "followup", "corrected", "taken_over", "unrelated"];
+const REPLY_LABELS: Record<string, string> = { resolved: "解决了", next: "接着往下", supplement: "要补充", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "看不出", silent: "没人接话", unjudged: "没判" };
+const REVISABLE = ["resolved", "next", "supplement", "corrected", "taken_over", "unrelated"];
 const isOwner = computed(() => !state.me || state.me.role === "owner");
 /** 停止 / 重试 on the opened run (`can.operate`); an older server sends no `can`: shown as before. */
 const mayOperate = computed(() => detail.value?.can?.operate ?? true);
@@ -410,7 +410,8 @@ const kindOptions = computed(() => [
             <span v-if="detail.reply.revised" class="muted small">{{ detail.reply.revised.by }}改判{{ detail.reply.revised.why ? `：${detail.reply.revised.why}` : "" }}（原先标的是“{{ REPLY_LABELS[detail.reply.first?.label ?? ""] }}”）</span>
             <span v-else-if="detail.reply.first" class="muted small">{{ detail.reply.first.by }}{{ detail.reply.first.confidence != null ? `，把握 ${detail.reply.first.confidence.toFixed(2)}` : "" }}{{ detail.reply.first.label !== detail.reply.label ? `；它选的是“${REPLY_LABELS[detail.reply.first.label]}”，把握不够，按看不出算` : "" }}</span>
             <span v-else class="muted small">{{ fmtTime(detail.reply.dueAt) }} 以后，按大家在这之后说的话判断这条回复有没有用</span>
-            <span v-if="detail.reply.checked?.verdict === 'confirmed'" class="muted small">夜里复查（{{ detail.reply.checked.by }}）同意{{ detail.reply.checked.why ? `：${detail.reply.checked.why}` : "" }}</span>
+            <span v-if="detail.reply.checked?.verdict === 'confirmed'" class="muted small">{{ detail.reply.checked.pick === "sweep" ? "回扫" : "夜里复查" }}（{{ detail.reply.checked.by }}）同意{{ detail.reply.checked.why ? `：${detail.reply.checked.why}` : "" }}</span>
+            <span v-if="detail.reply.missing" class="muted small">缺的是：{{ detail.reply.missing }}</span>
           </div>
           <ul v-if="detail.reply.evidence.length" class="reply-lines">
             <li v-for="(l, i) in detail.reply.evidence" :key="i"><span class="muted">{{ l.who }}</span>{{ l.text }}</li>

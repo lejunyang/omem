@@ -82,7 +82,11 @@ export const pullTables: Table[] = [
   // The id is derived from (message, person, emoji), so the same reaction on two devices meets.
   { name: "feedback", key: ["id"], newer: "coalesce(removed_at, at)" },
   // One row per answering run; a later label or revision wins.
-  { name: "reply_outcomes", key: ["run_id"], newer: "max(at, coalesce(labelled_at, ''), coalesce(revised_at, ''), coalesce(checked_at, ''))" },
+  { name: "reply_outcomes", key: ["run_id"], newer: "max(at, coalesce(labelled_at, ''), coalesce(revised_at, ''), coalesce(checked_at, ''), coalesce(swept_at, ''))" },
+  // The sweep of answers (agents/outcome-review.ts): tasks, kinds of task and data lookups, by their last change.
+  { name: "reply_tasks", key: ["id"], newer: "updated_at" },
+  { name: "task_types", key: ["id"], newer: "updated_at" },
+  { name: "data_queries", key: ["id"], newer: "updated_at" },
   // Feishu knowledge-base tree (sources/catalog.ts): what was read last wins.
   { name: "wiki_spaces", key: ["id"], newer: "max(coalesce(checked_at, ''), coalesce(updated_at, ''))" },
   { name: "wiki_nodes", key: ["token"], newer: "coalesce(checked_at, '')" },

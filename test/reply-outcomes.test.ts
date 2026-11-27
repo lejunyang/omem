@@ -132,7 +132,7 @@ describe("回复发出后有没有用", () => {
     line("m5", 6.5, "下午开会吗");
     expect(await labelReplies(app)).toBe(1);
     expect(replyOutcome(app, loose)!.evidence).toEqual([expect.objectContaining({ who: "本人", text: "我自己查到了，是配置没开" })]);
-    expect(replyLine(app, "oc_demo")).toBe("2 条里，解决了 2、被追问 0、被纠正 0、别人接手 0，其余看不出");
+    expect(replyLine(app, "oc_demo")).toBe("2 条里，解决了 2，其余看不出");
   });
 
   it("成员自己和机器人的会话：他说的话记在他名下，不算本人；飞书里带 @ 的同一句只算一次", async () => {

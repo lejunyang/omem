@@ -47,6 +47,7 @@
 - `save_note`：把本人明确要求保存的内容存为笔记原件，之后可检索和引用。
 - 本人对话在工作线下新建工作文件时，省略 `item` 也会在线的时间线留下文件引用。
 - `write_file(path, content, mode?, expires?, item?, rule?)`：写工作文件（原件 `work/<path>`）——长任务的当前成果、定时任务逐天累积的周报素材。`mode: "append"` 追加；`expires` 设过期（`30d`、日期，`never` 永久）；`item` / `rule` 挂到事项或规则上。放在哪个空间：给了 `space` 放那里；挂事项时放事项所在空间；在本人个人空间里为某个业务空间的事项、会话、绑定的群或规则工作时，自动放进那个业务空间（结果里会说明）；要留在个人空间就明确写 `space`。解决过的问题写成案例页：`write_page(kind: "case", page: "cases/<主题>")`。
+- `move_file(source, path?, space?, why)`：把工作文件挪到别的路径或空间（整理散落的文件时用，数据相关的放法见技能 data-sources）；id 不变，`src:` 引用照样能打开。要有原来和目标空间的编辑权。
 - `digest_sources` 整理存量材料：`parallel`（同时几批）、`batch`（每批几份）、`chars`（精读每批附多少字正文）；`after`（等另一个整理任务做完再开始，如先分级再精读）；`action: "pace"` 调整已有任务。
 
 ## 原件归档

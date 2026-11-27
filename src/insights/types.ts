@@ -23,5 +23,5 @@ export type Breakdown = {
 };
 export type Report = {
   from: string; to: string; timezone: string; owner: boolean; scenes: readonly string[]; sceneTable: Record<string, string>;
-  sections: Section[]; options: { spaces: string[]; people: string[]; profiles: string[]; models: string[]; bots: string[]; chats: string[] }; generatedAt: string;
+  sections: Section[]; options: { spaces: string[]; people: string[]; peopleNames?: Record<string, string>; profiles: string[]; models: string[]; bots: string[]; chats: string[] }; generatedAt: string;
 };

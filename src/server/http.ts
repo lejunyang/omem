@@ -1961,6 +1961,36 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const b = q(z.object({ label: z.string(), why: z.string().max(400).optional() }), req.body);
     return (await import("../agents/reply-outcomes.ts")).reviseReply(app, (req.params as { id: string }).id, b.label, "本人", b.why?.trim() || "本人在运行页改的");
   });
+  // The sweep of answers (agents/outcome-review.ts, docs/v2/reply-sweep.md): how far it is, and the owner
+  // starting it further back (a trial stretch first, `reset` to read a range again) or stopping that.
+  server.get("/api/replies/sweep", async () => (await import("../agents/outcome-review.ts")).sweepStatus(app));
+  server.post("/api/replies/sweep", async (req) => {
+    const b = q(z.object({ since: z.string().min(4), until: z.string().optional(), limit: z.number().int().min(1).max(1_000_000).optional(), perDay: z.number().int().min(1).max(5000).optional(), reset: z.boolean().optional() }), req.body);
+    return (await import("../agents/outcome-review.ts")).startSweepJob(app, b);
+  });
+  server.delete("/api/replies/sweep", async () => (await import("../agents/outcome-review.ts")).stopSweepJob(app));
+  // What the sweep made of the answers: tasks with their answers, and the data looked up, in a period.
+  server.get("/api/reply-tasks", async (req) => {
+    const o = q(z.object({ from: z.string().optional(), to: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }), req.query);
+    return (await import("../agents/outcome-review.ts")).listReplyTasks(app, o);
+  });
+  server.get("/api/data-queries", async (req) => {
+    const o = q(z.object({ from: z.string().optional(), to: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }), req.query);
+    return (await import("../agents/outcome-review.ts")).listDataQueries(app, o);
+  });
+  // Kinds of task (agents/task-types.ts): the sweep defines them as they come up; the owner keeps the list.
+  server.get("/api/task-types", async (req) => {
+    const o = q(z.object({ all: z.string().optional() }), req.query);
+    return (await import("../agents/task-types.ts")).listTaskTypes(app, { all: o.all === "1" });
+  });
+  server.post("/api/task-types", async (req) => {
+    const b = q(z.object({ name: z.string().min(2).max(40), parent: z.string().max(40).optional(), description: z.string().max(200).default(""), spaces: z.array(z.string()).max(50).optional() }), req.body);
+    return (await import("../agents/task-types.ts")).defineTaskType(app, { ...b, by: "owner" });
+  });
+  server.put("/api/task-types/:id", async (req) => {
+    const b = q(z.object({ name: z.string().min(2).max(40).optional(), description: z.string().max(200).optional(), parent: z.string().max(40).nullable().optional(), spaces: z.array(z.string()).max(50).optional(), status: z.enum(["active", "dropped"]).optional(), mergeInto: z.string().optional(), note: z.string().max(200).nullable().optional() }), req.body);
+    return (await import("../agents/task-types.ts")).updateTaskType(app, (req.params as { id: string }).id, b);
+  });
   server.get("/api/code/:id/improve", async (req) => {
     const { improvementOf } = await import("../agents/improve.ts");
     return improvementOf(app, (req.params as { id: string }).id);
@@ -2852,12 +2882,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { route: sourceRoute(app, id), history: archiveHistory(app, id) };
   });
   server.post("/api/sources/:id/move", async req => {
-    const b = q(z.object({ space: z.string(), hash: z.string(), reason: z.string().min(1).max(500) }), req.body);
+    const b = q(z.object({ space: z.string(), hash: z.string(), reason: z.string().min(1).max(500), path: z.string().min(1).max(200).optional() }), req.body);
     const id = (req.params as { id: string }).id;
-    // A working file is not archived by rules; the owner may still file it under another space.
+    // A working file is not archived by rules; the owner may still file it under another space or path.
     if (getSource(app, id).kind === "work") {
       if (getSource(app, id).hash !== b.hash) throw new HttpError(409, "原件已更新，请重新预览");
-      return (await import("../sources/work.ts")).moveWorkFile(app, id, b.space, b.reason);
+      return (await import("../sources/work.ts")).moveWorkFile(app, id, b.space, b.reason, "manual", b.path);
     }
     return (await import("../sources/archive.ts")).moveSource(app, id, b.space, b.reason, "manual", undefined, b.hash);
   });

@@ -746,19 +746,18 @@ export const configSchema = z.object({
       afterHours: z.number().min(1).max(72).default(6),
       threshold: z.number().min(0).max(1).default(0.6),
       /**
-       * The nightly second reading (agents/outcome-review.ts): answers one to `days` days old whose label
-       * came from the model are read again by the role outcome-reviewer with a day of what followed.
-       * At most `max` a night, `batch` to a run; `sample` of them picked at random among confident labels.
+       * The sweep (agents/outcome-review.ts, docs/v2/reply-sweep.md): every answer a day old, up to `days`
+       * days back, is read again by the role outcome-reviewer with its conversation, `batch` answers to a
+       * run, at most `max` answers a day (a job further back may allow more).
        */
       review: z.object({
         enabled: z.boolean().default(true),
-        max: z.number().int().min(1).max(200).default(30),
-        batch: z.number().int().min(1).max(30).default(10),
-        sample: z.number().int().min(0).max(50).default(5),
-        days: z.number().int().min(2).max(7).default(3),
-      }).default(() => ({ enabled: true, max: 30, batch: 10, sample: 5, days: 3 })),
-    }).default(() => ({ enabled: true, afterHours: 6, threshold: 0.6, review: { enabled: true, max: 30, batch: 10, sample: 5, days: 3 } })),
-  }).default(() => ({ check: true, outcome: { enabled: true, afterHours: 6, threshold: 0.6, review: { enabled: true, max: 30, batch: 10, sample: 5, days: 3 } } })),
+        max: z.number().int().min(1).max(5000).default(200),
+        batch: z.number().int().min(1).max(40).default(15),
+        days: z.number().int().min(2).max(14).default(3),
+      }).default(() => ({ enabled: true, max: 200, batch: 15, days: 3 })),
+    }).default(() => ({ enabled: true, afterHours: 6, threshold: 0.6, review: { enabled: true, max: 200, batch: 15, days: 3 } })),
+  }).default(() => ({ check: true, outcome: { enabled: true, afterHours: 6, threshold: 0.6, review: { enabled: true, max: 200, batch: 15, days: 3 } } })),
   notes: z.object({
     review: z.object({ enabled: z.boolean().default(true), batch: z.number().int().min(1).max(100).default(20) }).default(() => ({ enabled: true, batch: 20 })),
   }).default(() => ({ review: { enabled: true, batch: 20 } })),

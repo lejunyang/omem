@@ -97,20 +97,26 @@ export function listWorkFiles(app: App, opts: { item?: string; rule?: string; sp
  * Move a working file to another space, keeping its id (citations and `src:` references stay valid).
  * Used when the rule it belongs to changes space, or when the owner files it elsewhere by hand.
  */
-export function moveWorkFile(app: App, id: string, target: string, reason: string, mode: "manual" | "follow" = "manual") {
+/**
+ * Move a working file to another space, to another path, or both. The id stays, so `src:` citations still
+ * open it; the old place is not kept (a file's path is where it is filed, not part of what it says).
+ */
+export function moveWorkFile(app: App, id: string, target: string, reason: string, mode: "manual" | "follow" = "manual", path?: string) {
   const s = getSource(app, id);
   if (s.kind !== "work") throw new HttpError(400, "不是工作文件");
   if (s.deletedAt) throw new HttpError(409, "原件已删除");
   if (getSpace(app, target).kind === "worktree") throw new HttpError(400, "不能放进临时工作区");
-  if (s.spaceId === target) return s;
+  const uri = path ? workUri(path) : s.uri;
+  if (s.spaceId === target && uri === s.uri) return s;
   // A deleted file still holds its path (the tombstone): it makes way for the one moving in.
-  const there = one<{ id: string; deleted_at: string | null }>(app.db, "select id, deleted_at from sources where space_id = ? and uri = ? and id != ?", target, s.uri, id);
-  if (there && !there.deleted_at) throw new HttpError(409, `目标空间已有同路径的工作文件：${s.uri}`);
+  const there = one<{ id: string; deleted_at: string | null }>(app.db, "select id, deleted_at from sources where space_id = ? and uri = ? and id != ?", target, uri, id);
+  if (there && !there.deleted_at) throw new HttpError(409, `目标空间已有同路径的工作文件：${uri}`);
   if (there) purgeSource(app, there.id);
+  const oldName = s.uri.split("/").pop() ?? "";
   tx(app.db, () => {
-    run(app.db, "update sources set space_id = ? where id = ?", target, id);
+    run(app.db, "update sources set space_id = ?, uri = ?, title = case when title = ? then ? else title end where id = ?", target, uri, oldName, uri.split("/").pop() ?? oldName, id);
     run(app.db, "update chunks set space_id = ? where source_id = ?", target, id);
-    run(app.db, "insert into source_moves(source_id, from_space, to_space, reason, at, mode) values(?,?,?,?,?,?)", id, s.spaceId, target, reason, now(), mode);
+    run(app.db, "insert into source_moves(source_id, from_space, to_space, reason, at, mode) values(?,?,?,?,?,?)", id, s.spaceId, target, uri === s.uri ? reason : `${reason}（${s.uri.slice(5)} → ${uri.slice(5)}）`, now(), mode);
   });
   vectorIndex().evict([s.spaceId, target]);
   app.emit({ type: "changed", entity: "source", id, spaceId: target });

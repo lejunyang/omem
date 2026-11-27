@@ -107,6 +107,22 @@ describe("working files", () => {
     app.db.close();
   });
 
+  it("moves a working file to the path the data files are kept under: same id, the title follows the path", async () => {
+    const app = testApp();
+    createSpace(app, { id: "project-a", name: "项目 A" });
+    const ctx = agentCtx(app);
+    const id = idOf((await callTool(ctx, "write_file", { path: "investigations/退款/2026-11-26-uid-明细", content: "UID 清单" })).text);
+    const moved = await callTool(ctx, "move_file", { source: `src:${id}`, path: "数据/查数/2026-11-26 退款 UID 明细", space: "project-a", why: "查数的结果统一放在 数据/查数/" });
+    expect(moved.text).toContain(`已挪到空间 project-a 的 数据/查数/2026-11-26 退款 UID 明细（src:${id}）`);
+    expect(getSource(app, id)).toMatchObject({ spaceId: "project-a", uri: "work/数据/查数/2026-11-26 退款 UID 明细", title: "2026-11-26 退款 UID 明细" });
+    expect(sourceText(app, id)).toBe("UID 清单");
+    expect(one(app.db, "select reason from source_moves where source_id = ?", id)).toMatchObject({ reason: expect.stringContaining("investigations/退款/2026-11-26-uid-明细 → 数据/查数/2026-11-26 退款 UID 明细") });
+    expect((await callTool(ctx, "move_file", { source: id, why: "什么都不改" })).isError).toBe(true);
+    const note = idOf((await callTool(ctx, "write_file", { path: "数据/查数/2026-11-26 退款 UID 明细", content: "个人空间里的同名" })).text);
+    expect((await callTool(ctx, "move_file", { source: note, space: "project-a", why: "撞名" })).text).toContain("同路径");
+    app.db.close();
+  });
+
   it("suggests a case page when an item with a history of progress is closed", async () => {
     const app = testApp();
     const ctx = agentCtx(app);

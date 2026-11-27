@@ -2001,9 +2001,9 @@ def({
 def({
   name: "revise_reply_outcome",
   description:
-    "改判一条回复的结果：read_run 里“按后续消息标的结果”和你读到的后续消息对不上时用（那个标注是决策模型给的，会错）。label：resolved 提问的人接受了 / followup 同一件事被追问 / corrected 被指出不对 / taken_over 本人或别人自己答了 / unrelated 后面的话看不出。原来的标注保留，之后以你的为准；why 写一句依据（哪句话说明了什么）。",
+    "改判一条回复的结果：read_run 里“按后续消息标的结果”和你读到的后续消息对不上时用（那个标注是决策模型或回扫给的，会错）。label：resolved 提问的人接受了 / next 在结果上提了下一步（原来要的已经答到）/ supplement 原来要的没答全 / corrected 答错、答非所问、让重查 / taken_over 本人或别人自己答了 / unrelated 后面的话看不出。原来的标注保留，之后以你的为准；why 写一句依据（哪句话说明了什么）。",
   write: true,
-  schema: z.object({ run_id: z.string(), label: z.enum(["resolved", "followup", "corrected", "taken_over", "unrelated"]), why: z.string().trim().min(2).max(400) }),
+  schema: z.object({ run_id: z.string(), label: z.enum(["resolved", "next", "supplement", "corrected", "taken_over", "unrelated"]), why: z.string().trim().min(2).max(400) }),
   handler: async (ctx, a) => {
     const r = getRun(ctx.app, a.run_id);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
@@ -2018,33 +2018,38 @@ def({
 def({
   name: "review_reply_outcomes",
   description:
-    "交夜里复查回复结果的结论（只给 outcome-reviewer 用）：任务里的每条回答给一个结果和一句依据。和第一遍一样的记为同意，不一样的改判，第一遍的标注留着。label：resolved 提问的人接受了 / followup 同一件事被追问 / corrected 被指出不对 / taken_over 本人或别人自己答了 / unrelated 之后有话但看不出它有没有用 / silent 之后一天里没人就这件事说过话。why 写哪句话或哪个动作说明了什么。",
+    "交回扫的结论（只给 outcome-reviewer 用）：把这一段要判的回答分成件，一件交一项。每件：title 一句话说这件事（谁要什么）；task 接着做之前那件时写它的 id；answers 这件里的每次回答，label 是 resolved 接受了 / next 在结果上提了下一步（原来要的已经答到）/ supplement 原来要的没答全 / corrected 答错、答非所问、让重查 / taken_over 本人或别人自己做了 / unrelated 之后有话但看不出 / silent 一整天没人就这件事说话，why 写哪句话说明了什么，supplement 和 corrected 写 missing（缺的是什么，40 字内）；outcome 这件 done 做完了 / unfinished 没做完（note 写停在哪）/ handed_over 转给别人了 / unclear 看不出；type 用现有类型的名字，都不合适时写新名字并给 new_type（parent 上一级、description 一句定义）；topics 一到三个短主题；queries 这件里给出了从某个系统查到的数的，每次一条（question 问的是什么，definition 口径：时间段、去重方式、范围，sources 系统、表、看板或链接，result 结果或结果在哪）。可以分几次交，每次回答只交一次。",
   write: true,
   schema: z.object({
-    verdicts: z.array(z.object({
-      run_id: z.string(),
-      label: z.enum(["resolved", "followup", "corrected", "taken_over", "unrelated", "silent"]),
-      why: z.string().trim().min(2).max(400),
-    })).min(1).max(30),
+    tasks: z.array(z.object({
+      task: z.string().max(40).optional(),
+      title: z.string().trim().min(2).max(120),
+      answers: z.array(z.object({
+        run_id: z.string(),
+        label: z.enum(["resolved", "next", "supplement", "corrected", "taken_over", "unrelated", "silent"]),
+        why: z.string().trim().min(2).max(400),
+        missing: z.string().trim().max(80).optional(),
+      })).min(1).max(40),
+      outcome: z.enum(["done", "unfinished", "handed_over", "unclear"]),
+      note: z.string().trim().max(200).optional(),
+      type: z.string().trim().min(2).max(40),
+      new_type: z.object({ parent: z.string().trim().max(40).optional(), description: z.string().trim().min(4).max(200) }).optional(),
+      topics: z.array(z.string().trim().min(1).max(30)).max(5).optional(),
+      queries: z.array(z.object({
+        run_id: z.string(),
+        question: z.string().trim().min(2).max(200),
+        definition: z.string().trim().max(400).optional(),
+        sources: z.array(z.string().trim().max(200)).max(8).optional(),
+        result: z.string().trim().max(400).optional(),
+      })).max(20).optional(),
+    })).min(1).max(40),
   }),
   handler: async (ctx, a) => {
-    if (ctx.role !== "outcome-reviewer") throw new HttpError(403, "只有 outcome-reviewer 能交复查回复结果的结论");
-    const me = ctx.runId ? one<{ kind: string; input: string }>(ctx.app.db, "select kind, input from runs where id = ?", ctx.runId) : undefined;
-    if (me?.kind !== "outcome-review") throw new HttpError(400, "review_reply_outcomes 只在夜里复查回复结果的运行里用");
-    const { batchOf } = await import("./outcome-review.ts");
-    const { checkReply, REPLY_LABELS } = await import("./reply-outcomes.ts");
-    const picks = new Map(batchOf(me.input).map((p) => [p.runId, p]));
+    if (ctx.role !== "outcome-reviewer") throw new HttpError(403, "只有 outcome-reviewer 能交回扫的结论");
+    if (!ctx.runId) throw new HttpError(400, "review_reply_outcomes 只在回扫回答的运行里用");
+    const { submitTasks } = await import("./outcome-review.ts");
     const by = [ctx.agentProfile, ctx.model].filter(Boolean).join(" · ") || "outcome-reviewer";
-    return a.verdicts.map((v) => {
-      const p = picks.get(v.run_id);
-      if (!p) return `${v.run_id} 不在这次要复查的回答里，跳过`;
-      try {
-        const r = checkReply(ctx.app, v.run_id, { label: v.label, by, why: v.why, pick: p.pick });
-        return `${v.run_id} ${r.verdict === "confirmed" ? `同意：${REPLY_LABELS[v.label]}` : `改判为 ${REPLY_LABELS[v.label]}`}`;
-      } catch (e) {
-        return `${v.run_id} 跳过：${(e as Error).message}`;
-      }
-    }).join("\n");
+    return submitTasks(ctx.app, ctx.runId, by, a.tasks);
   },
 });
 
@@ -4744,6 +4749,25 @@ def({
     if (eventItem) (await import("../items/store.ts")).addItemEvent(ctx.app, eventItem, "note", `工作文件 ${r.uri}`, ctx.actor, [`src:${r.id}`], ctx.runId ?? undefined);
     if (ctx.runId) ctx.app.emit({ type: "run-event", runId: ctx.runId, seq: -1, event: { type: "change", data: { entity: "source", id: r.id }, at: now() } });
     return `${r.created ? "已新建" : r.status === "unchanged" ? "内容没变" : a.mode === "append" ? "已追加到" : "已更新"}工作文件 src:${r.id}（${r.uri}，${r.lines} 行${r.expiresAt ? `，${r.expiresAt.slice(0, 10)} 过期` : "，永久"}${a.item ? `，挂在事项 ${a.item}` : ""}${rule ? `，挂在规则 ${rule}` : ""}${followed}）`;
+  },
+});
+
+def({
+  name: "move_file",
+  description:
+    "把工作文件挪到别的路径或空间（按“数据相关的工作文件放哪”整理散落的文件时用）：id 不变，src: 引用照样能打开。source 是 src:<id> 或 id；path 新路径（不给就不改路径）；space 目标空间（不给就不换空间）；why 一句为什么挪。",
+  write: true,
+  schema: z.object({ source: z.string().min(2), path: z.string().trim().min(1).max(200).optional(), space: z.string().optional(), why: z.string().trim().min(2).max(200) }),
+  handler: async (ctx, a) => {
+    const id = a.source.replace(/^src:/, "").split("#")[0];
+    const s = getSource(ctx.app, id);
+    if (s.kind !== "work") throw new HttpError(400, "只能挪工作文件");
+    const from = writeSpace(ctx, s.spaceId, "sources.edit");
+    const to = writeSpace(ctx, a.space ?? s.spaceId, "sources.edit");
+    if (!a.path && to === from) throw new HttpError(400, "给 path 或 space：没有要改的");
+    const { moveWorkFile } = await import("../sources/work.ts");
+    const r = moveWorkFile(ctx.app, id, to, a.why, "manual", a.path);
+    return `已挪到空间 ${r.spaceId} 的 ${r.uri.replace(/^work\//, "")}（src:${r.id}）`;
   },
 });
 

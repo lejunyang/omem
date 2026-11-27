@@ -1292,6 +1292,8 @@ registerHandler("heartbeat", async (ctx) => {
   labelDecisions(app, { limit: 200 });
   // Not awaited: each label asks the decision model, and the patrol does not wait for that.
   void labelReplies(app).catch((e: Error) => console.warn("[omem] 判断回复有没有用失败：", e.message));
+  // The sweep reads answers a day old, one stretch at a time (agents/outcome-review.ts).
+  try { (await import("./outcome-review.ts")).scheduleOutcomeReview(app); } catch (e) { console.warn("[omem] 回扫回答排队失败：", (e as Error).message); }
   // 2. Watches and waits only need attention when new material arrived.
   const last = one<{ value: string }>(app.db, "select value from kv where key = 'heartbeat_at'")?.value ?? new Date(Date.now() - 86400_000).toISOString();
   const started = now();

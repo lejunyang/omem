@@ -1228,10 +1228,18 @@ input[type="number"].input::-webkit-outer-spin-button {
 .pg-miss { white-space: nowrap; }
 .pg-body { display: grid; gap: 8px; padding: 0 0 12px 24px; min-width: 0; }
 .pg-none { margin: 0; font-size: 13px; color: var(--muted); }
-.pg-tasks { list-style: none; margin: 0; padding: 0; display: grid; min-width: 0; }
-.pg-task { display: grid; grid-template-columns: 8px minmax(0, 1fr) minmax(0, 32%) auto; align-items: baseline; gap: 4px 12px; padding: 4px 0; min-width: 0; font-size: 13px; }
-.pg-task.deep { padding-left: 24px; }
-.pg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); align-self: center; }
+/* Every row shares the list's columns (subgrid), so what came back and the result line up from row to row
+   whatever the width of “已接受” or “29 条取舍”. A trial under its direction is indented inside the columns
+   (its dot moved, its text padded), never by padding the row, which would widen the dot column for all. */
+.pg-tasks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 8px minmax(0, 1fr) minmax(0, 32%) minmax(6em, auto); column-gap: 12px; min-width: 0; }
+.pg-task { display: grid; grid-template-columns: 8px minmax(0, 1fr) minmax(0, 32%) minmax(6em, auto); align-items: baseline; gap: 4px 12px; padding: 4px 0; min-width: 0; font-size: 13px; }
+@supports (grid-template-columns: subgrid) {
+  .pg-task { grid-column: 1 / -1; grid-template-columns: subgrid; }
+}
+.pg-task.deep .pg-main { padding-left: 24px; }
+.pg-task.deep .pg-dot { position: relative; left: 24px; }
+/* On the title's first line, not in the middle of a row the outputs make two or three lines tall. */
+.pg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); align-self: start; font-size: 14px; margin-top: 7px; margin-top: calc((1lh - 8px) / 2); }
 .pg-task.tone-owner .pg-dot { background: var(--warn); }
 .pg-task.tone-danger .pg-dot { background: var(--danger); }
 .pg-task.tone-running .pg-dot { background: var(--accent); }
@@ -1260,9 +1268,13 @@ a.pg-out { color: var(--accent); }
 .pg-prev { min-width: 0; }
 @media (max-width: 760px) {
   .pg-body { padding-left: 8px; }
-  .pg-task { grid-template-columns: 8px minmax(0, 1fr) auto; }
+  .pg-tasks { grid-template-columns: 8px minmax(0, 1fr) auto; }
+  @supports not (grid-template-columns: subgrid) {
+    .pg-task { grid-template-columns: 8px minmax(0, 1fr) auto; }
+  }
   .pg-outs { grid-column: 2 / -1; grid-row: 2; }
-  .pg-task.deep { padding-left: 16px; }
+  .pg-task.deep .pg-main, .pg-task.deep .pg-outs { padding-left: 16px; }
+  .pg-task.deep .pg-dot { left: 16px; }
 }
 /* ---------- settings 2 ---------- */
 /* A settings card someone may read but not change (SetCard `keys`): the same card, its controls out of
