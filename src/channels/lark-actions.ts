@@ -117,7 +117,7 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     const task = getLongTask(app, String(inter.payload.longTaskId));
     if (task.userId !== operatorUser() || !canWrite(app, task.userId, task.spaceId)) return { toast: { type: "error", content: "只有任务发起人可以操作" } };
     const action = String(value?.action ?? "");
-    if (action === "change-ai" || action === "换监工") {
+    if (action === "change-ai") {
       const { createAsk } = await import("../agents/asks.ts");
       createAsk(app, { conversationId: task.threadId, runId: null, userId: task.userId, question: "这件长任务接下来由哪个 AI 跟进？",
         context: { handler: "supervisor-ai", longTaskId: task.id, larkApprover: task.userId }, allowText: false,

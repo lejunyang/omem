@@ -255,11 +255,9 @@ describe("长任务跟进", () => {
       expect(getLongTask(app, task.id).ai).toMatchObject({ profile: "claude", model: "opus", effort: "high" });
 
       expect(patch.mock.calls.at(-1)![0].data.content).toContain("由 claude · opus · high 跟进");
-      for (const action of ["change-ai", "换监工"]) {
-        await handleCardAction(app, { operator: { open_id: "ou_editor" }, context: { open_message_id: "om_progress" }, action: { value: { action } } });
-      }
+      await handleCardAction(app, { operator: { open_id: "ou_editor" }, context: { open_message_id: "om_progress" }, action: { value: { action: "change-ai" } } });
       expect(listAsks(app, { conversationId: task.threadId, status: "pending" }).filter(ask => ask.handler === "supervisor-ai"))
-        .toEqual(Array(2).fill(expect.objectContaining({ question: "这件长任务接下来由哪个 AI 跟进？" })));
+        .toEqual([expect.objectContaining({ question: "这件长任务接下来由哪个 AI 跟进？" })]);
 
       const beforeEnd = patch.mock.calls.length;
       await send("/跟进 结束");
