@@ -1,3 +1,4 @@
+import { groupItems, policyScope, policyReason } from "./ai-policy.ts";
 import { lessonsText, previousLessonMaterial } from "./code-lessons.ts";
 import type { ViewComponent } from "./ui-blocks.ts";
 import type { App } from "../core/app.ts";
@@ -299,13 +300,14 @@ export function crossFamilyExecution(app: App, codeRunId: string, actor: Actor):
   if ((app.config.review.crossFamily ?? "prefer") === "off") return undefined;
   const own = resolveRunProfile(app, { actor });
   const profiles = allProfiles(app.config);
-  const others = !app.config.agents.routing.automatic ? [] : [...(app.config.review.rotation ?? []), ...app.config.agents.routing.candidates].flatMap((c) => {
+  const scope = policyScope(app, "review", undefined, "spec" in actor ? actor.spec : undefined);
+  const others = !app.config.agents.routing.automatic ? [] : [...(app.config.review.rotation ?? []), ...groupItems(app, "candidates")].flatMap((c) => {
     const p = profiles.find((p) => p.id === c.profile);
     if (!p || !backendAvailable(p, app.home)) return [];
     const model = c.model || p.model;
     const effort = c.effort || (model === p.model ? p.effort : undefined);
     const resolved = { ...p, model, effort };
-    if (!reviewProfileAllowed(resolved, app.config.review.excludedModels) || excluded(app, resolved) || downReason(app, resolved) || quotaAvoid(app, resolved)) return [];
+    if (policyReason(scope, resolved) || !reviewProfileAllowed(resolved, app.config.review.excludedModels) || excluded(app, resolved) || downReason(app, resolved) || quotaAvoid(app, resolved)) return [];
     return [{ profile: p.id, model, effort }];
   });
   const { pick } = reviewerFor(coderAI(app, codeRunId), { profile: own.id, model: own.model }, others);

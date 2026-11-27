@@ -1,3 +1,4 @@
+import { waitForPolicy, groupPick, policyScope, policyReason, scopedProfiles, pickOf, type PolicyScope } from "./ai-policy.ts";
 import { guardUrlNow } from "../remote/browser-guard.ts";
 import { audit } from "../auth/permissions.ts";
 import { credentialSucceeded, mayUseCredential, selectedCredential } from "./credentials.ts";
@@ -27,8 +28,8 @@ import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
 import { NetworkUnavailableError, networkReason, refreshForRun } from "./network-policy.ts";
-import { acquire, choosableProfiles, clearDown, dailyCapReached, downReason, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
-import { aiLabel, candidateProfiles, candidateWhen, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChoiceRecord, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
+import { acquire, hasRoom, choosableProfiles, clearDown, dailyCapReached, downReason, excluded, isModelQuotaMessage, isQuotaMessage, markOutOfQuota, noteFailure, outOfQuotaUntil } from "./capacity.ts";
+import { aiLabel, candidateProfiles, routingCandidates, candidateWhen, choiceEvent, chooseAI, fallbackOrder, ORDER_LABEL, type ChoiceRecord, type ChooseResult, type ChooseScene, type OrderSource } from "./choose-ai.ts";
 import { quotaAvoid, quotaPressure } from "./quota.ts";
 import { catalogEntry, installHint, PluginBackendUnavailable, pluginBackendStatus, referencedPluginProfiles } from "./catalog.ts";
 import { cloudAccess } from "./cloud-probe.ts";
@@ -739,6 +740,7 @@ const DELEGATING = ["run_agent", "ask_agent", "delegate_code", "review_branch", 
 function routingGuide(app: App, profile: AgentProfile) {
   const r = app.config.agents.routing;
   if (!r.automatic) return "";
+  const candidates = routingCandidates(app);
   const ai = (c: { profile: string; model?: string; effort?: string }) => [c.profile, c.model, c.effort].filter(Boolean).join(" / ");
   const cloud = choosableProfiles(app).some(p => backendCapabilities(p).where === "cloud");
   // What changes during a session (load, the time) is not written here: these instructions are sent
@@ -746,7 +748,7 @@ function routingGuide(app: App, profile: AgentProfile) {
   return [
     `你这次用的是 ${ai({ profile: profile.id, model: profile.model, effort: profile.effort })}；交办出去的运行不带 execution 时用对方档案的设置。`,
     ...(r.guidance.trim() ? [`本人的总体偏好：${r.guidance.trim()}`] : []),
-    ...(r.candidates.length ? ["本人列出的候选：", ...r.candidates.map((c) => `- ${ai(c)}：${candidateWhen(r.candidates, c)}`)] : []),
+    ...(candidates.length ? ["本人列出的候选：", ...candidates.map((c) => `- ${ai(c)}：${candidateWhen(candidates, c)}`)] : []),
     "偏好和候选里写了时段的（峰谷价格、排队高峰、某段时间不用），按每轮消息开头的现在时间对照着选。",
     "交办前用 list_ai_backends 看各模型现在的占用（正在用/上限）和近 7 天的完成、失败：同样合适时选空闲、失败少的，满了的会排队。",
     "它的 quota 是账号的套餐额度（各窗口已用百分比、多久后重置、周额度每天还能用多少）：标了 avoid 的账号快用完了，同样合适时选别的；本人偏好里写了额度条件的，按这些数字对照。",
@@ -823,10 +825,14 @@ export function quietAfterAll(app: App, runId: string | null, quietBefore: boole
  * chosen for it, the role's other configured backends, the fallbacks, then the owner's routing
  * candidates. Duplicates and options left out (limit 0, quota spent) are dropped.
  */
-export function failoverProfiles(app: App, actor: Actor, first: AgentProfile, own?: AgentProfile, userId?: string): AgentProfile[] {
+export function actorScope(app: App, actor: Actor, kind?: string) {
+  return "spec" in actor ? policyScope(app, kind ?? "agent", undefined, actor.spec) : policyScope(app, kind, actor.role);
+}
+
+export function failoverProfiles(app: App, actor: Actor, first: AgentProfile, own?: AgentProfile, userId?: string, scope: PolicyScope | null = actorScope(app, actor) ?? null): AgentProfile[] {
   const role = "spec" in actor ? "assistant" : (actor as { role: RoleName }).role;
-  const list = [first, ...(own ? [own] : []), ...roleAlternatives(app, role, first), ...fallbackProfiles(app, actor, first.id, undefined, userId).slice(1), ...candidateProfiles(app, undefined, userId).map(({ when: _, ...p }) => p as AgentProfile)];
-  return distinctProfiles(list).filter((p, i) => i === 0 || userId || !excluded(app, p));
+  const list = [first, ...(own ? [own] : []), ...roleAlternatives(app, role, first), ...fallbackProfiles(app, actor, first.id, undefined, userId, null).slice(1), ...candidateProfiles(app, undefined, userId).map(({ when: _, ...p }) => p as AgentProfile)];
+  return scopedProfiles(app, scope ?? undefined, distinctProfiles(list).filter((p, i) => i === 0 || userId || !excluded(app, p)));
 }
 
 /** Whether a failure is worth retrying on a fallback backend/model. */
@@ -858,6 +864,7 @@ export function fallbackProfiles(
   baseId: string,
   thread?: { model?: string | null; effort?: string | null },
   userId?: string,
+  scope: PolicyScope | null = actorScope(app, actor) ?? null,
 ): AgentProfile[] {
   const specs = allProfiles(app.config);
   const roleName = "spec" in actor ? null : (actor as { role: RoleName }).role;
@@ -879,7 +886,7 @@ export function fallbackProfiles(
     const p = make(f.profile, f.model, f.effort);
     if (p && (userId || !excluded(app, p)) && !chain.some((x) => x.id === p.id && x.model === p.model && x.effort === p.effort)) chain.push(p);
   }
-  return chain;
+  return scopedProfiles(app, scope ?? undefined, chain);
 }
 
 /** Run a role-defined agent turn with omem tools attached. */
@@ -892,6 +899,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   await refreshForRun(app);
   const row = input.runId ? one<{ kind: RunKind; input: string }>(app.db, "select kind, input from runs where id = ?", input.runId) : undefined;
   const runKind = row?.kind;
+  const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
+  const scope = actorScope(app, actor, input.reviewCheck || input.reviewLead ? "review" : runKind);
   const runInput = json<{ ai?: Execution; turnContext?: unknown; conversationId?: string; threadId?: string; ownAccountOnly?: boolean }>(row?.input ?? "{}", {});
   const ownAI = input.ownAI || runKind === "code" || runKind === "review";
   const member = input.role !== "guest" && input.role !== "gatekeeper" && !input.borrow && !input.shadow && !input.replay && isAiMember(app, input.userId!) ? input.userId : undefined;
@@ -901,13 +910,12 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const specified = !!(personal.profile || personal.model || personal.effort);
   const requested = input.execution ?? (ownAI ? undefined : runInput.ai);
   const coding = input.codingRecovery;
-  const execution = input.borrow || login || (specified && requested?.source === "auto") ? undefined : validateExecution(app, requested, input.userId, !!coding);
+  const execution = input.borrow || login || (specified && requested?.source === "auto") ? undefined : validateExecution(app, requested, input.userId, !!coding, scope ?? null);
   input = { ...input, ...executionArgs(execution) };
   if (login) input = { ...input, profileId: login.pick.profile, model: login.pick.model, effort: login.pick.effort, resumeSessionId: undefined };
   else if (!execution && specified) input = { ...input, profileId: personal.profile, model: personal.model, effort: personal.effort };
-  const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const tierProfiles = coding ? (["cheap", "standard", "strong"] as const).map(tier => {
-    const pick = app.config.agents.tiers[tier];
+    const pick = groupPick(app, tier, scope);
     if (!pick) return undefined;
     try { return resolveRunProfile(app, { actor, profileId: pick.profile, model: pick.model, effort: pick.effort }); }
     catch { return undefined; }
@@ -941,14 +949,16 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let chosen: ChooseResult | null = null;
   // Checks, replays and comparisons run on what their caller set and are not choices of their own.
   const codeReview = !!(input.reviewCheck || input.reviewLead || input.preCheck);
-  const internal = !!(input.borrow || input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName || input.ownAI);
+  const internal = !scope || !!(input.borrow || input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName || input.ownAI);
   const scene = input.choose ?? "tasks";
   const say = (text: string) => {
     const event = { type: "status" as const, text };
     if (input.onEvent) input.onEvent(event);
     else if (input.runId) addRunEvent(app, input.runId, "status", event);
   };
-  const recordChoice = (choice: ChoiceRecord) => {
+  let choiceRecorded: ChoiceRecord | undefined;
+  const recordChoice = (choice: ChoiceRecord) => { choiceRecorded = choice; };
+  const emitChoice = (choice: ChoiceRecord) => {
     const event = choiceEvent(choice);
     if (input.onEvent) input.onEvent(event);
     else if (input.runId) addRunEvent(app, input.runId, "status", event);
@@ -962,12 +972,12 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   } else if (login) notChosen("继续等待登录前的 AI 选择");
   else if (execution) notChosen(`${execution.source === "flow" ? "流程指定了" : execution.source === "user" ? member ? "成员指定了" : "本人指定了" : "助手交办时选了"} ${aiLabel(execution)}（${execution.reason}）`);
   else if (specified) notChosen("成员指定了个人默认 AI");
-  else if (runKind === "code" || runKind === "review") notChosen("编码和评审按各自角色的设置，不在运行前自动选");
+  else if (scope?.classId === "coding" || scope?.classId === "review") notChosen("编码和评审按各自角色的设置，不在运行前自动选");
   else if (input.resumeSessionId) notChosen("接着之前的 Agent 会话，沿用它的 AI");
   else if (input.profileId || input.model || input.effort) notChosen("发起这次运行时已经定了 AI");
   else {
     const current = resolveRunProfile(app, { actor });
-    chosen = await chooseAI(app, { scene, accepts: supports, task: input.task, who: input.spec?.name ?? input.role, current, userId: input.userId, signal: input.signal, onStatus: say, onRecord: recordChoice });
+    chosen = await chooseAI(app, { scene, scope, runId: input.runId ?? undefined, accepts: supports, task: input.task, who: input.spec?.name ?? input.role, current, userId: input.userId, signal: input.signal, onStatus: say, onRecord: recordChoice });
     const pick = chosen?.pick;
     if (pick) {
       own = current;
@@ -981,7 +991,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     id: `peer:${borrowed.device}:${borrowed.backend}`, peer: { id: borrowed.device, agent: borrowed.backend },
     transport: "acp", command: "omem", args: [], env: { OMEM_HOME: app.home }, idleTimeoutMs: 600000,
     model: input.execution?.model, effort: input.execution?.effort,
-  }) : member && raw ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, member).slice(1).filter(p => supports(p) && meetsFloor(p)) })
+  }) : member && raw ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, member, scope ?? null).filter(p => p !== raw).filter(p => supports(p) && meetsFloor(p)) })
     : accountProfile(app, { ...input, actor });
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : undefined;
@@ -997,7 +1007,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     scene: { kind: runKind, chat: !internal && (runKind === "ask" || runKind === "guest" || runKind === "lark-command"), awareness: !internal && !!runInput.turnContext },
     awarenessNote: internal ? undefined : withTools => awarenessNote(app, input.runId, withTools),
   });
-  if (execution && primary.id === execution.profile) validateExecution(app, { ...execution, model: primary.model, effort: primary.effort }, input.userId, !!coding);
+  if (execution && primary.id === execution.profile) validateExecution(app, { ...execution, model: primary.model, effort: primary.effort }, input.userId, !!coding, scope ?? null);
   // A run (a role's or an Agent 档案's) may move to its other configured backends when its model is
   // full, and to the fallbacks when the backend is busy, out of quota, or breaks down (failoverProfiles).
   // An AI the owner or the assistant named for this run is used first and alone while it can take the
@@ -1007,9 +1017,16 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // The order to move on in: the chooser's ranking by the owner's routing notes when it ran, then the
   // static order (the role's other backends, the fallbacks, the candidates) for whatever it did not rank.
   const single = !!input.boardAccess || !!input.shadow || execution?.source === "flow" || ((execution || specified || login) && app.config.agents.routing.pinnedFallback === "never");
-  const fallbacks = single ? [] : [...failoverProfiles(app, actor, primary, own, member), ...tierProfiles.filter((p): p is AgentProfile => !!p && backendAvailable(p, app.home))];
-  const candidates = distinctProfiles([primary, ...(single ? [] : chosen?.order ?? []), ...fallbacks]).flatMap((p, i) => {
-    if (i === 0) return [p];
+  const fallbacks = single ? [] : [...failoverProfiles(app, actor, primary, own, member, scope ?? null), ...tierProfiles.filter((p): p is AgentProfile => !!p && backendAvailable(p, app.home))];
+  const list = distinctProfiles([primary, ...(single ? [] : chosen?.order ?? []), ...fallbacks]);
+  const allowed = scopedProfiles(app, scope, list, !single);
+  const options = chosen && !single ? distinctProfiles([...list.filter(p => !policyReason(scope, p)), ...allowed]) : allowed;
+  // An explicit choice (including the chooser's first group) leads the allowed alternatives.
+  const primaryIndex = options.findIndex(p => p.id === primary.id && p.model === primary.model && p.effort === primary.effort);
+  if (primaryIndex >= 0 && (single || execution || chosen || specified)) options.unshift(...options.splice(primaryIndex, 1));
+  if (single) options.splice(1);
+  const candidates = options.flatMap(p => {
+    if (p === primary) return [p];
     if (!meetsFloor(p)) return [];
     if (!member) return !excluded(app, p) && !accountBlocked(app, input.userId ?? OWNER, p) ? [accountFor(app, input.userId, p)] : [];
     const plan = memberAccountPlan(app, member, p, runInput.ownAccountOnly);
@@ -1022,7 +1039,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     for (let k = candidates.length - 1; k >= 0; k--) if (accountOf(candidates[k])?.userId !== input.userId) candidates.splice(k, 1);
     if (!candidates.length) throw new Error("这是成员的线上的例行整理，只用成员自己的 AI 账号跑：没有登录了的、能隔离的后端");
   }
-  if (localOnly(app, input.spaceId)) {
+  if (candidates.length && localOnly(app, input.spaceId)) {
     if (lentByOthers(app, candidates[0])) throw new HttpError(400, `这个空间设了“仅本机”，不能用别人的 omem 借出的 AI（${candidates[0].id}）：给这次运行或这个角色换一个本机的后端`);
     for (let k = candidates.length - 1; k > 0; k--) if (lentByOthers(app, candidates[k])) candidates.splice(k, 1);
   }
@@ -1035,6 +1052,19 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     say(`跳过后端 ${p.id}：本次运行需要 ${requirement}，该后端没有 omem 工具通道`);
     return false;
   });
+  if (scope?.strict && (!chain.length || chain.every(p => !backendAvailable(p, app.home) || excluded(app, p) || !!downReason(app, p) || !hasRoom(app, p)))) {
+    await waitForPolicy(app, scope, input.runId);
+  }
+  if (choiceRecorded || (scope && (scope.use.length || scope.deny.length))) {
+    const reasons = list.flatMap(p => { const why = policyReason(scope, p); return why ? [aiLabel(pickOf(p)) + "（" + why + "）"] : []; });
+    const actual = chain[0];
+    emitChoice({
+      scene, outcome: "skipped", current: aiLabel(pickOf(primary)), reason: "按角色设置", ...choiceRecorded, ...(actual && { ai: pickOf(actual) }),
+      ...(scope && { class: scope.classId, scope: scope.groups.map(g => g.name), deny: scope.deny.map(d => d.selector), said: scope.said, excluded: [...new Set([...(choiceRecorded?.excluded ?? []), ...reasons])] }),
+      ...(actual && (scope?.use.length || scope?.deny.length) && { picked: aiLabel(pickOf(actual)), order: chain.map(p => aiLabel(pickOf(p))) })
+    });
+  }
+  if (!chain.length && scope?.deny.length) throw new Error(policyReason(scope, primary) ?? "范围内没有可用后端");
   if (!chain.length) throw new Error(`没有可交付这次任务的后端：需要 ${requirement}${codeReview && app.config.review.excludedModels?.length ? "，且模型须符合编码评审的限制" : ""}`);
   const primaryKept = primary === chain[0];
   const pinned = !!(execution || specified || login) && primaryKept;
@@ -1058,7 +1088,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const reorder = async (from: number, why: string) => {
     if (ordered || chain.length - from < 2) return;
     ordered = true;
-    const r = await fallbackOrder(app, { scene, who: input.spec?.name ?? input.role, from: chain[0], why, options: chain.slice(from), userId: member, signal: input.signal });
+    const r = await fallbackOrder(app, { scene, scope, who: input.spec?.name ?? input.role, from: chain[0], why, options: chain.slice(from), userId: member, signal: input.signal });
     chain.splice(from, chain.length - from, ...r.order);
     orderBy = r.by;
     orderReason = r.reason;
@@ -1191,7 +1221,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
             : nearlySpent ? `${firstWho}的额度快用完了（${nearlySpent}）`
             : `${firstWho}的模型已满`;
           const to = aiLabel({ profile: profile.id, model: profile.model, effort: profile.effort });
-          emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
+          emit({ type: "status", text: `${why}，改用 ${profile.name ?? profile.id}${profile.model ? ` · ${profile.model}` : ""}（${ORDER_LABEL[orderBy]}）`, failover: { inScope: !policyReason(scope, profile), from: aiLabel({ profile: chain[0].id, model: chain[0].model, effort: chain[0].effort }), to, why, orderBy: ORDER_LABEL[orderBy], ...(orderReason ? { orderReason } : {}), ...(pinned ? { pinned: true } : {}), ...(own ? { chosen: true } : {}) } });
         }
         if (profile.transport !== "doubao-cli" || doubaoFeatures(profile).acp)
           emit({ type: "status", text: aiUsageText(profile, prep.fullAccess ? "完全访问" : undefined, req.selection) });
@@ -1255,6 +1285,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         const movable = e instanceof SandboxStartError || (pinned && i === 0 ? busy || down || resumeLost : busy || untouched || down);
         if (e instanceof ResumeRunAt || (e as Error).message === "CANCELLED" || input.signal?.aborted || !movable) throw e;
         if (i === chain.length - 1) {
+          if (scope?.strict && untouched && (busy || down)) await waitForPolicy(app, scope, input.runId);
           if (coding) throw new Error(`没有可用且确认不低于原编码档位的后端，已停止，不降档：${(e as Error).message}`, { cause: e });
           throw e;
         }

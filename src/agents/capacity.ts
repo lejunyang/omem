@@ -50,7 +50,7 @@ export function backendUsedOf(app: App, p: AgentProfile) {
   return [...state(app).slots].filter((s) => s.key.startsWith(src) && !s.waiting).length;
 }
 
-const hasRoom = (app: App, p: AgentProfile) => usedOf(app, p) < limitOf(app, p) && backendUsedOf(app, p) < (backendLimitOf(app, p) ?? Infinity);
+export const hasRoom = (app: App, p: AgentProfile) => usedOf(app, p) < limitOf(app, p) && backendUsedOf(app, p) < (backendLimitOf(app, p) ?? Infinity);
 
 function take(app: App, p: AgentProfile, runId: string | null) {
   const s = state(app);

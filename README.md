@@ -359,6 +359,7 @@ npm install -g @omem-ai/cli
 | 某类事以后都按固定做法办，或交给专门的 Agent | 说“把这个做法记成技能”“建一个负责代码评审的 Agent”；在“Agent”页查看和编辑（＋ 新建是一张完整的表单）；`/as 名称 任务` 交给它，结果发回当前会话 |
 | 查看和编辑一个技能的附属说明、清单或脚本 | Agent → 技能：展开目录、切换文件、编辑保存；新建文件可填写多层路径。支持不超过 2 MB 的 UTF-8 文本，修改保留 Git 历史 |
 | 从新上下文开始任务，或把任务放在独立飞书话题里 | `/new 任务描述` 开新会话并立即执行；在飞书群聊或机器人私聊的主界面发送 `/topic 任务描述`（群里需 @ 机器人），以本条消息开启话题并保持独立上下文；话题内拒绝此指令 |
+| 日常整理要避开某个模型族 | 对助手说“日常整理别用 Gemini”，核对预览中列出的 AI 和近七天受影响次数，点确认。整理和故障接手遵循同一条规则，运行事件记录排除原因。 |
 | 某次任务想用特定 AI，或不同部分用不同模型 | 直接说“这次用某后端、模型和强度做……”；只影响这次交办。设置 → 后端与模型 → 任务选型写总体偏好，每个后端点开后写它和其中几个模型适合做什么，也能关闭自主选择；开着时候选会写进助手的环境说明，助手每次交办都对照着挑。没指定 AI 的运行也能在开始前自动选：配了决策模型时它一两秒从候选里挑一个，和助手的对话、规则交给的 Agent、交办和后台任务分别设“不选 / 有决策模型时选 / 总是选”（总是选在没有决策模型时让通用模型挑） |
 | 让 Agent 越用越顺，包括内置的独立评审 | 纠正它时说“以后评审先看错误处理”，助理记成它的专属记忆或挂一个技能；内置角色（独立评审、编码、整理…）在“Agent”页也能自定义，omem 更新后可合并或恢复源码版本（`omem roles`）；每晚复盘有纠正、失败或收到表情的档案，提示词和设置的改动提成建议等你采纳；技能草稿交给夜间复盘试用，默认两胜且胜多于负后启用（有胜场但未达门槛的技能提案继续保留，其他建议 14 天没处理自动过期） |
 | 别的工具往 Claude Code、Codex、TraeX 里装了几百个技能，Agent 看不清每个是做什么的 | Agent 页 → 技能 →“Agent 自带的技能”打开接管（或 `omem skills take-over --on`）：这些技能移进 omem 的库、按名称前缀归组，原件留备份可撤销；各 Agent 的技能目录里只留 omem 说明和每组一个总入口，Agent 先读总入口、按用途找到具体技能再读全文。以后工具升级又装回来的，每 10 分钟收一次，新版替换旧版、分组和开关不变。新收进来的或说明变了的技能由后台角色自动放进合适的分组和用途（你手动定过的不动）。左侧按 分组 → 用途 → 技能 浏览，打开一个分组可以改说明、移动技能、单个或整组停用，也可以点“让助手整理” |
@@ -397,12 +398,16 @@ npm install -g @omem-ai/cli
 命令由宿主直接解析；带任务的 `/new`、`/topic` 和 `/as` 会继续启动 AI，整理摘要也会调用模型。除标明飞书专用的命令外，各渠道通用：
 
 ```
-/help                      全部命令
+/help  /help all           五个常用命令 / 完整清单
 /new [任务]  /resume <id>   开新会话并执行任务（不带任务只开空白会话）/ 回到旧会话
-/topic <任务>               从飞书群聊或机器人私聊以本条消息开话题并执行任务，话题内拒绝
+/topic [AI] <任务>          从飞书群聊或机器人私聊开话题；如 /topic codex astra xhigh 整理方案
 /status  /stop  /sessions  当前状态 / 停止 / 最近的会话
 /link <id>  /summary  /compact   关联会话 / 查看摘要 / 从摘要重开 Agent 会话
 /space <id>  /agent <后端>  /as <档案> [任务]   切空间 / 换后端 / 让某个 Agent 档案接管或做一件事
+/codex astra xhigh         切换本会话的 AI；加“帮我查一下”只给这一轮用，也可换行写任务
+/强                        选择“强”组当前可用的 AI；自建组可用组名或 id
+/谷歌                      若后端的 aliases 配了“谷歌”，用这个词选择它
+/ai off                    清除本会话选择；/ai save codex astra xhigh 保存默认
 /model [模型] [effort=low|medium|high]   本会话临时换模型或思考强度；off 恢复；成员用 /agent save 或 /model save 保存个人默认
 /agents  /skills  /approve agent|skill <名称>
 /mode chat|topic  /idle <小时>
@@ -446,7 +451,7 @@ omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem skills [take-over [--dry-run] [--on]|restore|group <技能> <分组>]  # 技能分组；接管各 Agent 自带的技能目录，只留 omem 说明和每组的总入口
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
-omem decision report [--days N]                  # 决策场景的门槛、结果与校准建议
+omem decision report [--days N]                  # 决策场景的门槛与结果，按任务类别比较 AI 组选型完成率
 omem decision replay --scene <scene> --model <提供方ID>:<模型> [--days 30] [--limit 200]  # 只读回放比较
 omem replay [list] / omem replay run [--run <运行id>] [--axis M1]  # 夜间复盘：看状态和结论；立即复盘（不给 --run 时按选题规则挑 replay.max 题）
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）

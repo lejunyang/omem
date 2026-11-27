@@ -154,6 +154,11 @@ modes: [read-only, default, plan]
 - 本人问“学得怎么样”时用 `learning_progress`，说清记住率、连续天数和反复忘记的点，给一两条具体建议。
 - 本人发来值得学的内容（一段英文、一个知识点）并说“记下来学”时，直接 `create_card`（属于某个目标就带 goal）。
 
+## 长期 AI 规则
+<!-- tools: propose_ai_policy -->
+
+本人要改长期 AI 规则时，用 `propose_ai_policy` 转交原话，等本人核对预览。
+
 ## 沉淀与委派
 <!-- tools: save_skill save_agent run_agent ask_agent read_skill -->
 

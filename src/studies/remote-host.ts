@@ -1,3 +1,4 @@
+import { groupPick, policyScope } from "../agents/ai-policy.ts";
 import { existsSync, readFileSync } from "node:fs";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -37,7 +38,7 @@ export const peerTrialRequestSchema = z.object({
   env: z.object({ name: text(100), note: z.string().max(12000), thirdParty: z.boolean() }).strict(),
   repos: z.array(z.object({ name: z.string().max(200), remotes: z.array(z.string().min(1).max(500)).min(1).max(20), commit: z.string().regex(/^[0-9a-f]{7,64}$/i) }).strict()).max(10),
   // Names of this device's own profile and skill (agents/specs.ts NAME), never a path.
-  agent: z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/).optional(), skill: z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/).optional(), tier: z.enum(["strong", "standard", "cheap"]).optional(),
+  agent: z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/).optional(), skill: z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/).optional(), tier: z.string().min(1).optional(),
   minutes: z.number().int().min(1).max(24 * 60),
 }).strict();
 export type PeerTrialRequest = z.infer<typeof peerTrialRequestSchema>;
@@ -194,8 +195,8 @@ async function runPeerTrial(ctx: RunContext) {
         else notes.push(`这台的技能 ${req.skill} 没有启用，照任务做。`);
       } catch { notes.push(`这台没有技能 ${req.skill}，照任务做。`); }
     }
-    const pick = req.tier ? app.config.agents.tiers[req.tier] : undefined;
-    const execution = pick ? validateExecution(app, { ...pick, source: "flow", reason: `${req.from.node} 派来的试验写了档位 ${req.tier}` }) : undefined;
+    const pick = req.tier ? groupPick(app, req.tier, policyScope(app, "study-trial")) : undefined;
+    const execution = pick ? validateExecution(app, { ...pick, source: "flow", reason: `${req.from.node} 派来的试验写了档位 ${req.tier}` }, undefined, false, policyScope(app, "study-trial")) : undefined;
     const task = trialTask({
       header: `## ${req.from.node} 上的研究派来的一个试验：${req.from.title}`,
       dir: req.direction, env: req.env,

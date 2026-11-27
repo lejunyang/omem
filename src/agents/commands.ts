@@ -1,8 +1,11 @@
+import { aiCommand, applyAiSpec, checkCommandPick, type CommandTask } from "./ai-command.ts";
+import { parseAiSpec } from "./ai-spec.ts";
 import { effortsFor, userProbe, type ProbeInfo } from "./probe.ts";
 import { isAiMember } from "./accounts.ts";
 import { memberAi, memberThreadAi, setMemberAi, setMemberThreadAi } from "./member-ai.ts";
 import { threadActor } from "./sessions.ts";
-import { resolveRunProfile } from "./runner.ts";
+import { policyReason } from "./ai-policy.ts";
+import { actorScope, resolveRunProfile } from "./runner.ts";
 import { resolveModelOption } from "./models.ts";
 import { backendAvailable } from "./availability.ts";
 import type { App } from "../core/app.ts";
@@ -41,22 +44,25 @@ import {
  * Unknown `/words` fall through to the assistant as ordinary text.
  */
 type Ctx = { app: App; thread: Thread; args: string; inb: Inbound };
-type CommandResult = string | { thread: Thread; task: string; reply?: string };
+type CommandResult = string | CommandTask;
 type Command = { usage: string; help: string; card?: (c: Ctx) => Record<string, unknown> | Promise<Record<string, unknown>>; run: (c: Ctx) => CommandResult | Promise<CommandResult> };
 
 const chatKey = (t: Thread) => (t.key ?? "").split("#")[0];
 
 const commands: Record<string, Command> = {
   help: {
-    usage: "/help",
+    usage: "/help [all]",
     help: "列出命令",
-    run: () =>
-      [
+    run: ({ args }) => args.toLowerCase() !== "all" ? [
+      line("topic"), "/<后端> [模型] [强度] [任务] — 换 AI，带任务只用一轮；也可用组名",
+      "/监工 — 长任务监工", line("stop"), line("new"), "后端名、启动命令名、你加的别名都能当命令。完整清单见 /help all。",
+    ].join("\n") : [
+        "/<后端或组名> [模型] [强度] [任务] — 换 AI。后端名、启动命令名、你加的别名都能当命令。",
         "**会话**",
         ...["new", "topic", "status", "stop", "sessions", "resume", "link", "summary", "compact"].map(line),
         "",
         "**路由**",
-        ...["space", "agent", "model", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
+        ...["space", "agent", "model", "ai", "as", "agents", "skills", "approve", "mode", "idle", "watch"].map(line),
         "",
         "**快捷**",
         ...["remember", "todo", "search", "review", "runs", "whoami", "login", "演示", "演示结束"].map(line),
@@ -76,17 +82,22 @@ const commands: Record<string, Command> = {
     },
   },
   topic: {
-    usage: "/topic <任务>",
+    usage: "/topic [后端或组名 模型 强度] <任务>",
     help: "把飞书群聊或机器人私聊中的本条消息作为话题根消息，在独立上下文中执行任务；话题内不接受此指令",
     run: async ({ app, thread, args, inb }) => {
       if (inb.topicId) return "已经在话题中，不能使用 /topic。请直接发送任务，或回到聊天主界面发起新话题。";
       if (inb.channel !== "lark" || !inb.chatId || !inb.openTopic) return "请在飞书群聊或机器人私聊的主界面发送 /topic 任务描述（群里需 @ 机器人）；其他渠道可用 /new 任务描述。";
       if (!args) return "用法：/topic 任务描述";
+      const parsed = parseAiSpec(app, args, { userId: inb.userId });
+      if (parsed.unknown) return parsed.unknown;
+      const task = parsed.rest;
+      if (!task) return "用法：/topic [AI] 任务描述";
+      if (parsed.ai) checkCommandPick(app, thread, inb.userId ?? OWNER, parsed.ai, false);
       const topic = await inb.openTopic();
       const key = `${inb.chatId}#${topic.topicId}`;
-      const t = createThread(app, { spaceId: thread.spaceId, channel: "lark", key, title: truncate(args.replace(/\s+/g, " "), 60), userId: inb.userId ?? OWNER,
+      const t = createThread(app, { spaceId: thread.spaceId, channel: "lark", key, title: truncate(task.replace(/\s+/g, " "), 60), userId: inb.userId ?? OWNER,
         settings: { ...freshSettings(thread), isolatedTopic: true, lastMessageId: topic.messageId } });
-      return { thread: t, task: args };
+      return parsed.ai || parsed.ambiguous ? applyAiSpec(app, t, inb.userId ?? OWNER, parsed, "topic") : { thread: t, task };
     },
   },
   status: {
@@ -194,6 +205,22 @@ const commands: Record<string, Command> = {
       return `本会话改用空间 ${id}。`;
     },
   },
+  ai: {
+    usage: "/ai off | save <后端或组名> [模型] [强度]",
+    help: "恢复会话默认 AI，或保存这类任务的默认 AI",
+    run: ({ app, thread, args, inb }) => {
+      if (args.toLowerCase() !== "off") return aiCommand(app, thread, "/ai " + args, inb)!;
+      const userId = inb.userId ?? OWNER;
+      if (userId !== OWNER) {
+        if (!isAiMember(app, userId)) return "这个账号不能设置会话 AI。";
+        setMemberThreadAi(app, thread.id, userId, { profile: undefined, model: undefined, effort: undefined });
+      } else {
+        updateThread(app, thread.id, { settings: { profile: undefined, model: null, effort: null, ownerNamedAi: undefined, auto: null } });
+        releaseThreadSession(thread.id);
+      }
+      return "已清除你在本会话指定的 AI。";
+    },
+  },
   model: {
     card: (c) => modelCardCommand(c),
     usage: "/model [模型名] [effort=low|medium|high] | off | save <模型> [effort=…] | save off",
@@ -230,7 +257,7 @@ const commands: Record<string, Command> = {
         else setMemberThreadAi(app, thread.id, userId, { model: named, effort });
         return `已设置${save ? "你的个人默认" : "你在本会话的"}模型：${named ?? "默认模型"} / ${effort ?? "默认强度"}。`;
       }
-      const profileId = thread.settings.profile ?? app.config.agents.default ?? profiles[0]?.id;
+      const profileId = thread.settings.profile ?? app.config.agents.roles.assistant ?? app.config.agents.default ?? profiles[0]?.id;
       const profile = profiles.find((p) => p.id === profileId);
       const probe = cachedProbeSync(app, profileId, thread.userId);
       if (!text) {
@@ -253,7 +280,7 @@ const commands: Record<string, Command> = {
         ].filter(Boolean).join("\n");
       }
       if (text === "off") {
-        updateThread(app, thread.id, { settings: { model: null, effort: null } });
+        updateThread(app, thread.id, { settings: { model: null, effort: null, ownerNamedAi: thread.settings.profile ? thread.settings.ownerNamedAi : undefined } });
         releaseThreadSession(thread.id);
         return "本会话恢复使用默认模型和思考强度。";
       }
@@ -261,9 +288,15 @@ const commands: Record<string, Command> = {
       const { model, effort } = parseModelArgs(persist ? text.slice(5) : text);
       if (!model && !effort) return "没看出要改成什么。用法：/model 模型名 effort=low|medium|high";
       if (persist) {
+        const { actor } = threadActor(app, thread);
+        const prior = "spec" in actor ? actor.spec : app.config.agents.roleModels.assistant?.[profileId!];
+        const target = resolveRunProfile(app, { actor, profileId: "spec" in actor ? undefined : profileId,
+          model: model ?? prior?.model, effort: effort ?? prior?.effort });
+        const conflict = policyReason(actorScope(app, actor, "ask"), target);
+        if (conflict) return conflict;
         // An agent spec answering here carries its own model/effort: save it on the spec, since
         // role defaults never apply to spec runs.
-        const answering = thread.settings.spec ? findAgentSpec(app, thread.settings.spec) : null;
+        const answering = "spec" in actor ? actor.spec : null;
         if (answering) {
           saveAgentSpec(app, { name: answering.name, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }, "user");
           return `已把 Agent 档案 ${answering.name} 的默认改为 ${model ?? "模型不变"} / ${effort ?? "强度不变"}。`;
@@ -280,7 +313,7 @@ const commands: Record<string, Command> = {
         Object.assign(app.config, next);
         return `已把 ${role} 类任务用 ${profileId} 时的默认改为 ${model ?? "模型不变"} / ${effort ?? "强度不变"}（不影响其他任务和其他会话）。`;
       }
-      updateThread(app, thread.id, { settings: { model: model ?? null, effort: effort ?? null } });
+      updateThread(app, thread.id, { settings: { model: model ?? null, effort: effort ?? null, ownerNamedAi: true } });
       releaseThreadSession(thread.id);
       return `本会话改用 ${model ?? "默认模型"} / ${effort ?? "默认强度"}，下一条消息生效。群里只影响这个群/话题；/model off 恢复。`;
     },
@@ -309,7 +342,7 @@ const commands: Record<string, Command> = {
       }
       if (!id) return `当前：${thread.settings.profile ?? "默认"}\n可选：${profiles.map((p) => `${p.id}${p.model ? `(${p.model})` : ""}`).join(", ")}`;
       if (id !== "default" && !profiles.some((p) => p.id === id)) return `没有后端 ${id}。可选：${profiles.map((p) => p.id).join(", ")}`;
-      updateThread(app, thread.id, { settings: { profile: id === "default" ? undefined : id } });
+      updateThread(app, thread.id, { settings: { profile: id === "default" ? undefined : id, ownerNamedAi: id !== "default" || thread.settings.model || thread.settings.effort ? true : undefined } });
       releaseThreadSession(thread.id);
       return `本会话改用 ${id === "default" ? "默认后端" : id}。`;
     },
@@ -598,11 +631,13 @@ export function parseCommand(text: string): { name: string; args: string } | nul
 /** Run a slash command; null when the text is not a known command. */
 export async function runCommand(app: App, thread: Thread, text: string, inb: Inbound): Promise<CommandResult | null> {
   const p = parseCommand(text);
-  if (!p) return null;
-  const cmd = commands[p.name];
-  if (!cmd) return null;
+  const cmd = p && Object.hasOwn(commands, p.name) ? commands[p.name] : undefined;
   try {
-    return await cmd.run({ app, thread, args: p.args, inb });
+    if (inb.asker || inb.speaker || inb.fromAsk || inb.meta) {
+      if (!cmd || ["ai", "agent", "model", "topic"].includes(p!.name)) return null;
+    }
+    if (cmd && p) return await cmd.run({ app, thread, args: p.args, inb });
+    return aiCommand(app, thread, text, inb);
   } catch (e) {
     return `命令失败：${(e as Error).message}`;
   }
