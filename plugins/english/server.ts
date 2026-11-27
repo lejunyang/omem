@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PluginApi, PluginContext } from "../../src/plugins/types.ts";
+import type { PluginApi, PluginContext, PluginStore } from "../../src/plugins/types.ts";
 import { material, expression, useMaterials } from "./materials.ts";
 import { applyAttempt, applyPoint, applySpeaking, LEVELS, normalize, PASS, pickFromBank, SKILLS, snapshot, snapshotText, wordAccuracy, type Attempt, type BankEntry, type SpeakingAssessment, type SpeakingRecord } from "./learner.ts";
 
@@ -113,6 +113,19 @@ const lesson = z.object({
 type Lesson = z.infer<typeof lesson> & { date: string; updatedAt: string };
 const lessonDay = (ctx: PluginContext) => new Date().toLocaleDateString("sv-SE", { timeZone: ctx.app.config.timezone });
 const lessonLink = (date: string) => `#/plugin/english?lesson=${date}`;
+const lessonBankKey = (date: string, i: number) => `${date}:${i + 1}`;
+
+function dropLessonBank(store: PluginStore, lesson: Lesson) {
+  lesson.quiz.items.forEach((_, i) => store.delete("bank", lessonBankKey(lesson.date, i)));
+}
+
+function makeRoomForLesson(store: PluginStore, itemCount: number) {
+  const excess = store.count("bank") + itemCount - BANK_MAX;
+  if (excess <= 0) return;
+  // Keep ordinary bank questions. Older lesson questions remain playable from their dated lesson.
+  const older = store.list<BankEntry>("bank", { limit: BANK_MAX + 20 }).reverse().filter(r => r.data.lessonDate);
+  for (const r of older.slice(0, excess)) store.delete("bank", r.key);
+}
 
 function bankItem(it: Item) {
   const { id: _id, ...rest } = it;
@@ -339,14 +352,9 @@ export default function register(api: PluginApi) {
       ctx.store.transaction(() => {
         useMaterials(ctx, [...a.expressions, ...a.quiz.items, a.speaking], warnings, at);
         const previous = ctx.store.get<Lesson>("lessons", date);
-        previous?.quiz.items.forEach((_, i) => ctx.store.delete("bank", `${date}:${i + 1}`));
-        // Keep ordinary bank questions. Older lesson questions remain playable from their dated lesson.
-        const excess = ctx.store.count("bank") + a.quiz.items.length - BANK_MAX;
-        if (excess > 0) {
-          const older = ctx.store.list<BankEntry>("bank", { limit: BANK_MAX + 20 }).reverse().filter(r => r.data.lessonDate);
-          for (const r of older.slice(0, excess)) ctx.store.delete("bank", r.key);
-        }
-        a.quiz.items.forEach((it, i) => ctx.store.put("bank", `${date}:${i + 1}`, {
+        if (previous) dropLessonBank(ctx.store, previous);
+        makeRoomForLesson(ctx.store, a.quiz.items.length);
+        a.quiz.items.forEach((it, i) => ctx.store.put("bank", lessonBankKey(date, i), {
           item: bankItem(it), scene: a.theme, lessonDate: date, addedAt: at,
         } satisfies BankEntry));
         ctx.store.put("lessons", date, { ...a, date, updatedAt: at } satisfies Lesson);
@@ -367,7 +375,7 @@ export default function register(api: PluginApi) {
         if (!current) throw new Error("这一天还没有课程");
         return ctx.store.transaction(() => {
           const blockId = ctx.present("quiz", current.quiz, a.session_id);
-          current.quiz.items.forEach((_, i) => ctx.store.delete("bank", `${current.date}:${i + 1}`));
+          dropLessonBank(ctx.store, current);
           return JSON.stringify({ drawn: true, blockId, bank: ctx.store.count("bank") });
         });
       }

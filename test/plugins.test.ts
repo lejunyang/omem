@@ -271,7 +271,7 @@ describe("plugins", () => {
     const update = await callTool(ctx, "english_lesson", { ...lesson, expressions: [{ ...expr, material }], speaking: { ...lesson.speaking, material }, quiz: { ...quiz, items: [{ ...quiz.items[0], material }] } });
     expect(update.isError, update.text).toBe(false);
     expect(store.count("lessons")).toBe(1);
-    expect(store.list("bank")).toMatchObject([{ data: { lessonDate: date, item: { material } } }]);
+    expect(store.list("bank")).toMatchObject([{ key: `${date}:1`, data: { lessonDate: date, item: { material } } }]);
     expect(store.get("lessons", date)).toMatchObject({ expressions: [{ ...expr, material }], speaking: { material } });
     const bad = await callTool(ctx, "english_lesson", { ...lesson, quiz: { ...quiz, items: [{ ...quiz.items[0], answer: 99 }] } });
     expect(bad.isError).toBe(true);
@@ -282,7 +282,9 @@ describe("plugins", () => {
     expect(drawn).toMatchObject({ drawn: true, bank: 0 });
     expect(sessionView(app, env, conversationId, "owner").blocks[0].data.items[0].material).toEqual(material);
     for (let i = 0; i < 300; i++) store.put("bank", `ordinary-${i}`, { item: quiz.items[0], scene: "点餐" });
+    store.put("bank", "2000-01-01:1", { item: quiz.items[0], lessonDate: "2000-01-01", scene: "点餐" });
     expect((await callTool(ctx, "english_lesson", lesson)).isError).toBe(false);
+    expect(store.get("bank", "2000-01-01:1")).toBeNull();
     expect(store.count("bank")).toBe(304);
     expect((await callTool(ctx, "english_lesson", lesson)).isError).toBe(false);
     expect(store.count("bank")).toBe(304);
