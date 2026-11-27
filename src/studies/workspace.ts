@@ -105,7 +105,8 @@ export async function checkoutManaged(app: App, owner: string, repo: Space, base
   owned(app, owner, wt);
   const path = workDirOf(wt);
   const top = await checked(path, ["rev-parse", "--show-toplevel"]);
-  if (resolve(top) !== resolve(path)) throw new Error("工作区根目录不匹配");
+  // Git reports the physical path; the data directory may sit under a linked one (e.g. /home on another disk).
+  if (realpathSync(top) !== realpathSync(path)) throw new Error("工作区根目录不匹配");
   await checked(path, ["checkout", "-q", "--detach", "--force", base]);
   await checked(path, ["reset", "--hard", base]);
   await checked(path, ["clean", "-ffdqx"]);

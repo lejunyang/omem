@@ -168,6 +168,20 @@ describe("研究的工作区", () => {
       expect(String(getRun(f.app, f.stage().by!).input.cwd)).toContain("workspaces");
     } finally { for (const a of apps.splice(0)) { a.events.emit("close"); for (const r of all<{ item_id: string }>(a.db, "select item_id from item_flows where ended_at is null")) await stopFlow(a, r.item_id); await new Promise((r) => setImmediate(r)); a.db.close(); } rmSync(linked, { force: true, recursive: false }); rmSync(real, { recursive: true, force: true }); }
   });
+  it("数据目录在链接过的路径下、槽位占满时，自建的工作区也能用", async () => {
+    const real = mkdtempSync(join(tmpdir(), "omem-real-")), linked = `${real}-link`;
+    symlinkSync(real, linked, "junction"); mkdirSync(join(real, "home"));
+    try {
+      const f = await setup(1, undefined, join(linked, "home")), repo = getSpace(f.app, "repo");
+      for (let n = 0; n < 4; n++) {
+        const r = createRun(f.app, { kind: "code", title: "占用工作区", spaceId: "project", input: { repos: ["repo"] } });
+        expect(await leaseWorkspaceAsync(f.app, repo, r.id, join(f.app.runsDir, r.id, "work", "repo"))).not.toBeNull();
+      }
+      await f.select(); const r = getRun(f.app, f.stage().by!);
+      expect(trials(f.app, f.item.id)[0].result ?? "").not.toBe("blocked");
+      expect(worktreesOf(f.app, r.id)[0].slot).toBeUndefined(); expect(r.input.cwd).toBe(join(f.app.runsDir, r.id, "work", "repo"));
+    } finally { for (const a of apps.splice(0)) { a.events.emit("close"); for (const r of all<{ item_id: string }>(a.db, "select item_id from item_flows where ended_at is null")) await stopFlow(a, r.item_id); await new Promise((r) => setImmediate(r)); a.db.close(); } rmSync(linked, { force: true, recursive: false }); rmSync(real, { recursive: true, force: true }); }
+  });
   it("入队就唤醒的 worker 等工作区准备完，再读当前的运行目录", async () => {
     const f = await setup(1); let worker: Promise<unknown> | undefined;
     const fake = vi.spyOn(runner, "runRole").mockImplementation(async (_app, input) => {
