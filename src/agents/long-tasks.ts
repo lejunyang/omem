@@ -128,16 +128,7 @@ function requireOpen(task: LongTask) {
 }
 
 /** Caller has authenticated the owner of this task (HTTP, command or confirmation card). Budget fields are new totals. */
-export async function changeLongTask(app: App, id: string, command: LongTaskCommand): Promise<LongTask> {
-  const task = saveLongTaskChange(app, id, command);
-  if (command.action !== "supplement" && command.action !== "ai") {
-    const { refreshSupervisorCard } = await import("./supervisor-report.ts");
-    await refreshSupervisorCard(app, id);
-  }
-  return task;
-}
-
-function saveLongTaskChange(app: App, id: string, command: LongTaskCommand): LongTask {
+export function changeLongTask(app: App, id: string, command: LongTaskCommand): LongTask {
   const c = parse(longTaskCommandSchema, command);
   return withinTx(app.db, () => {
     const task = getLongTask(app, id);
@@ -182,7 +173,7 @@ function saveLongTaskChange(app: App, id: string, command: LongTaskCommand): Lon
 }
 
 /** Apply only the fields accepted on the owner's confirmation card. Drafts stay inert until there is a completion criterion. */
-export function confirmLongTaskBrief(app: App, id: string, changes: Partial<Brief>, budget?: Budget): LongTask {
+export function confirmLongTaskBrief(app: App, id: string, changes: Partial<Brief>): LongTask {
   const patch = parse(briefSchema.partial(), changes);
   return withinTx(app.db, () => {
     const task = getLongTask(app, id);
@@ -190,8 +181,6 @@ export function confirmLongTaskBrief(app: App, id: string, changes: Partial<Brie
     requireTaskWrite(app, task);
     const brief = { ...task.brief, ...patch };
     if (!brief.doneWhen.some(s => s.trim())) throw new HttpError(400, "请填写至少一条完成条件");
-    if (budget && (budget.hours !== task.budget.hours || budget.codeRounds !== task.budget.codeRounds || budget.dailyWakes !== task.budget.dailyWakes))
-      saveLongTaskChange(app, id, { action: "budget", budget });
     const at = now();
     run(app.db, "update long_tasks set brief=?, confirmed_at=?, status=case when status='draft' then 'active' else status end, updated_at=? where id=?",
       JSON.stringify(brief), at, at, id);

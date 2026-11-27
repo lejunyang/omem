@@ -789,7 +789,6 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   /** `approved`: the owner let a refused guest through (its records were kept the first time). */
   const handle = async (m: Inbound, approved?: { by: string }) => {
     let ruled: Promise<void> | null = null;
-    let supervisorThreadId: string | undefined;
     // Someone the owner added by email or name, talking to the bot for the first time: the account
     // takes this open_id now (lark-identity.ts), so the answer is a user's, not a guest's.
     if (!extra && !m.fromApp && (m.mentionsBot || m.chatType === "p2p") && !who(m)) {
@@ -809,25 +808,17 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       // Another omem bot's post is material here; a hand-off to this bot comes through relayMentions.
       if (postedByOmem(m.messageId)) return;
       if (!m.fromApp) personSpoke(m.chatId, m.topicId);
-      // In the work topic the initiator can stop their own task without mentioning this bot again.
-      if (!m.fromApp && m.type === "text" && m.topicId && /^\/监工\s+(暂停|结束)$/.test(m.text.trim())) {
-        supervisorThreadId = one<{ id: string }>(app.db, `select c.id from conversations c
-          join long_tasks t on t.thread_id=c.id
-          where c.channel=? and c.external_id=? and c.status='active' and t.user_id=?
-          order by c.updated_at desc limit 1`, channel, `${m.chatId}#${m.topicId}`, who(m))?.id;
-      }
-      const addressed = m.mentionsBot || m.followsAsk || !!supervisorThreadId;
       // A person @-ing the bot asks it directly, and it answers (a user, or a guest when allowed):
       // the rules (waits, silent checks) are for what nobody asked and step aside.
       // The same goes for a watch on the chat: one answer, from the conversation the question was asked in.
-      if (addressed && !m.fromApp && (who(m) || guestsAllowed(app, "group"))) {
+      if ((m.mentionsBot || m.followsAsk) && !m.fromApp && (who(m) || guestsAllowed(app, "group"))) {
         markAddressed(app, `lark:${m.messageId}`);
         if (keeps) answeredDirectly(app, m.chatId, m.messageId);
       } else if (keeps) {
         ruled = dispatchToRules(m).catch(() => {});
         await routeWatchedMessages(app, m.chatId, groupName(m.chatId), [{ id: m.messageId, time: m.createTime, sender: m.senderName, senderId: m.senderId, text: m.text, topicId: m.topicId, mentions: m.mentions }], { botOpenId });
       }
-      if (!addressed) return;
+      if (!m.mentionsBot && !m.followsAsk) return;
     }
     if (!ownerOpenId()) {
       await reply(m.chatId, extra
@@ -869,7 +860,6 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
         app,
         {
           channel,
-          conversationId: supervisorThreadId,
           chatId: m.chatId,
           topicId: m.topicId,
           isGroup: m.chatType === "group",
