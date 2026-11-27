@@ -98,6 +98,14 @@ export function classifyError(providerKind: string, status: number, body: string
   return { kind: kind ?? byWords(status, `${code} ${message}`), code, message };
 }
 
+/** A minute allowance, distinct from bursts, concurrency limits and generic 429 responses. */
+export function isMinuteRateLimit({ kind, code, message }: ProviderError) {
+  return kind === "rate" && (
+    /^(ModelAccount(?:Rpm|Tpm|FlexTpm|Ipm)RateLimitExceeded|APIAccountRpmRateLimitExceeded|RateLimitExceeded\.Endpoint(?:RPM|TPM|FlexTPM)Exceeded)$/i.test(code)
+    || /\b(?:RPM|TPM|IPM)\b|per[ -]minute|每分钟/i.test(message)
+  );
+}
+
 /** Until when a provider's backends or models are kept out of the way after an error of this kind; null: not at all. */
 export function pauseFor(kind: ErrorKind, at: number, nextMidnight: (at: number) => number): number | null {
   if (kind === "rate") return at + 60_000;

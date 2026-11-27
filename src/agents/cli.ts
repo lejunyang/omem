@@ -5,6 +5,7 @@ import { accountOf } from "./sandbox.ts";
 import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
 import { keyEnv } from "../core/ai-keys.ts";
+import { registerRelayClient } from "../core/ai-relay-addr.ts";
 import { backendProgram } from "./backend-names.ts";
 import { codexNoPluginPrefetch } from "./codex-launch.ts";
 
@@ -64,7 +65,16 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
   if (req.signal?.aborted) throw new Error("CANCELLED");
   const isClaude = profile.transport === "claude-cli";
   const args = isClaude ? claudeArgs(profile, req) : codexArgs(profile, req);
-  const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => launch(profile.command, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox: req.ownSandbox, env: { ...profile.env, ...keyEnv(profile), ...req.mcp?.env, ...req.env }, sandbox }));
+  let touch = () => {};
+  const relay = profile.keyRelay ? registerRelayClient(profile.id, (text) => {
+    touch();
+    emit({ type: "status", text });
+  }) : undefined;
+  const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => launch(profile.command, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox: req.ownSandbox, env: { ...profile.env, ...keyEnv(profile, relay?.token), ...req.mcp?.env, ...req.env }, sandbox })).catch((error) => {
+    relay?.close();
+    throw error;
+  });
+  if (relay) child.once("close", relay.close);
   child.stdin.end(req.prompt);
   let text = "";
   // Text between tool calls; the last segment is the reply proper (see replyFromSegments).
@@ -80,6 +90,7 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
       stop(child);
       reject(new Error("Agent 长时间没有活动，已停止"));
     });
+    touch = watchdog.touch;
     const onAbort = () => {
       stop(child);
       child.once("exit", () => reject(new Error("CANCELLED")));

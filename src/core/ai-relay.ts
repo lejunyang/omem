@@ -3,10 +3,11 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { App } from "./app.ts";
 import { allProfiles, providerFormats, type AgentProfile } from "./config.ts";
 import { keyOf } from "./ai-keys.ts";
-import { relayTokenOk } from "./ai-relay-addr.ts";
+import { relayActivity, relayTokenOk } from "./ai-relay-addr.ts";
 import { markDown, markOutOfQuota, outOfQuotaList, quotaResetAt } from "../agents/capacity.ts";
 import { agentRunError } from "../agents/types.ts";
 import { classifyError, type ErrorKind } from "./ai-errors.ts";
+import { estimatedAiTokens, MINUTE_LIMIT_EXHAUSTED, requestWithAiLimit, streamWithAiUsage } from "./ai-request.ts";
 import { notify } from "./notify.ts";
 
 /**
@@ -17,8 +18,8 @@ import { notify } from "./notify.ts";
  * "exceeded retry limit", Claude Code retries for minutes), so omem reads them here and acts by
  * their kind (core/ai-errors.ts, by the provider's own codes):
  *
- * - `rate`: waited out here a few times; still there, passed on as 429 for the agent's own
- *   back-off, and the key set aside for a minute so new runs pick other backends first.
+ * - `rate`: configured minute limits wait in the key/model queue. Other rate errors use short
+ *   retries. If still refused, pass on the 429 and set the key aside for new runs.
  * - `daily`: the key's backends left out until the owner's midnight.
  * - `quota` / `auth`: left out until a check on the API key page passes (a day at most), the owner
  *   told once. `daily` and `quota` are passed on as 400, which no agent retries, so the run ends in
@@ -150,11 +151,24 @@ export function onKeyModels(profile: Pick<AgentProfile, "keyModels" | "model">, 
   }
 }
 
+const INFERENCE_PATHS = new Set([
+  "responses", "responses/compact", "chat/completions", "completions", "messages", "embeddings", "rerank", "images/generations",
+]);
+function inferenceBody(rest: string, body: Buffer | undefined) {
+  if (!body || !INFERENCE_PATHS.has(rest.replace(/^v1\//, ""))) return;
+  try {
+    const fields = JSON.parse(body.toString("utf8"));
+    if (typeof fields?.model === "string") return fields as Record<string, unknown> & { model: string };
+  } catch {}
+}
+
 export async function relayRequest(app: App, req: FastifyRequest, reply: FastifyReply) {
   const { provider, backend, format } = req.params as { provider: string; backend: string; format: string };
   const rest = (req.params as Record<string, string>)["*"] ?? "";
-  const given = req.headers["x-api-key"] ?? (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : undefined);
-  if (!relayTokenOk(backend, Array.isArray(given) ? given[0] : given)) return reply.code(401).send({ error: { code: "omem_relay_token", message: "omem 转发：令牌不对（只给 omem 启动的后端用）" } });
+  const header = req.headers["x-api-key"] ?? (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : undefined);
+  const given = Array.isArray(header) ? header[0] : header;
+  const activity = relayActivity(backend, given);
+  if (!activity && !relayTokenOk(backend, given)) return reply.code(401).send({ error: { code: "omem_relay_token", message: "omem 转发：令牌不对（只给 omem 启动的后端用）" } });
   const p = app.config.ai.providers.find((x) => x.id === provider);
   const profile = allProfiles(app.config).find((x) => x.id === backend && x.keyRef === provider);
   const upstream = p && (format === "openai" || format === "anthropic") ? providerFormats(p)[format] : undefined;
@@ -168,24 +182,48 @@ export async function relayRequest(app: App, req: FastifyRequest, reply: Fastify
   // A vendor's own Anthropic API takes the key as x-api-key; third parties (Ark and the like) want Bearer.
   if (format === "anthropic" && p.kind === "anthropic") headers["x-api-key"] = key;
   else headers.authorization = `Bearer ${key}`;
-  const body = onKeyModels(profile, req.method === "GET" || req.method === "HEAD" ? undefined : (req.body as Buffer | undefined));
+  let body = onKeyModels(profile, req.method === "POST" ? req.body as Buffer | undefined : undefined);
+  const fields = p.limits ? inferenceBody(rest, body) : undefined;
   const gone = new AbortController();
   reply.raw.on("close", () => { if (!reply.raw.writableFinished) gone.abort(); });
 
-  let r: Response;
   for (let attempt = 0; ; attempt++) {
+    const send = () => relayFetch(url, { method: req.method, headers, body: body ? new Uint8Array(body) : undefined, signal: gone.signal });
+    let result;
     try {
-      r = await relayFetch(url, { method: req.method, headers, body: body ? new Uint8Array(body) : undefined, signal: gone.signal });
+      result = fields
+        ? await requestWithAiLimit(app, p, fields.model, () => {
+          if (fields.stream === true && rest.replace(/^v1\//, "") === "chat/completions" && (p.kind === "ark" || p.kind === "openai")) {
+            body = Buffer.from(JSON.stringify({ ...fields, stream_options: { ...(fields.stream_options as object), include_usage: true } }));
+          }
+          return estimatedAiTokens(body!, fields, /(?:embeddings|rerank|images\/generations)$/.test(rest) ? 0 : 4096);
+        }, {
+          signal: gone.signal,
+          onWait: (ms) => activity?.(`按 API key 的限额等了 ${Math.max(1, Math.round(ms / 1000))} 秒`),
+        }, send)
+        : { response: await send() };
     } catch (e) {
       if (gone.signal.aborted) return reply;
       return reply.code(502).send({ error: { code: "omem_relay_unreachable", message: `omem 转发：连不上 ${new URL(url).host}：${(e as Error).message}` } });
     }
-    if (r.ok) break;
-    const text = await r.text().catch(() => "");
+    const { response: r, errorText, settle, minuteRetriesExhausted } = result;
+    if (r.ok) {
+      reply.code(r.status);
+      for (const h of ["content-type", "cache-control", "x-request-id", "openai-model"]) {
+        const v = r.headers.get(h);
+        if (v) reply.header(h, v);
+      }
+      const stream = settle && r.body ? streamWithAiUsage(r.body, r.headers.get("content-type") ?? "", settle) : r.body;
+      return reply.send(stream ? Readable.fromWeb(stream as import("node:stream/web").ReadableStream) : "");
+    }
+    const text = errorText ?? await r.text().catch(() => "");
     const c = classifyError(p.kind, r.status, text);
     // A short limit: wait it out here (the provider's Retry-After when it gives one), then try again.
     const after = Number(r.headers.get("retry-after"));
-    if (c.kind === "rate" && attempt < RATE_WAITS.length && (!after || after <= 15)) {
+    if (minuteRetriesExhausted) {
+      activity?.(MINUTE_LIMIT_EXHAUSTED);
+      c.message = [c.message, MINUTE_LIMIT_EXHAUSTED].filter(Boolean).join(" ");
+    } else if (c.kind === "rate" && attempt < RATE_WAITS.length && (!after || after <= 15)) {
       await waitFor(after ? after * 1000 : RATE_WAITS[attempt], gone.signal);
       if (gone.signal.aborted) return reply;
       continue;
@@ -196,10 +234,4 @@ export async function relayRequest(app: App, req: FastifyRequest, reply: Fastify
     reply.code(status).header("content-type", r.headers.get("content-type") ?? "application/json").header("x-omem-relay-status", String(r.status));
     return reply.send(text);
   }
-  reply.code(r!.status);
-  for (const h of ["content-type", "cache-control", "x-request-id", "openai-model"]) {
-    const v = r!.headers.get(h);
-    if (v) reply.header(h, v);
-  }
-  return reply.send(r!.body ? Readable.fromWeb(r!.body as import("node:stream/web").ReadableStream) : "");
 }

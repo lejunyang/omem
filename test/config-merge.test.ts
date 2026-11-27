@@ -4,12 +4,22 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { configSchema, loadConfig, mergeConfig, saveConfig } from "../src/core/config.ts";
 import { groupItems } from "../src/agents/ai-policy.ts";
+import { settingsPatch } from "../src/auth/settings-sections.ts";
 
 it("merges only what changed since loading", () => {
   const base = { a: 1, b: { c: 2, d: [1] }, e: { f: 1 } };
   const ours = { a: 1, b: { c: 3, d: [1] }, e: {} };
   const theirs = { a: 5, b: { c: 2, d: [1, 2] }, e: { f: 1, g: 2 }, x: true };
   expect(mergeConfig(base, ours, theirs)).toEqual({ a: 5, b: { c: 3, d: [1, 2] }, e: { g: 2 }, x: true });
+});
+
+it("preserves API key limits for older settings clients and lets the owner clear them explicitly", () => {
+  const config = configSchema.parse({ ai: { providers: [{ id: "example", kind: "ark", limits: { rpm: 1 } }] } });
+  const edit = { id: "example", kind: "ark", name: "方舟" };
+  const patch = (provider: object) => configSchema.parse(settingsPatch(config, { ai: { providers: [provider] } })).ai.providers[0];
+  expect(patch(edit)).toMatchObject({ name: "方舟", limits: { rpm: 1 } });
+  expect(patch({ ...edit, limits: { tpm: 100 } }).limits).toEqual({ tpm: 100 });
+  expect(patch({ ...edit, limits: null }).limits).toBeUndefined();
 });
 
 it("旧流程配置补齐提交检查默认值，并保持各次加载独立", () => {

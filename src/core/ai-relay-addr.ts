@@ -28,3 +28,18 @@ export function relayTokenOk(backend: string, given: string | undefined) {
   const got = Buffer.from(given ?? "");
   return got.length === want.length && timingSafeEqual(got, want);
 }
+
+type RelayActivity = (text: string) => void;
+const clients = new Map<string, { backend: string; activity: RelayActivity }>();
+
+/** Tie relay events to the Agent process, so concurrent runs on one backend do not see each other's waits. */
+export function registerRelayClient(backend: string, activity: RelayActivity) {
+  const token = "omem-relay-client-" + randomBytes(32).toString("base64url");
+  clients.set(token, { backend, activity });
+  return { token, close: () => { clients.delete(token); } };
+}
+
+export function relayActivity(backend: string, token: string | undefined) {
+  const client = token && clients.get(token);
+  return client && client.backend === backend ? client.activity : undefined;
+}

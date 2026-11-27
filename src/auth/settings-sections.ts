@@ -228,6 +228,16 @@ export function settingsPatch(config: Config, body: unknown): Values {
       if (key === "embeddings") {
         for (const field of ["keyRef", "url", "dimensions"]) if (merged[field] === null) delete merged[field];
       }
+      if (key === "ai" && Array.isArray(val.providers)) {
+        // Older settings clients omit limits when they save the provider list. Null explicitly clears it.
+        const limits = new Map(config.ai.providers.map(p => [p.id, p.limits]));
+        merged.providers = val.providers.map((provider: unknown) => {
+          if (!object(provider) || typeof provider.id !== "string") return provider;
+          const { limits: supplied, ...fields } = provider;
+          const saved = supplied === undefined ? limits.get(provider.id) : supplied;
+          return saved == null ? fields : { ...fields, limits: saved };
+        });
+      }
       Object.assign(result, { [key]: merged });
     }
     else Object.assign(result, { [key]: val });

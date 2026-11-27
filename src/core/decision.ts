@@ -1,6 +1,9 @@
 import type { App } from "./app.ts";
 import { classifyError, pauseFor } from "./ai-errors.ts";
 import { noteProviderError, resumeAt } from "./ai-relay.ts";
+import { AiRateLimitWaitExpired } from "./ai-rate-limit.ts";
+import { estimatedAiTokens, MINUTE_LIMIT_EXHAUSTED, requestWithAiLimit, settleAiUsage } from "./ai-request.ts";
+import type { Config } from "./config.ts";
 import { baseOf, categoryStatus, clefModel, decisionStatus, decisionStatuses, type CategoryStatus, type DecisionChoice, type DecisionMedia, keyOf } from "./ai-keys.ts";
 
 /**
@@ -113,50 +116,62 @@ async function decideQuestions(app: App, material: Material, questions: Question
   let last: unknown;
   for (const s of able) {
     try {
-      const { answers, by } = await ask(app, s, material, questions, AbortSignal.any([AbortSignal.timeout(each), ...(opts.signal ? [opts.signal] : [])]), media, single);
+      const deadline = Date.now() + each;
+      const { answers, by } = await ask(app, s, material, questions, AbortSignal.any([AbortSignal.timeout(each), ...(opts.signal ? [opts.signal] : [])]), media, single, deadline);
       down.delete(choiceKey(s));
       const via = passed.length ? `${by}；${passed.join("、")}没答上，换了一个` : by;
       return Object.fromEntries(Object.entries(answers).map(([name, answer]) => [name, { ...answer, by: via }]));
     } catch (e) {
       if (opts.signal?.aborted) throw e;
-      last = e;
       passed.push(s.detail);
+      if (e instanceof AiRateLimitWaitExpired) continue;
+      last = e;
       // A refusal is about this question; anything else about the model: keep it out of the way for a
       // while, as long as the kind of error says (a per-minute limit a minute, a daily one till midnight,
       // spent credit a day or until the key is checked again; core/ai-errors.ts).
       if (!(e instanceof DecisionRefused)) down.set(choiceKey(s), pauseAfter(app, s, e));
     }
   }
-  throw last;
+  if (last) throw last;
+  return null;
 }
 
 function pauseAfter(app: App, s: Usable, e: unknown) {
   const now = Date.now();
-  const { status, body } = e as { status?: number; body?: string };
+  const { status, body, minuteRetriesExhausted } = e as { status?: number; body?: string; minuteRetriesExhausted?: boolean };
   const p = app.config.ai.providers.find((x) => x.id === s.provider);
   if (!status || !p) return now + COOL_MS;
   const c = classifyError(p.kind, status, body ?? "");
+  if (minuteRetriesExhausted) c.message = `${c.message} ${MINUTE_LIMIT_EXHAUSTED}`.trim();
   noteProviderError(app, p.id, status, c);
   return pauseFor(c.kind, now, (at) => resumeAt(app, "daily", at).getTime()) ?? now + COOL_MS;
 }
 
-async function ask(app: App, s: Usable, material: Material, questions: Questions, signal: AbortSignal, media: DecisionMediaInput, single: boolean) {
+async function ask(app: App, s: Usable, material: Material, questions: Questions, signal: AbortSignal, media: DecisionMediaInput, single: boolean, deadline: number) {
   if (s.provider === "startlux") return startlux(app, material, questions, signal, single);
   const p = app.config.ai.providers.find((x) => x.id === s.provider)!;
   const key = keyOf(p.id, app.home);
   const by = `${p.name || p.id} · ${s.model}`;
-  if (p.kind === "openai") return { answers: await openaiDecide(baseOf(p), key, s.model, material, questions, signal, single), by };
   const model = p.kind === "cloudflare" ? clefModel(s.model) : s.model;
+  const rate = { app, provider: p, model, deadline };
+  if (p.kind === "openai") return { answers: await openaiDecide(baseOf(p), key, model, material, questions, signal, single, rate), by };
   const url = p.kind === "cloudflare" ? `${baseOf(p)}/run/@cf/cloudflare/${model}` : `${baseOf(p)}/v1/systemone`;
-  return { answers: await systemOne(url, { authorization: `Bearer ${key}` }, model, material, questions, signal, { single, media }), by };
+  return { answers: await systemOne(url, { authorization: `Bearer ${key}` }, model, material, questions, signal, { single, media, rate }), by };
 }
 
-async function post(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal) {
-  const r = await fetcher(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
-  const text = await r.text();
-  if (!r.ok) throw Object.assign(new Error(`决策模型返回 ${r.status}：${text.slice(0, 300)}`), { status: r.status, body: text });
+type RateContext = { app: App; provider: Config["ai"]["providers"][number]; model: string; deadline: number };
+async function post(url: string, headers: Record<string, string>, body: Record<string, unknown>, signal: AbortSignal, rate?: RateContext) {
+  const encoded = JSON.stringify(body);
+  const send = () => fetcher(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: encoded, signal });
+  const { response: r, errorText, settle, minuteRetriesExhausted } = rate
+    ? await requestWithAiLimit(rate.app, rate.provider, rate.model, () => estimatedAiTokens(encoded, body, 256), { signal, deadline: rate.deadline }, send)
+    : { response: await send() };
+  const text = errorText ?? await r.text();
+  if (!r.ok) throw Object.assign(new Error(`决策模型返回 ${r.status}：${text.slice(0, 300)}`), { status: r.status, body: text, minuteRetriesExhausted });
   try {
-    return JSON.parse(text);
+    const payload = JSON.parse(text);
+    settleAiUsage(settle, payload);
+    return payload;
   } catch {
     throw new Error(`决策模型返回的不是 JSON：${text.slice(0, 200)}`);
   }
@@ -185,12 +200,12 @@ function readYesNo(probability: unknown): Answer {
 }
 
 type OpenAIAnswer = { name?: string; type?: string; probability?: number; choice?: string; probabilities?: { value: string; probability: number }[]; confidence?: number };
-async function openaiDecide(base: string, key: string, model: string, material: Material, questions: Questions, signal: AbortSignal, single: boolean) {
+async function openaiDecide(base: string, key: string, model: string, material: Material, questions: Questions, signal: AbortSignal, single: boolean, rate: RateContext) {
   const input = typeof material === "string" ? material : [{ role: "user", content: [{ type: "input_json", data: material }] }];
   const items = questions.map(([name, q]) => q.type === "yesno"
     ? { type: "predicate", name, instructions: q.instructions }
     : { type: "choice", name, instructions: q.instructions, choices: Object.entries(q.options).map(([value, description]) => ({ value, description })) });
-  const body = await post(`${base}/decisions`, { authorization: `Bearer ${key}` }, { model, input, questions: items }, signal);
+  const body = await post(`${base}/decisions`, { authorization: `Bearer ${key}` }, { model, input, questions: items }, signal, rate);
   const answers = (body.answers ?? []) as OpenAIAnswer[];
   if (!Array.isArray(answers)) throw new Error("决策模型的答案不是数组");
   return readAnswers(questions, single, (name) => answers.find((a) => a?.name === name) ?? (single ? answers[0] : undefined), (a, q) => {
@@ -203,7 +218,7 @@ async function openaiDecide(base: string, key: string, model: string, material: 
 type SystemOneAnswer = { type?: string; noul?: number; choice?: string; probabilities?: Record<string, number>; confidence?: number };
 /** Jev's System One shape (TypeSafe, OpenRouter, Clef, StartLux). `model` empty for StartLux. */
 async function systemOne(url: string, headers: Record<string, string>, model: string, material: Material, questions: Questions, signal: AbortSignal,
-  { single, yesNoAsChoice = false, media = {} }: { single: boolean; yesNoAsChoice?: boolean; media?: DecisionMediaInput }) {
+  { single, yesNoAsChoice = false, media = {}, rate }: { single: boolean; yesNoAsChoice?: boolean; media?: DecisionMediaInput; rate?: RateContext }) {
   const items = Object.fromEntries(questions.map(([name, q]) => {
     if (q.type === "choice") return [name, { type: "choice", instructions: q.instructions, criteria: q.options }];
     const o = yesNoOptions(q);
@@ -211,7 +226,7 @@ async function systemOne(url: string, headers: Record<string, string>, model: st
       ? { type: "choice", instructions: q.instructions, criteria: o }
       : { type: "noul", instructions: q.instructions, criteria: { true: o.yes, false: o.no } }];
   }));
-  const raw = await post(url, headers, { ...(model ? { model } : {}), state: material, ...media, questions: items }, signal);
+  const raw = await post(url, headers, { ...(model ? { model } : {}), state: material, ...media, questions: items }, signal, rate);
   // Cloudflare's REST API wraps the body in {result, success, errors}.
   const body = raw?.answers ? raw : (raw?.result ?? raw);
   const answers = (body?.answers ?? {}) as Record<string, SystemOneAnswer>;
@@ -260,6 +275,7 @@ export async function judgeYesNo(
   try {
     const r = await decide(app, o.material, { type: "yesno", instructions: o.instructions, yes: o.yes, no: o.no }, { signal: o.signal });
     if (r) return { yes: r.choice === "yes", reason: describeDecision(r), by: "decision" };
+    if (app.config.ai.decision.fallback === "none") return null;
   } catch (e) {
     const why = (e as Error).message.slice(0, 200);
     if (app.config.ai.decision.fallback === "general") return viaGeneral(`决策模型出错（${why}），改用通用模型：`);

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { App } from "./app.ts";
 import { baseOf, categoryStatus, keyOf } from "./ai-keys.ts";
 import { HttpError, sha256 } from "./util.ts";
+import { estimatedAiTokens, MINUTE_LIMIT_EXHAUSTED, requestWithAiLimit, settleAiUsage } from "./ai-request.ts";
 
 /**
  * Image generation (settings → AI → 图片生成, docs/v2/ai-models.md): OpenAI's Images API,
@@ -30,16 +31,20 @@ export async function generateImage(app: App, o: { prompt: string; size?: string
   const size = o.size || cfg.size;
   const quality = o.quality || cfg.quality;
   const body = { model: st.model, prompt: o.prompt, n: 1, ...(size ? { size } : {}), ...(quality ? { quality } : {}), ...(o.background ? { background: o.background } : {}), output_format: "png" };
+  const deadline = Date.now() + 180_000;
   const signal = AbortSignal.any([AbortSignal.timeout(180_000), ...(o.signal ? [o.signal] : [])]);
-  const r = await fetcher(`${baseOf(p)}/images/generations`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${keyOf(p.id, app.home)}` }, body: JSON.stringify(body), signal });
-  const text = await r.text();
-  if (!r.ok) throw new HttpError(502, `图片模型返回 ${r.status}：${text.slice(0, 300)}`);
+  const encoded = JSON.stringify(body);
+  const { response: r, errorText, settle, minuteRetriesExhausted } = await requestWithAiLimit(app, p, st.model!, () => estimatedAiTokens(encoded, body, 0), { signal, deadline },
+    () => fetcher(`${baseOf(p)}/images/generations`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${keyOf(p.id, app.home)}` }, body: encoded, signal }));
+  const text = errorText ?? await r.text();
+  if (!r.ok) throw new HttpError(502, `图片模型返回 ${r.status}：${text.slice(0, 300)}${minuteRetriesExhausted ? ` ${MINUTE_LIMIT_EXHAUSTED}` : ""}`);
   let data: { data?: { b64_json?: string; revised_prompt?: string }[] };
   try {
     data = JSON.parse(text);
   } catch {
     throw new HttpError(502, `图片模型返回的不是 JSON：${text.slice(0, 200)}`);
   }
+  settleAiUsage(settle, data);
   const b64 = data.data?.[0]?.b64_json;
   if (!b64) throw new HttpError(502, "图片模型没有返回图片");
   const buf = Buffer.from(b64, "base64");

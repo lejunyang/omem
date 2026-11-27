@@ -5,6 +5,11 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## API key 的分钟限额（2026-11-28）
+
+- 在 `ai.providers[].limits` 设置 RPM / TPM，可按模型名或接入点 ID 覆盖。同一 key 和请求模型共用滚动 60 秒窗口，按到达顺序排队，收到用量后修正预占。实现从 `src/core/ai-rate-limit.ts`、`ai-request.ts` 读起。
+- 中转收到明确的分钟限额时保留连接，按原 key 和模型最多等三轮。决策时限不够就跳过。运行记等待秒数，设置接口给出最近一小时的等待和各模型窗口用量。入口见 `src/core/ai-relay.ts`、`decision.ts` 和 `src/server/http.ts`。
+
 ## Codex 启动流量（2026-11-28）
 
 - omem 启动的 Codex 关闭 `plugin_discovery_prefetch`。ACP 用 `CODEX_PATH` 给原本选中的 Codex 传启动参数，CLI 后备和额度查询直接传同一开关。仍可按需浏览和使用插件。
