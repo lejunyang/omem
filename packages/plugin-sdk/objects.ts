@@ -7,7 +7,7 @@ export type PluginObjectContext = {
   actor: "agent" | "user"; conversationId: string | null;
   connection(provider: string): Promise<PluginConnection | null>;
   emit(signal: PluginSignal): Promise<void>;
-  settings(): Record<string, string | number | boolean>;
+  settings(): Record<string, string | number | boolean | string[]>;
 };
 export type PluginConnection = { account: string; scopes: string[]; base: string | null; fetch(path: string, init?: RequestInit): Promise<Response> };
 export type PluginSignal = { kind: string; keys: Record<string, unknown>; payload?: unknown };

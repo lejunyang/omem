@@ -14,7 +14,7 @@ const registry = new Map<string, CredentialMethod>();
 export type CredentialMethod = Omit<CredentialDef, "provides"> & {
   plugin: string; kind: string;
   provides: { backends: string[]; commands: CredentialCommand[] };
-  settings(): Record<string, string | number | boolean>;
+  settings(): Record<string, string | number | boolean | string[]>;
   signal: AbortSignal;
 };
 const match = z.object({ subcommand: z.array(z.string().min(1)).min(1).optional(),
@@ -70,7 +70,7 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
 
 export const defaultSharingScope = (id: string) => id === OWNER ? "all" : "self";
 
-export function registerCredential(plugin: string, def: CredentialDef, settings = () => ({} as Record<string, string | number | boolean>), app?: App) {
+export function registerCredential(plugin: string, def: CredentialDef, settings = () => ({} as Record<string, string | number | boolean | string[]>), app?: App) {
   if (!ID.test(def.id) || !def.name?.trim() || typeof def.login !== "function") throw new Error("凭据需要有效的 id、name 和 login");
   for (const name of ["ownerLogin", "refresh", "check", "logout", "provide", "precheck"] as const)
     if (def[name] !== undefined && typeof def[name] !== "function") throw new Error(`凭据 ${name} 需要回调函数`);

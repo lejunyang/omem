@@ -1,5 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
+import { readableSourceIds } from "../auth/visibility.ts";
+import { spacesWithCapability } from "../auth/capabilities.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError, json, newId, now, truncate, webLink } from "../core/util.ts";
 import type { HostTool, ToolContext } from "../agents/tools.ts";
@@ -25,6 +27,7 @@ export type PluginEnv = {
   /** Where a block handed in outside a plugin session goes: a new session with this agent. */
   sessionFor(spec: string | undefined): { agent: string; spaceId: string } | null;
   title: string;
+  sourceSetting?: string;
 };
 
 const toState = (r: Row): PluginBlockState => ({
@@ -59,13 +62,14 @@ function sessionThread(app: App, plugin: string, conversationId: string, userId:
 }
 
 /** Store a block in one of the user's sessions of this plugin and tell the page. */
-function presentBlock(app: App, env: PluginEnv, input: { kind: string; data: unknown; conversationId: string; runId: string | null; userId: string }) {
-  sessionThread(app, env.id, input.conversationId, input.userId);
+function presentBlock(app: App, env: PluginEnv, input: { kind: string; data: unknown; conversationId: string; runId: string | null; userId: string; sourceSpaces?: string[] | null; actor: "agent" | "user" }) {
+  const thread = sessionThread(app, env.id, input.conversationId, input.userId);
   const def = env.def(input.kind);
   if (!def) throw new HttpError(400, `插件 ${env.id} 没有 ${input.kind} 类型的内容块`);
   const parsed = def.schema.safeParse(input.data);
   if (!parsed.success) throw new HttpError(400, `内容块参数错误：${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
-  const data = def.prepare ? def.prepare(parsed.data) : parsed.data;
+  const warnings: string[] = [];
+  const data = def.prepare ? def.prepare(parsed.data, pluginContext(app, env, { ...input, spaceId: thread.space_id }), warnings) : parsed.data;
   const id = newId("pb");
   const at = now();
   run(
@@ -83,11 +87,18 @@ function presentBlock(app: App, env: PluginEnv, input: { kind: string; data: unk
     at,
   );
   app.emit({ type: "plugin", plugin: env.id, conversationId: input.conversationId, blockId: id });
-  return { id, data, def };
+  return { id, data, def, warnings };
 }
 
-export function pluginContext(app: App, env: PluginEnv, c: { userId: string; spaceId: string; runId: string | null; actor: "agent" | "user"; conversationId?: string | null }): PluginContext {
+export function pluginContext(app: App, env: PluginEnv, c: { userId: string; spaceId: string; runId: string | null; actor: "agent" | "user"; conversationId?: string | null; sourceSpaces?: string[] | null }): PluginContext {
   const mine = (id: string) => one<Row>(app.db, "select * from plugin_blocks where id = ? and plugin = ? and user_id = ?", id, env.id, c.userId);
+  const settings = () => {
+    const values = env.settings(app, c.userId);
+    const key = env.sourceSetting;
+    const selected = key && values[key];
+    if (key && Array.isArray(selected) && c.sourceSpaces) values[key] = selected.filter(id => c.sourceSpaces!.includes(id));
+    return values;
+  };
   return {
     app,
     plugin: env.id,
@@ -98,7 +109,19 @@ export function pluginContext(app: App, env: PluginEnv, c: { userId: string; spa
     emit: async (signal) => emitPluginSignal(app, env.id, signal),
     conversationId: c.conversationId ?? runConversation(app, c.runId),
     store: pluginStore(app, env.id, c.userId, c.spaceId),
-    settings: () => env.settings(app, c.userId),
+    settings,
+    materialSources: ids => {
+      const selected = env.sourceSetting && settings()[env.sourceSetting];
+      if (!ids.length || !Array.isArray(selected) || !selected.length) return new Map();
+      const allowed = spacesWithCapability(app, c.userId, "sources.view");
+      const spaces = selected.filter(id => !allowed || allowed.includes(id));
+      const visible = c.userId === OWNER ? ids : [...readableSourceIds(app, c.userId, ids)];
+      const rows = all<{ id: string; title: string; lines: number }>(app.db, `select id, title,
+        case when text='' then 0 else length(text)-length(replace(text,char(10),''))+1 end as lines
+        from sources where id in (select value from json_each(?)) and space_id in (select value from json_each(?)) and deleted_at is null`,
+        JSON.stringify(visible), JSON.stringify(spaces));
+      return new Map(rows.map(r => [r.id, r]));
+    },
     block: (id) => {
       const r = mine(id);
       return r ? toState(r) : null;
@@ -109,7 +132,7 @@ export function pluginContext(app: App, env: PluginEnv, c: { userId: string; spa
       run(app.db, "update plugin_blocks set result = ?, updated_at = ? where id = ?", JSON.stringify(result ?? null), now(), id);
       app.emit({ type: "plugin", plugin: env.id, conversationId: r.conversation_id, blockId: id });
     },
-    present: (kind, data, conversationId) => presentBlock(app, env, { kind, data, conversationId, runId: c.runId, userId: c.userId }).id,
+    present: (kind, data, conversationId) => presentBlock(app, env, { ...c, kind, data, conversationId }).id,
     connection: async (provider) => (await import("../auth/connections.ts")).pluginConnection(app, c.userId, provider),
   };
 }
@@ -139,10 +162,11 @@ export function blockTool(name: string, def: PluginBlock, envFor: (ctx: ToolCont
         conversationId = (await createSession(ctx.app, { plugin: env.id, agent: target.agent, spaceId: target.spaceId, userId, title })).id;
         moved = true;
       }
-      const { id, data } = presentBlock(ctx.app, env, { kind: def.kind, data: args, conversationId: conversationId!, runId: moved ? null : ctx.runId, userId });
+      const { id, data, warnings } = presentBlock(ctx.app, env, { kind: def.kind, data: args, conversationId: conversationId!, runId: moved ? null : ctx.runId, userId, actor: ctx.actor, sourceSpaces: ctx.sourceSpaces ?? ctx.spaces });
+      const note = warnings.length ? "\n" + warnings.join("\n") : "";
       if (moved)
-        return `这里不是练习页，已在“${env.title}”里新开一个会话放上这一组（${id}）：${sessionLink(ctx.app, env.id, conversationId!)}\n把这个链接发给本人，请本人在那里做；提交以后的点评在那个会话里进行。`;
-      return def.presented?.(data, id) ?? `已在页面上展示（${id}）。本人提交后，结果会作为下一条消息交给你；这一轮可以只说一句开场白，不要把内容再写一遍。`;
+        return `这里不是练习页，已在“${env.title}”里新开一个会话放上这一组（${id}）：${sessionLink(ctx.app, env.id, conversationId!)}\n把这个链接发给本人，请本人在那里做；提交以后的点评在那个会话里进行。` + note;
+      return (def.presented?.(data, id) ?? `已在页面上展示（${id}）。本人提交后，结果会作为下一条消息交给你；这一轮可以只说一句开场白，不要把内容再写一遍。`) + note;
     },
   };
 }

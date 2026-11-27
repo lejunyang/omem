@@ -47,3 +47,8 @@ settings:
     min: 5
     max: 300
     default: 30
+  - key: materialSpaces
+    label: 材料来自哪些空间
+    description: 选中的空间只供陪练读原件。留空按场景和画像练习。
+    type: source-spaces
+    default: []

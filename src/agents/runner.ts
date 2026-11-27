@@ -39,6 +39,7 @@ import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE, doubaoFeatures } from "./doubao-c
 import { dropUnavailable, issueToolToken, revokeToolToken, toolList } from "./tools.ts";
 import { aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
+import { pluginSourceSpaces } from "../plugins/registry.ts";
 import { trimTools } from "../auth/tools.ts";
 import { agentIndex, listAgentSpecs, DEFAULT_SPEC_TOOLS, skillIndex, skillsOutsideScope, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools, ROLE_TOOLS } from "./tool-help.ts";
@@ -595,6 +596,7 @@ export function prepareRun(
   const allowed = scopeFor(app, userId, input.readScope ?? null);
   const related = guest ? [] : relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
+  const sourceSpaces = spec?.plugin ? pluginSourceSpaces(app, spec.plugin, userId)?.filter(id => (!allowed || allowed.includes(id)) && (!input.spaces || input.spaces.includes(id))) : undefined;
   const writable = input.boardAccess === "read" ? [] : scoped ?? undefined;
   trimTools(app, userId, tools, { spaces: readable, writable });
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
@@ -676,7 +678,7 @@ export function prepareRun(
   const textOnly = !!inputs && !inputs.includes("image") ? "\n- 这次用的模型只读文字、看不了图片：遇到图片（飞书消息里的、附件里的）不要用图片工具打开，直接说明这个模型看不了图，需要的话请对方用文字描述，或换一个能看图的模型再问" : "";
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}${capabilities.localTools ? commandLoginNote(app, userId) : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${textOnly}${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, searchTools)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
-  const token = issueToolToken({ commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const token = issueToolToken({ commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, sourceSpaces, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   return {
     isolation,
     workspace,

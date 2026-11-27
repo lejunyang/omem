@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { deleteAgentSpec, findAgentSpec, listAgentSpecs, listSkills, readRaw, saveAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { all, one, run } from "../src/core/db.ts";
+import { prepareRun } from "../src/agents/runner.ts";
+import { upsertSource } from "../src/sources/store.ts";
+import { savePluginSettings } from "../src/plugins/settings.ts";
 import { findSpace } from "../src/core/spaces.ts";
 import { createSession, sessionView, submitBlock } from "../src/plugins/blocks.ts";
 import { describePlugin, getPlugin, loadPlugins, setPluginIcon } from "../src/plugins/registry.ts";
@@ -150,8 +153,8 @@ describe("plugins", () => {
     const server = await startServer(app, { port: 0, quiet: true });
     try {
       const got = (await server.inject({ url: "/api/plugins/english/settings" })).json();
-      expect(got.values).toEqual({ source: "bank", quizSize: "8", voice: "en-US", rate: "1", dailyGoal: 30 });
-      expect(got.fields.map((f: { key: string }) => f.key)).toEqual(["source", "quizSize", "voice", "rate", "dailyGoal"]);
+      expect(got.values).toEqual({ source: "bank", quizSize: "8", voice: "en-US", rate: "1", dailyGoal: 30, materialSpaces: [] });
+      expect(got.fields.map((f: { key: string }) => f.key)).toEqual(["source", "quizSize", "voice", "rate", "dailyGoal", "materialSpaces"]);
       expect((await server.inject({ method: "PUT", url: "/api/plugins/english/settings", payload: { quizSize: "7" } })).statusCode).toBe(400);
       expect((await server.inject({ method: "PUT", url: "/api/plugins/english/settings", payload: { dailyGoal: 1 } })).statusCode).toBe(400);
       expect((await server.inject({ method: "PUT", url: "/api/plugins/english/settings", payload: { nope: 1 } })).statusCode).toBe(400);
@@ -164,6 +167,30 @@ describe("plugins", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("limits tutor material tools to the selected readable spaces and keeps their writes in English", async () => {
+    const app = await englishApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    const spec = findAgentSpec(app, "english-tutor")!;
+    const fields = getPlugin("english").manifest.settings;
+    const save = (ids: string[]) => savePluginSettings(app, "english", fields, "owner", "english", { materialSpaces: ids });
+    const turn = () => toolContextForToken(app, prepareRun(app, { actor: { spec }, runId: null, spaceId: "english" }).token)!;
+    const source = (spaceId: string) => upsertSource(app, { spaceId, kind: "note", title: "行程", uri: "note:itinerary", text: "Choose a return date." }).id;
+    const selected = source("personal"), other = source("english");
+    expect((await callTool(turn(), "list_sources", {})).isError).toBe(true);
+    expect(() => save(["missing"])).toThrow("不可选");
+    save(["personal"]);
+    const ctx = turn();
+    expect(ctx.writable).toEqual(["english"]);
+    expect((await callTool(ctx, "read_source", { source: selected })).text).toContain("Choose a return date.");
+    expect((await callTool(ctx, "read_source", { source: other })).isError).toBe(true);
+    expect((await callTool(ctx, "list_sources", { space: "english" })).isError).toBe(true);
+    expect((await callTool(ctx, "search", { query: "return", space: "english" })).isError).toBe(true);
+    expect((await callTool(ctx, "search", { query: "return", scope: "sources" })).text).toContain(selected);
+    expect((await callTool(ctx, "remember", { space: "personal", kind: "preference", content: "学习者更喜欢用英文安排短途旅行。" })).isError).toBe(true);
+    save([]);
+    expect((await callTool(ctx, "read_source", { source: selected })).isError).toBe(true);
   });
 
   it("questions and views in a plugin session are its page's blocks: a form is checked and answered, a view is only shown", async () => {

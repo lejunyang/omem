@@ -16,7 +16,7 @@ export type AgentLoginContext = {
   /** One secret the host keeps for the plugin per person and backend (secrets/vault.db, never in the account folder), such as a refresh token. */
   secret: { get(): Promise<string | null>; set(value: string | null): Promise<void> };
   /** The plugin's own settings (the owner's values from 设置 → 插件, defaults filled in), read when the method runs. */
-  settings: Record<string, string | number | boolean>;
+  settings: Record<string, string | number | boolean | string[]>;
   signal: AbortSignal;
 };
 
@@ -36,12 +36,12 @@ export type AgentLoginDef = {
   logout?(ctx: AgentLoginContext): Promise<void>;
 };
 
-export type AgentLoginMethod = AgentLoginDef & { plugin: string; key: string; settings: () => Record<string, string | number | boolean> };
+export type AgentLoginMethod = AgentLoginDef & { plugin: string; key: string; settings: () => Record<string, string | number | boolean | string[]> };
 
 const ID = /^[a-z][a-z0-9-]{0,31}$/;
 const registry = new Map<string, AgentLoginMethod>();
 
-export function registerAgentLogin(plugin: string, def: AgentLoginDef, settings: () => Record<string, string | number | boolean> = () => ({})): () => void {
+export function registerAgentLogin(plugin: string, def: AgentLoginDef, settings: () => Record<string, string | number | boolean | string[]> = () => ({})): () => void {
   if (!ID.test(def.id)) throw new Error(`登录方式 id 只能用小写字母、数字和连字符，字母开头：${def.id}`);
   if (typeof def.login !== "function") throw new Error(`登录方式 ${def.id} 没有 login`);
   if (!def.label?.trim()) throw new Error(`登录方式 ${def.id} 没有 label`);

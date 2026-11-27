@@ -124,6 +124,8 @@ export type ToolContext = {
   spaceId: string;
   /** Spaces the caller may read; null = all. */
   spaces: string[] | null;
+  /** Selected material spaces at the start of a plugin turn, for source tools only. */
+  sourceSpaces?: string[];
   /** Spaces the caller may write, when narrower than `spaces` (related spaces are read-only). */
   writable?: string[];
   /** Cross-device board writes include memories, pages and items only. */
@@ -7783,6 +7785,17 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   const tool = tools.find((t) => t.name === name);
   if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
   if (!tool) return { text: `工具 ${name} 不可用`, isError: true };
+  if (ctx.plugin && ["search", "list_sources", "read_source"].includes(name)) {
+    const { pluginSourceSpaces } = await import("../plugins/registry.ts");
+    const selected = pluginSourceSpaces(ctx.app, ctx.plugin, ctx.userId ?? OWNER);
+    if (selected) {
+      const ceiling = ctx.sourceSpaces ?? ctx.spaces;
+      const spaces = selected.filter(id => !ceiling || ceiling.includes(id));
+      if (!spaces.length) return { text: "本轮没有可读的材料空间。", isError: true };
+      ctx = { ...ctx, spaces, spaceId: spaces[0], writable: [] };
+      if (name === "search" && args && typeof args === "object" && !("space" in args)) args = { ...args, space: "*" };
+    }
+  }
   const scope = memberToolAccess(ctx.app, ctx.userId ?? OWNER, ctx)(name);
   if ("deniedCapability" in scope) return {
     text: `工具 ${name} 不可用：${scope.reason}（${scope.deniedCapability}）。请勿重试。`,
@@ -8058,7 +8071,10 @@ export function retargetToolToken(token: string, runId: string | null, turn?: st
   if (!ctx) return;
   ctx.runId = runId;
   const next = turn && turn !== token ? tokens.get(turn) : undefined;
-  if (next) ctx.tools = next.tools;
+  if (next) {
+    ctx.tools = next.tools;
+    ctx.sourceSpaces = next.sourceSpaces;
+  }
 }
 export function beginCommandTurn(token: string) {
   const ctx = tokens.get(token);

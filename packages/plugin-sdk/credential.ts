@@ -34,7 +34,7 @@ export type CredentialContext = {
   /** One secret omem keeps for the plugin per person and credential (in its vault, never in the account folder). */
   secret: { get(): Promise<string | null>; set(value: string | null): Promise<void> };
   /** The plugin's own settings (the owner's values from 设置 → 插件, defaults filled in). */
-  settings: Record<string, string | number | boolean>;
+  settings: Record<string, string | number | boolean | string[]>;
   /** Aborted when the login times out (11 minutes) or the person cancels or logs out. */
   signal: AbortSignal;
 };
@@ -110,5 +110,5 @@ export type CredentialDef = {
 export type CredentialApi = {
   credential(def: CredentialDef): void;
   /** The owner's values of this plugin's settings; read when needed so a change takes effect without reloading. In-process plugins only. */
-  settings(): Record<string, string | number | boolean>;
+  settings(): Record<string, string | number | boolean | string[]>;
 };

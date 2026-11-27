@@ -185,12 +185,19 @@ export function getPlugin(id: string) {
   return p;
 }
 
+/** Only source-reading tools receive this per-user grant. */
+export function pluginSourceSpaces(app: App, id: string, userId: string): string[] | undefined {
+  const p = findPlugin(id);
+  const key = p?.env.sourceSetting;
+  if (p && key) return p.env.settings(app, userId)[key] as string[];
+}
+
 /** A plugin's `whenConnected` tools: for people with a working connection to one of its connectors. */
 export const connectedTo = (plugin: string) => (app: App, userId: string) => listConnections(app, userId).some((c) => c.status === "active" && c.provider.startsWith(`${plugin}-`));
 
 /** The ToolContext of a plugin tool's call, narrowed to what server.ts may see. */
 function asPlugin(env: PluginEnv, ctx: ToolContext) {
-  return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input), watches: watchesFor(ctx) };
+  return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, sourceSpaces: ctx.sourceSpaces ?? ctx.spaces }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input), watches: watchesFor(ctx) };
 }
 
 async function importServer(dir: string, m: PluginManifest, source: LoadedPlugin["source"]): Promise<PluginRegister | null> {
@@ -235,6 +242,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     env: {
       id: manifest.id,
       title: manifest.page?.title ?? manifest.name,
+      sourceSetting: manifest.settings.find(f => f.type === "source-spaces")?.key,
       def: (kind) => blocks.get(kind),
       settings: (app, userId) => pluginSettings(app, manifest.id, manifest.settings, userId),
       sessionFor: (spec) => {
