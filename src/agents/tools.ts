@@ -4440,7 +4440,7 @@ def({
 def({
   name: "first_look_outcome",
   description:
-    "交“先看一眼”的结果（只给 first-look 用）。answered：材料和预查已经够答完，text 写结论，evidence 写依据；escalate：答不完要深查，text 写已经知道的，next 写还要查什么；owner：要本人拍板，text 写要本人定的问题；quiet：不用回也不用告诉本人（通知、例行提醒、已经有人答了），text 一句写为什么，宿主不发。text 是给人看的几行，宿主按设置发出去。",
+    "交“帮你回复”的结果（只给 first-look 用）。answered：材料和预查已经够答完，text 写结论，evidence 写依据；escalate：答不完要深查，text 写已经知道的，next 写还要查什么；owner：要本人拍板，text 写要本人定的问题；quiet：不用回也不用告诉本人（通知、例行提醒、已经有人答了），text 一句写为什么，宿主不发。text 是给人看的几行，宿主按设置发出去。",
   schema: z.object({
     outcome: z.enum(["answered", "escalate", "owner", "quiet"]),
     text: z.string().trim().min(1).max(1500).describe("第一行给提问的人一句结论（四十字以内），必要时另起最多三条以 - 开头的短要点，只写怎么办、找谁、去哪看。owner 第一行写要本人定的问题，要点写可选做法和倾向。原因链路、历史背景、排查过程和引用放 evidence"),
@@ -4449,7 +4449,7 @@ def({
   }),
   handler: async (ctx, a) => {
     const r = ctx.runId ? getRun(ctx.app, ctx.runId) : null;
-    if (!r || r.kind !== "first-look") throw new HttpError(409, "只有“先看一眼”的运行用这个工具交结果");
+    if (!r || r.kind !== "first-look") throw new HttpError(409, "只有“帮你回复”的运行用这个工具交结果");
     setRunOutput(ctx.app, r.id, { firstLook: { outcome: a.outcome, text: a.text, ...(a.evidence ? { evidence: a.evidence } : {}), ...(a.next ? { next: a.next } : {}) } });
     return "已交。用一句很短的话结束这一轮。";
   },

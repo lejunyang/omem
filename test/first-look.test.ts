@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import "../src/agents/jobs.ts";
-import { createRun, getRun, listRuns, setRunOutput, startWorker, updateQueuedRun, waitForRun } from "../src/agents/runs.ts";
+import { cancelRun, createRun, getRun, listRuns, setRunOutput, startWorker, updateQueuedRun, waitForRun } from "../src/agents/runs.ts";
+import { release } from "../src/channels/listen-first-look.ts";
 import { threadMessages } from "../src/agents/threads.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
@@ -152,12 +153,12 @@ describe("预查库", () => {
   });
 });
 
-describe("规则：先看一眼", () => {
+describe("规则：帮你回复", () => {
   it("answered: the probe output reaches the fast model, the answer goes to the chat, no deep run", async () => {
     useClient();
     const r = rule("报 UID 直接回", [{ type: "agent", spec: "assistant", reply: "auto", firstLook: true, probes: ["uid"], firstTo: "chat" }]);
     const [res] = await runActions(app, r, event("om_a1", "UID 42 打不开 [answered]"), "报了 UID");
-    expect(res.detail).toMatch(/先看一眼/);
+    expect(res.detail).toMatch(/帮你回复/);
     const look = await waitForRun(app, res.runId!);
     expect(look.status, look.error ?? "").toBe("done");
     expect(look.output).toMatchObject({ outcome: "answered", delivered: { to: "chat" } });
@@ -186,7 +187,7 @@ describe("规则：先看一眼", () => {
       expect(client.sent()).toContain("接着查");
       expect((await click(delivery.messageId!, "continue", "ou_other")).toast.type).toBe("error");
       const capped = Array.from({ length: RULE_FIRST_LOOKS_PER_DAY - 1 }, () => createRun(app, { kind: "first-look", title: "配额用例", input: { rule: { id: r.id } }, notBefore: "2999-01-01T00:00:00Z" }));
-      expect((await click(delivery.messageId!, "continue")).toast.content).toContain("今天先看一眼的上限");
+      expect((await click(delivery.messageId!, "continue")).toast.content).toContain("今天帮你回复的上限");
       expect(listRuns(app, { parentId: look.id, kind: "agent" })).toHaveLength(0);
       for (const cap of capped) run(app.db, "delete from runs where id = ?", cap.id);
       const attempts = await Promise.all([click(delivery.messageId!, "continue"), click(delivery.messageId!, "continue")]);
@@ -397,7 +398,7 @@ describe("第一条发到哪", () => {
 
 });
 
-describe("关注：先看一眼", () => {
+describe("关注：帮你回复", () => {
   const BRIEF = { handle: ["用户报的页面问题，带 UID 的"], skip: ["闲聊"], valid: "说得出原因" };
   const route = (id: string, text: string, chat = "oc_listen") => routeWatchedMessages(app, chat, "值班群", [{ id, time: String(Date.now()), sender: "小王", text }]);
   const looksIn = (contextId: string) => listRuns(app, { kind: "first-look" }).filter((r) => (r.input.listen as { contextId?: string } | undefined)?.contextId === contextId);
@@ -421,7 +422,7 @@ describe("关注：先看一眼", () => {
     expect(String((done.output.stages as any).probes.results[0].name)).toBe("uid");
     // Answered: the batch it would have waited ten minutes for is gone, and the conversation says why.
     expect(getRun(app, batch.id).status).toBe("cancelled");
-    expect(threadMessages(app, c.conversationId!).some((m) => m.text.includes("先看一眼已经答了这几条"))).toBe(true);
+    expect(threadMessages(app, c.conversationId!).some((m) => m.text.includes("帮你回复已经答了这几条"))).toBe(true);
     expect(one(app.db, "select decision from handled_messages where channel = 'handled:watch' and message_id = 'om_l2'")).toMatchObject({ decision: "drafted" });
     expect(client.calls.filter((x) => x.op === "reply")).toHaveLength(0);
   }, 120_000);
@@ -439,7 +440,7 @@ describe("关注：先看一眼", () => {
     expect(done.output).toMatchObject({ outcome: "quiet", delivered: { to: "none" } });
     expect(client.calls).toHaveLength(0);
     expect(getRun(app, batch.id).status).toBe("cancelled");
-    expect(threadMessages(app, c.conversationId!).some((m) => m.text.includes("先看一眼看过这几条，不用处理"))).toBe(true);
+    expect(threadMessages(app, c.conversationId!).some((m) => m.text.includes("帮你回复看过这几条，不用处理"))).toBe(true);
     expect(one(app.db, "select decision from handled_messages where channel = 'handled:watch' and message_id = 'om_lq1'")).toMatchObject({ decision: "ignored" });
   }, 120_000);
 
@@ -518,7 +519,7 @@ describe("关注：先看一眼", () => {
     updateQueuedRun(app, first.id, { notBefore: now() });
     const stepped = await waitForRun(app, first.id);
     expect(stepped.output.skipped).toBe("这几条之后已经有回复发进了这个群：交回这一批");
-    expect(one(app.db, "select reason from handled_messages where channel = 'yield:watch' and message_id = 'om_n1'")).toMatchObject({ reason: expect.stringContaining("先看一眼让开") });
+    expect(one(app.db, "select reason from handled_messages where channel = 'yield:watch' and message_id = 'om_n1'")).toMatchObject({ reason: expect.stringContaining("帮你回复让开") });
     // The batch still has the message and decides with what was said.
     expect(batchOf(c.conversationId!).some((r) => r.status === "queued")).toBe(true);
     expect(client.calls).toHaveLength(0);
@@ -537,6 +538,54 @@ describe("关注：先看一眼", () => {
     updateQueuedRun(app, third.id, { notBefore: now() });
     expect((await waitForRun(app, third.id)).output).toMatchObject({ outcome: "answered", delivered: { to: "ephemeral" } });
   }, 180_000);
+
+  it("only looks that looked count against perDay; one that @s the owner looks past it", async () => {
+    useClient();
+    const chat = "oc_listen_cap";
+    setOwnerInChatForTests(chat, true);
+    const c = saveContext(app, { kind: "place", name: "值班群上限", chats: [chat], brief: { ...BRIEF, at: now(), confirmedAt: now() }, knobs: { reply: "draft", listen: "all", batchMinutes: 10, firstLook: true, firstTo: "ephemeral", perDay: 1 } });
+    await route("om_cap1", "UID 61 打不开 [answered]", chat);
+    const [first] = looksIn(c.id);
+    // The chat was answered meanwhile: the look steps aside, without a model, and that costs nothing of the day's.
+    run(app.db, "insert into lark_sent(message_id, chat_id, run_id, conversation_id, purpose, bot, at) values('om_sent_cap1', ?, null, ?, 'answer', 'main', ?)", chat, c.conversationId, now());
+    updateQueuedRun(app, first.id, { notBefore: now() });
+    expect((await waitForRun(app, first.id)).output.skipped).toMatch(/已经有回复/);
+    run(app.db, "delete from lark_sent where message_id = 'om_sent_cap1'");
+    await route("om_cap2", "UID 62 打不开 [answered]", chat);
+    const second = looksIn(c.id).find((r) => r.id !== first.id)!;
+    updateQueuedRun(app, second.id, { notBefore: now() });
+    expect((await waitForRun(app, second.id)).output).toMatchObject({ outcome: "answered" });
+    // That one looked: the day's one is used. A plain message gets none; one that @s the owner still does.
+    await route("om_cap3", "UID 63 打不开", chat);
+    expect(looksIn(c.id)).toHaveLength(2);
+    await routeWatchedMessages(app, chat, "值班群", [{ id: "om_cap4", time: String(Date.now()), sender: "小王", text: "@本人 UID 64 打不开", mentions: ["ou_owner"] }]);
+    const third = looksIn(c.id).find((r) => r.id !== first.id && r.id !== second.id)!;
+    expect(third.input.messages).toMatchObject([{ id: "om_cap4" }]);
+    cancelRun(app, third.id);
+  }, 120_000);
+
+  it("a batch let go after a look waits for the next look queued on its later messages", async () => {
+    useClient();
+    const chat = "oc_listen_burst";
+    setOwnerInChatForTests(chat, true);
+    const c = saveContext(app, { kind: "place", name: "值班群连发", chats: [chat], brief: { ...BRIEF, at: now(), confirmedAt: now() }, knobs: { reply: "draft", listen: "all", batchMinutes: 10, firstLook: true, firstTo: "ephemeral" } });
+    await route("om_burst1", "UID 71 打不开", chat);
+    const [first] = looksIn(c.id);
+    // It is looking (not queued any more): what comes now waits for a look of its own.
+    run(app.db, "update runs set status = 'running' where id = ?", first.id);
+    await route("om_burst2", "还有 UID 72 也不行", chat);
+    const second = looksIn(c.id).find((r) => r.id !== first.id)!;
+    const batch = batchOf(c.conversationId!).find((r) => r.status === "queued")!;
+    release(app, [{ id: batch.id, notBefore: now() }], first.input as unknown as FirstLookInput);
+    const notBefore = (id: string) => Date.parse(one<{ not_before: string }>(app.db, "select not_before from runs where id = ?", id)!.not_before);
+    expect(notBefore(batch.id)).toBeGreaterThanOrEqual(notBefore(second.id) + 10_000);
+    // With no look waiting on its messages, it goes back to when it was due.
+    cancelRun(app, second.id);
+    const was = new Date(Date.now() + 60_000).toISOString();
+    release(app, [{ id: batch.id, notBefore: was }], first.input as unknown as FirstLookInput);
+    expect(one(app.db, "select not_before from runs where id = ?", batch.id)).toMatchObject({ not_before: was });
+    run(app.db, "update runs set status = 'cancelled' where id in (?, ?)", first.id, batch.id);
+  });
 
   it("a 关注 without it batches as before", async () => {
     const c = saveContext(app, { kind: "place", name: "普通群", chats: ["oc_plain"], brief: { ...BRIEF, at: now(), confirmedAt: now() }, knobs: { reply: "draft", listen: "all", batchMinutes: 10 } });

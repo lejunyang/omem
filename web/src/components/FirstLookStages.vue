@@ -23,7 +23,7 @@ const decisionLine = computed(() => {
 </script>
 
 <template>
-  <ol class="stages" aria-label="先看一眼的各层">
+  <ol class="stages" aria-label="帮你回复的各层">
     <li v-if="s.prefilter">
       <span class="dot" />
       <span class="what"><strong>预筛</strong><span class="muted">{{ s.prefilter }}</span></span>
@@ -44,7 +44,7 @@ const decisionLine = computed(() => {
     <li v-if="s.look">
       <span class="dot" :class="tone(s.look.outcome)" />
       <span class="what">
-        <strong>先看一眼</strong>
+        <strong>帮你回复</strong>
         <span><span class="out" :class="tone(s.look.outcome)">{{ OUTCOME_TEXT[s.look.outcome] ?? s.look.outcome }}</span> · {{ BY[s.look.by] ?? s.look.by }}<template v-if="aiText(s.look.ai)"> · <span class="muted">{{ aiText(s.look.ai) }}</span></template></span>
         <span v-if="s.look.reason" class="muted">{{ s.look.reason }}</span>
       </span>

@@ -131,7 +131,7 @@ export async function routeWatchedMessages(app: App, chatId: string, chatName: s
     }
     // 快速通道: the one 关注 that answers here (or the first reading one) looks first, without waiting for its batch.
     const fast = (lead ?? takers[0]).knobs.firstLook ? (lead ?? takers[0]) : null;
-    if (fast && !before) (await import("./listen-first-look.ts")).queueListenLook(app, fast, { id: chatId, name: chatName }, { id: m.id, text: m.text, sender: m.sender, topicId: m.topicId ?? null, at: at ? new Date(at).toISOString() : now() });
+    if (fast && !before) (await import("./listen-first-look.ts")).queueListenLook(app, fast, { id: chatId, name: chatName }, { id: m.id, text: m.text, sender: m.sender, topicId: m.topicId ?? null, at: at ? new Date(at).toISOString() : now() }, { addressed });
     n++;
   }
   return n;

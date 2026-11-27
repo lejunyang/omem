@@ -37,5 +37,5 @@ export function situationLookMaterial(app: App, i: SituationInstance, runId: unk
   if (typeof runId !== "string") return "";
   const row = one<{ output: string | null }>(app.db, "select output from runs where id=? and kind='first-look' and lane=? and user_id=?", runId, i.conversationId, i.userId);
   const out = JSON.parse(row?.output ?? "{}") as { situationProbes?: string; situationLook?: string };
-  return [out.situationProbes, out.situationLook ?? "先看一眼没有完成，请按原事件继续核对。"].filter(Boolean).join("\n\n");
+  return [out.situationProbes, out.situationLook ?? "帮你回复没有完成，请按原事件继续核对。"].filter(Boolean).join("\n\n");
 }

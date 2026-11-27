@@ -203,7 +203,7 @@ const runLine = (r: Run) => `${r.input?.trial ? "试跑 · " : ""}${r.status ===
       <div v-if="!form && !shown" class="empty">
         <Icon name="zap" :size="34" />
         <h3>预查</h3>
-        <p>预查是你存好的只读小脚本，比如“查这个用户 ID 的账号状态”“看这个接口最近一小时的报错数”。规则或关注打开“先快速看一眼”后，消息一来先跑选中的预查，几秒内拿到事实，再交给快模型看；规则里也可以加一步“预查”单独跑。</p>
+        <p>预查是你存好的只读小脚本，比如“查这个用户 ID 的账号状态”“看这个接口最近一小时的报错数”。规则或关注打开“帮你回复”后，消息一来先跑选中的预查，几秒内拿到事实，再交给快模型看；规则里也可以加一步“预查”单独跑。</p>
         <p class="muted small">安全线：只有你能保存、修改和删除预查，助手只能提议，你看过完整代码点“保存”才算数。脚本在运行 omem 的这台机器上跑，每次一个临时目录、只带最基本的环境变量，拿不到 omem 的密钥和令牌；消息作为 JSON 交给它，不会拼进代码或命令行。</p>
         <button v-if="isOwner" class="btn" @click="go({ new: '1' })"><Icon name="plus" :size="14" />新建预查</button>
       </div>
@@ -256,7 +256,7 @@ const runLine = (r: Run) => `${r.input?.trial ? "试跑 · " : ""}${r.status ===
 
         <section class="block">
           <UiCheckbox v-model="form.direct" switch size="sm" @change="touch">输出直接发出，不过模型</UiCheckbox>
-          <small class="muted">{{ form.direct ? "跑成功且有输出时，输出原样作为“先看一眼”的结论（答完了），按第一条的去处发出，不经快模型，也不经决策模型复核。只给输出本身就能回答的预查打开。" : "关着时，输出交给快模型当材料，由它决定怎么答。" }}</small>
+          <small class="muted">{{ form.direct ? "跑成功且有输出时，输出原样作为“帮你回复”的结论（答完了），按第一条的去处发出，不经快模型，也不经决策模型复核。只给输出本身就能回答的预查打开。" : "关着时，输出交给快模型当材料，由它决定怎么答。" }}</small>
         </section>
 
         <section class="block">
