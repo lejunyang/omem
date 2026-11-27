@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## Git 远端与子模块更新使用本身份的登录（2026-11-28）
+
+`src/agents/git-command.ts` 供垫片和执行器共同识别 `git remote update` 与 `git submodule update --remote`。这两类更新与 fetch 共用执行许可和命令审计。查看、添加或删除 remote 仍按本地操作处理。
+
 ## 执行器恢复命令登录变量（2026-11-28）
 
 `src/agents/command-executor.ts` 为 gh、npm 等命令恢复各自的登录环境，受信任的凭据插件可按子命令声明 `loginEnv`。本人使用后端档案或宿主环境中的值，成员只使用本账号的值。

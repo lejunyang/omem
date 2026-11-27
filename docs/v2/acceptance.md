@@ -329,6 +329,8 @@
 
 20. 宿主设置模拟 `GH_TOKEN`，本人档案配置 `NPM_TOKEN`，用户 `.npmrc` 用 `${NPM_TOKEN}` 认证。Agent 环境中两者均为空；调用 gh 和受规则保护的 npm 时，两条命令各用自己的模拟令牌认证，审计记录 argv 和 cwd。用声明了登录变量的插件命令核对成员只取得本账号配置的值。
 
+20. 临时工作区中依次运行 `git status`、`git remote update` 和 `git submodule update --remote`。两条远端更新均使用模拟 Git 登录，逐条核对 `command.execute` 的完整 argv 与 cwd。`status`、查看和增删 remote、`--remote` 仅作为路径名的子模块更新保持本地判定。
+
 自动验证见 `test/command-executor.test.ts`、`test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 插件凭据第三期

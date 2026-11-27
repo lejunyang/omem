@@ -54,7 +54,7 @@ Agent 启动时，宿主为启用的 command 规则和已启用、受信任的�
 Linux 本机沙箱的垫片把完整 argv 和 cwd 发给原来的命令闸门。放行后宿主签发一次性执行许可，只对当前运行令牌有效。垫片通过 `POST /api/command-gate/stream/:permit` 发送 stdin；响应分别传输 stdout、stderr 和退出码。连接断开、令牌撤销或执行超时会终止子进程。执行器需要支持 `--bind-fd`、`--ro-bind-fd` 的 bubblewrap。
 
 - 插件只要声明命令即可进入闸门。规则决定放行、审批、拒绝或记录。没有命中规则时放行并审计。执行器从宿主安装中定位程序，只挂回该声明的状态目录、本轮工作区和程序运行所需的文件。使用非标准登录路径的插件应在 `state` 声明相对 HOME 的路径。借用别人的登录继续按原有只读预检处理。
-- `git push/fetch/pull/clone/ls-remote` 经执行器使用当前身份的远端登录。普通的 `git status` 在 Agent 沙箱内执行；本地操作命中 Git 规则时仍询问闸门。私有仓库的地址与本地路径由 Git 解析，因此公开仓库的 clone 也走执行器。
+- `git push/fetch/pull/clone/ls-remote`、`git remote update` 和 `git submodule update --remote` 经执行器使用当前身份的远端登录。`git status`、列出或增删 remote、未带 `--remote` 的子模块更新默认留在 Agent 沙箱；本地操作命中 Git 规则时仍询问闸门。私有仓库的地址与本地路径由 Git 解析，因此公开仓库的 clone 也走执行器。
 - SSH/SCP/SFTP、GitHub/GitLab CLI、AWS/Azure/Google Cloud CLI、kubectl 和 Docker CLI 的标准文件登录也按命令挂回执行器。额外路径、企业认证助手和自定义登录方式需要声明对应状态和安装目录。
 - 标准命令可取得各自的登录变量，例如 `gh` 的 `GH_TOKEN` 和 npm、pnpm 的 `NPM_TOKEN`、`NODE_AUTH_TOKEN`。凭据插件可用 `commands[].loginEnv` 声明沙箱已过滤的命令登录变量名，例如 `ACME_TOKEN`。执行器仅为命中该声明的调用恢复变量。本人使用 Agent 后端档案的值，缺省时取宿主环境；成员只取本轮成员账号配置。
 - 审计的 `command.execute` 带命令、完整 argv、cwd 和运行编号。审批指纹绑定 argv 和 cwd。执行器按允许清单构造环境，保留 HOME、语言与宿主选定的 PATH，Git 可使用对应的认证套接字。Agent 传入的解释器启动参数、动态库路径和配置路径不会带入。

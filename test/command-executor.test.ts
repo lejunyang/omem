@@ -18,6 +18,13 @@ import { testApp } from "./helpers.ts";
 it("识别 Git 远端操作及其全局选项", () => {
   expect(remoteGit(["-C", "project", "ls-remote", "origin"])).toBe(true);
   expect(remoteGit(["--git-dir=.git", "fetch"])).toBe(true);
+  expect(remoteGit(["-C", "project", "remote", "-v", "update", "--prune"])).toBe(true);
+  expect(remoteGit(["submodule", "--quiet", "update", "--jobs", "2", "--remote", "--", "lib"])).toBe(true);
+  for (const args of [
+    ["remote", "-v"], ["remote", "add", "update", "url"], ["remote", "remove", "update"],
+    ["submodule", "update", "--init"], ["submodule", "update", "--", "--remote"],
+    ["submodule", "update", "--reference", "--remote"], ["submodule", "status", "--remote"],
+  ]) expect(remoteGit(args), args.join(" ")).toBe(false);
   expect(remoteGit(["status"])).toBe(false);
 });
 
@@ -98,7 +105,12 @@ process.exit(token && process.env[token] === "fixture-npm" && !("GH_TOKEN" in pr
   symlinkSync(dispatcher, join(bin, "guarded-tool"));
   symlinkSync(dispatcher, join(bin, "ordinary-tool"));
   const git = join(bin, "git");
-  writeFileSync(git, '#!/bin/sh\nif test "$1" = status; then exit 0; fi\ntest -s "$HOME/.git-credentials" || exit 23\n', { mode: 0o755 });
+  writeFileSync(git, `#!/bin/sh
+case "$1 $2" in
+  'status '| 'remote -v'| 'remote add'| 'remote remove') test ! -s "$HOME/.git-credentials" ;;
+  *) test -s "$HOME/.git-credentials" || exit 23 ;;
+esac
+`, { mode: 0o755 });
   copyFileSync(git, join(cwd, "git-fixture"));
   copyFileSync(entry, join(cwd, "copy.js"));
   vi.stubEnv("HOME", home); vi.stubEnv("OMEM_DESKTOP_TOOLS", "off"); vi.stubEnv("PATH", [bin, join(python, "bin"), process.env.PATH].join(":"));
@@ -147,11 +159,19 @@ process.exit(token && process.env[token] === "fixture-npm" && !("GH_TOKEN" in pr
       ["gh", { runId: null, argv: ["auth", "status"], cwd }],
       ["npm", { runId: null, argv: ["install"], cwd }],
     ]);
-    const remote = await invoke("/bin/sh", ["-ec", "git status && git push"]);
+    const remote = await invoke("/bin/sh", ["-ec", [
+      "git status", "git remote -v", "git remote add update url", "git remote remove update",
+      "git push", "git -C . remote update --prune origin",
+      "git submodule update --init --remote -- 'vendor/private lib'",
+    ].join("\n")]);
     expect(remote.code, remote.out).toBe(0);
     expect((await invoke(join(cwd, "git-fixture"), ["push"])).code).toBe(23);
-    const rows = app.db.prepare("select detail from audit_events where action='command.execute' and target='git'").all();
-    expect(rows.map(row => JSON.parse(String(row.detail)))).toEqual([expect.objectContaining({ argv: ["push"], cwd })]);
+    const rows = app.db.prepare("select detail from audit_events where action='command.execute' and target='git' order by rowid").all();
+    expect(rows.map(row => JSON.parse(String(row.detail)))).toEqual([
+      expect.objectContaining({ argv: ["push"], cwd }),
+      expect.objectContaining({ argv: ["-C", ".", "remote", "update", "--prune", "origin"], cwd }),
+      expect.objectContaining({ argv: ["submodule", "update", "--init", "--remote", "--", "vendor/private lib"], cwd }),
+    ]);
     expect((await invoke("/bin/sh", ["-ec", 'test ! -s "$HOME/.git-credentials"; test ! -e "$1/omem.db"', "sh", app.home])).code).toBe(0);
   } finally {
     revokeToolToken(prep.token); await server.close(); vi.unstubAllEnvs();
