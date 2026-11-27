@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { decide, decisionReady, type DecisionQuestion } from "../core/decision.ts";
+import { OWNER, userName } from "../core/users.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
 
 /**
@@ -90,6 +91,25 @@ export function noteReply(app: App, r: { runId?: string | null; channel: "lark" 
   );
 }
 
+/**
+ * Who said a turn of a conversation: the named speaker of a watched chat, a member by name in their own
+ * conversation with the bot (those turns carry only `userId`), else the owner.
+ */
+export function turnSpeaker(app: App, meta: { speaker?: unknown; userId?: unknown }): { name: string; owner: boolean } {
+  if (typeof meta.speaker === "string" && meta.speaker) return { name: meta.speaker, owner: false };
+  if (typeof meta.userId === "string" && meta.userId && meta.userId !== OWNER) return { name: userName(app, meta.userId), owner: false };
+  return { name: OWNER_BY, owner: true };
+}
+
+/**
+ * What two copies of one message share: the conversation keeps the turn without the bot's @mention,
+ * the captured chat line starts with it. Mentions are left out of the key on both sides.
+ */
+export function messageKey(text: string) {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.replace(/@\S+/g, "").replace(/\s+/g, " ").trim().slice(0, 60) || t.slice(0, 60);
+}
+
 /** What was said after the reply, oldest first: the conversation's own messages, then the captured chat. */
 function followUps(app: App, o: Row, until: string): FollowUp[] {
   const out: FollowUp[] = [];
@@ -97,7 +117,7 @@ function followUps(app: App, o: Row, until: string): FollowUp[] {
   const add = (who: string, text: string, at: string) => {
     const t = text.replace(/\s+/g, " ").trim();
     // The same message can be both a turn of the conversation and a line of the captured chat.
-    const key = t.slice(0, 60);
+    const key = messageKey(t);
     if (!t || seen.has(key)) return;
     seen.add(key);
     out.push({ who, text: truncate(t, 400), at });
@@ -108,8 +128,8 @@ function followUps(app: App, o: Row, until: string): FollowUp[] {
       "select text, meta, created_at from messages where conversation_id = ? and role = 'user' and created_at > ? and created_at <= ? and json_extract(meta, '$.command') is null order by created_at limit 8",
       o.conversation_id, o.at, until,
     )) {
-      const meta = json<{ speaker?: unknown; wake?: unknown }>(m.meta, {});
-      if (!meta.wake) add(typeof meta.speaker === "string" && meta.speaker ? meta.speaker : "本人", m.text, m.created_at);
+      const meta = json<{ speaker?: unknown; userId?: unknown; wake?: unknown }>(m.meta, {});
+      if (!meta.wake) add(turnSpeaker(app, meta).name, m.text, m.created_at);
     }
   if (o.chat_id) {
     const from = Date.parse(o.at);

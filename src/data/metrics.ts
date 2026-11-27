@@ -718,6 +718,11 @@ async function queueAgentMetrics(app: App, agentMetrics: Metric[], at: number) {
         },
       });
       created.push(r.id);
+      // The round is on its way: recorded or not, the next one waits a full period, as after a provider's
+      // attempt. A metric the agent cannot read yet (no permission, a definition still missing) was asked for
+      // again on every tick until the day's cap.
+      const queued = new Date(at).toISOString();
+      for (const m of ms) run(app.db, "update metrics set settings=json_patch(settings,?), updated_at=? where id=?", JSON.stringify({ lastAttemptAt: queued }), queued, m.id);
     }
     return created;
   });
