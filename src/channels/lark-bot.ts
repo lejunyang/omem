@@ -1,3 +1,4 @@
+import { parseCommand } from "../agents/commands.ts";
 import { updateThread, type Thread } from "../agents/threads.ts";
 import { homeOf, noteAnchor, noteTopicRoot, replyAnchor } from "../agents/home.ts";
 import { isApp, persistChatMessages, type LarkMessage } from "./lark-messages.ts";
@@ -723,11 +724,14 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
   };
 
   /** The bot's own @ goes away; other people keep their name (「结合 @小李 在文档里…」 means something). */
-  const spoken = (m: Inbound) => {
-    const words = m.text.replace(/@_user_\d+/g, (key) => {
+  const spoken = (m: Inbound, verbatim = false) => {
+    const rendered = m.text.replace(/@_user_\d+/g, (key) => {
       const who = m.mentionNames?.[key];
+      if (!who && verbatim) return key;
       return who && !who.isBot ? `@${who.name}` : "";
-    }).replace(/[ \t]{2,}/g, " ").trim();
+    });
+    if (verbatim) return rendered;
+    const words = rendered.replace(/[ \t]{2,}/g, " ").trim();
     const note = attachmentNote({ messageId: m.messageId, type: m.type, content: m.raw });
     return words && note ? `${words}\n${note}` : words;
   };
@@ -786,6 +790,21 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     recordInteraction(app, { messageId, chatId: m.chatId, conversationId: null, runId, purpose: "guest-approval", allowed: [owner], payload: a, ...(extra ? { bot: ref } : {}) });
   };
 
+  // The initiator can address the supervisor in its work topic without mentioning the bot.
+  const supervisorTopic = (m: Inbound) => {
+    if (m.fromApp || m.type !== "text" || !m.topicId) return;
+    const userId = who(m);
+    if (!userId) return;
+    const text = m.mentions.length ? spoken(m, true) : m.text;
+    const command = text.trimStart().startsWith("/");
+    if (command && parseCommand(text)?.name !== "监工") return;
+    return one<{ id: string }>(app.db, `select c.id from conversations c
+      join long_tasks t on t.thread_id=c.id
+      where c.channel=? and c.external_id=? and c.status='active' and t.user_id=?
+        and (t.status not in ('ended','done') or ?)
+      order by c.updated_at desc limit 1`, channel, `${m.chatId}#${m.topicId}`, userId, Number(command))?.id;
+  };
+
   /** `approved`: the owner let a refused guest through (its records were kept the first time). */
   const handle = async (m: Inbound, approved?: { by: string }) => {
     let ruled: Promise<void> | null = null;
@@ -810,13 +829,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
       // Another omem bot's post is material here; a hand-off to this bot comes through relayMentions.
       if (postedByOmem(m.messageId)) return;
       if (!m.fromApp) personSpoke(m.chatId, m.topicId);
-      // In the work topic the initiator can stop their own task without mentioning this bot again.
-      if (!m.fromApp && m.type === "text" && m.topicId && /^\/监工\s+(暂停|结束)$/.test(m.text.trim())) {
-        supervisorThreadId = one<{ id: string }>(app.db, `select c.id from conversations c
-          join long_tasks t on t.thread_id=c.id
-          where c.channel=? and c.external_id=? and c.status='active' and t.user_id=?
-          order by c.updated_at desc limit 1`, channel, `${m.chatId}#${m.topicId}`, who(m))?.id;
-      }
+      supervisorThreadId = supervisorTopic(m);
       const addressed = asksBot || !!supervisorThreadId;
       // A person @-ing the bot asks it directly, and it answers (a user, or a guest when allowed):
       // the rules (waits, silent checks) are for what nobody asked and step aside.
@@ -851,12 +864,12 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     if (m.chatType === "p2p" && userId === OWNER) kv(app, key("lark_owner_chat"), m.chatId);
     // A mention or its follow-up attachment extends the window for more attachments.
     if (m.chatType === "group" && asksBot && !asker) recentAsks.set(askKey(m), Date.now());
-    const text = spoken(m);
+    const text = spoken(m, !!supervisorThreadId);
     const context = [
       approved ? `本人看过门卫拦下的这条请求，同意让 ${m.senderName} 这次使用你：照常处理，结果回在群里。` : "",
       ...(m.chatType === "group" ? [rosterNote(app, ref), watchPurpose(app, m.chatId), await groupContext(m)] : []),
     ].filter(Boolean).join("\n\n");
-    if (!text) return;
+    if (!text.trim()) return;
     const spaceId = m.chatType === "group" ? groupSpace(m.chatId) : userId === OWNER ? cfg.defaultSpace : undefined;
     bindAnswerer(app, ref, { channel, chatId: m.chatId, topicId: m.topicId, isGroup: m.chatType === "group", spaceId, userId });
     let presentation: ReturnType<typeof startReplyProgress> | undefined;

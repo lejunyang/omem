@@ -5,6 +5,7 @@ import { addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs
 import { answerAsk, getAsk, listAsks } from "../src/agents/asks.ts";
 import { createWorkerAsk } from "../src/agents/supervisor-code.ts";
 import { addTask, taskForFinding, updateTask } from "../src/agents/code-tasks.ts";
+import { addressed } from "../src/rules/store.ts";
 import { setupLarkBot } from "../src/channels/lark-bot.ts";
 import { onLarkSent, setLarkBotClient, setLarkClient, setMentionResolver } from "../src/channels/lark-send.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
@@ -134,7 +135,7 @@ describe("长任务监工", () => {
     } finally { setLarkClient(null); }
   });
 
-  it("群话题暂停和结束、HTTP 和按钮各更新一次原卡，话题控制命令后的附件只做群采集", async () => {
+  it("群话题直接补充立即唤醒监工，命令、HTTP 和按钮操作同一任务，附件单独采集", async () => {
     const app = testApp();
     app.config.lark.ownerOpenId = "ou_owner";
     createSpace(app, { id: "docs", name: "项目文档" });
@@ -179,7 +180,7 @@ describe("长任务监工", () => {
           "select resources from lark_messages where chat_id=? and message_id=?", "oc_example", messageId);
         expect(JSON.parse(captured?.resources ?? "{}")[key]?.file).toBeTruthy();
       });
-      expect.soft(getLongTask(app, task.id).supplements).toEqual([]);
+      expect.soft(getLongTask(app, task.id).supplements).toEqual(task.supplements);
       expect.soft(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
     };
     try {
@@ -190,11 +191,13 @@ describe("长任务监工", () => {
       confirmLongTaskBrief(app, task.id, { doneWhen: ["示例已校对"] });
       await submitSupervisorReport(app, turn(app, task).run.id, { ...draftReport, brief: undefined, stage: "校对" });
       const repliesBefore = reply.mock.calls.length;
-      await send("/监工 暂停", { sender: "ou_owner" });
-      await send("/监工 暂停", { topic: "omt_other" });
-      await send("/监工 暂停", { chat: "oc_other" });
-      await send("/监工 暂停", { receiver: otherBot, sender: "ou_editor_other" });
+      for (const address of [{ sender: "ou_owner" }, { topic: "omt_other" }, { chat: "oc_other" }, { receiver: otherBot, sender: "ou_editor_other" }]) {
+        await send("/监工 暂停", address);
+        await send("这条群消息不属于任务", address);
+      }
+      await send("/whoami");
       expect(reply).toHaveBeenCalledTimes(repliesBefore);
+      expect(getLongTask(app, task.id).supplements).toEqual([]);
       addMember(app, "docs", "editor", "reader");
       await send("/监工 暂停");
       expect(reply.mock.calls.at(-1)?.[0].data.content).toContain("没有权限");
@@ -202,13 +205,26 @@ describe("长任务监工", () => {
       expect(patch).not.toHaveBeenCalled();
       addMember(app, "docs", "editor", "editor");
 
+      const supplement = "  补充：先只改说明文件。\n    保留  示例格式。  ";
+      const queued = wakeSupervisor(app, task.id, "修改项完成")!;
+      const dueAt = () => Date.parse(one<{ at: string }>(app.db, "select not_before at from runs where id=?", queued)!.at);
+      expect(dueAt()).toBeGreaterThan(Date.now());
+      const messageId = await send(supplement);
+      expect(addressed(app, `lark:${messageId}`)).toBe(true);
+      const supplemented = getLongTask(app, task.id);
+      expect(supplemented.supplements).toEqual([expect.objectContaining({ text: supplement })]);
+      expect(getRun(app, queued).input.events).toContainEqual(expect.objectContaining({ note: supplement }));
+      expect(dueAt()).toBeLessThanOrEqual(Date.now());
+      await send("/监工");
+      expect(reply.mock.calls.at(-1)?.[0].data.content).toContain(task.id);
+
       await send("/监工 暂停");
       expect(getLongTask(app, task.id).status).toBe("paused");
       expect(patch).toHaveBeenCalledTimes(1);
       expect(patch.mock.calls[0][0].data.content).toContain("已暂停");
       expect(patch.mock.calls[0][0].data.content).toContain('"action":"继续"');
 
-      await expectCaptureOnly(task, await send({ image_key: "img_example" }), "img_example");
+      await expectCaptureOnly(supplemented, await send({ image_key: "img_example" }), "img_example");
 
       const resumed = await server.inject({ method: "PATCH", url: "/api/long-tasks/" + task.id, payload: { action: "resume" } });
       expect(resumed.json().status).toBe("active");
@@ -218,11 +234,25 @@ describe("长任务监工", () => {
       expect(patch).toHaveBeenCalledTimes(3);
       expect(patch.mock.calls[2][0].data.content).toContain('"action":"继续"');
 
+      await send("/监工 继续");
+      expect(getLongTask(app, task.id).status).toBe("active");
+      await send("/监工 加 3 小时");
+      expect(getLongTask(app, task.id).budget.hours).toBe(task.budget.hours + 3);
+      await send("/监工 换 claude opus high");
+      expect(getLongTask(app, task.id).ai).toMatchObject({ profile: "claude", model: "opus", effort: "high" });
+
+      const beforeEnd = patch.mock.calls.length;
       await send("/监工 结束");
-      expect(patch).toHaveBeenCalledTimes(4);
+      expect(patch).toHaveBeenCalledTimes(beforeEnd + 1);
       expect(getLongTask(app, task.id).status).toBe("ended");
-      await expectCaptureOnly(task, await send({ file_key: "file_example", file_name: "示例.txt" }), "file_example");
-      const final = patch.mock.calls[3][0].data.content;
+      await expectCaptureOnly(supplemented, await send({ file_key: "file_example", file_name: "示例.txt" }), "file_example");
+      await send("任务结束后回到群聊");
+      expect(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
+      const statusMessage = await send("/监工");
+      expect(reply).toHaveBeenLastCalledWith(expect.objectContaining({
+        path: { message_id: statusMessage }, data: expect.objectContaining({ content: expect.stringContaining("已结束") }),
+      }));
+      const final = patch.mock.calls.at(-1)![0].data.content;
       expect(final).toContain("已结束");
       expect(final).not.toContain('"tag":"button"');
       expect(patch.mock.calls.every(([request]) => request.path.message_id === "om_progress")).toBe(true);
