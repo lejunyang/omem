@@ -5,6 +5,8 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 长任务跟进入口：斜杠命令和主助手共用创建接口。创建任务和更换 AI 的命令与 /topic 共用 AI 解析，按发起人识别别名、密钥、设备和组。可在任务话题查看进展、暂停、继续、加时、换 AI 和结束，也可从其他会话转达补充。发起人在飞书群工作话题可直接发命令和补充，斜杠开头的接口路径也会逐字记入并立即唤醒。话题命令、HTTP 和卡片按钮共用进度卡刷新，暂停后可在原卡继续，结束后收起按钮。 | 已实现（2026-11-28） | `src/agents/supervisor-command.ts`、`src/agents/tools.ts`、`test/supervisor-entry.test.ts` |
+| 长任务执行和飞书进度：确认任务书后由指定助手协调交办、回答工作者的问题，按阶段更换会话。本人在汇总卡上的选择记入修改项决定和任务补充。工作轮次共用任务书预算，普通完成事件合批，跑偏信号和本人补充立即叫醒。报告更新话题进度卡、事项时间线和跟进笔记。 | 已实现（2026-11-27） | `src/agents/supervisor.ts`、`src/agents/supervisor-report.ts`、`src/agents/supervisor-code.ts`、`test/supervisor.test.ts` |
 | 飞书补授权优先细粒度权限，只读操作不申请整域读写；成员补授权检查应用已开通的权限；旧评论请求可用只读权限续接 | 已实现（2026-11-27）；覆盖通用命令、旧评论等待续接、未登录时随登录补授权 | `src/channels/lark-auth.ts`、`src/auth/connect-wait.ts`、`test/connections.test.ts` |
 | 成员短令牌提前续签，临时故障分阶段记原因并重试，确认续签凭据失效才推重新授权 | 已实现（2026-11-27）；覆盖短令牌到期后继续重试、恢复与停止通知 | `src/agents/credentials.ts`、`test/credentials.test.ts` |
 | 普通本人阶段只发合并进展；新事实或到计划时间只读核实，带依据完成；跳过传递检查前提，收回旧规则提前打开且没人动过的阶段 | 已实现（2026-11-26）；`test/flows.test.ts`、`test/flow-blocker-review.test.ts` | `src/flows/owner-turn.ts`、`blocker-review.ts`、`reconcile.ts`、`prerequisites.ts`、`engine.ts` |
@@ -289,6 +291,7 @@
 | 巡检预筛：决策模型判断新材料是否关联关注、等待中的事项，无关则安静跳过；默认每 12 小时补看跳过的材料，在 设置 → 定时任务 点开“巡检”那一行，可关闭预筛或将补看间隔改为 1–72 小时；未配决策模型、模型出错或新材料超过 30 份时直接交给助手 | 基本流程已实现，handler 的 ACP 回归通过（含补看超过 60 份时分次看完）；真实模型效果待验 | `src/agents/heartbeat-gate.ts`、`src/agents/jobs.ts`、`test/heartbeat-handler.test.ts` |
 | 简报、做梦整理、经验与偏好回灌到后续任务；做梦第一次只看 7 天、新库默认开、存量整理的经验记忆分组逐晚合并、记忆页显示整理状态；较早记忆逐晚轮查、关联候选记住判断无关的、错过的定时任务补跑 | 已实现；做梦部分 2026-10-30，轮查与补跑 2026-11-09，`test/dream.test.ts`、`test/space-relations.test.ts` | `roles/brief.md`、`dreamer.md`、`runner.ts`、`src/agents/jobs.ts`、`src/memory/digest-merge.ts` |
 | 做梦把档案和内置角色过大的专属经验目录提炼为技能草稿：`dream.consolidate.min=30`、`perNight=2`（0 关闭），最大目录优先；共享经验不计数；成功后记条数、日期与引用对应的技能，增长至少 30% 或技能删除后重交；草稿挂原档案，夜间复盘 K1 试用后启用 | 已实现；2026-11-15，定向测试覆盖筛选、成功/失败、分页读取及真实 ACP + MCP 保存草稿；真实模型效果待验 | `src/agents/dream-consolidate.ts`、`jobs.ts`、`tools.ts`、`test/dream-consolidate.test.ts` |
+| 长任务存储与 HTTP：保留目标原话和逐条补充，确认任务书，跟踪预算、跟进笔记和关注事项；按事项阅读权限查询，仅发起人在可写空间中能调整。拉取的进行中任务暂停。 | 已实现 | `src/agents/long-tasks.ts`、`src/server/long-tasks-http.ts` |
 | 交办编码：worktree → 检查 → 独立评审 → 确认后应用；评审不通过自动续轮（最多 3 轮），复用同一 worktree 和编码 Agent 会话；长任务 `run_agent(own_topic=true)` 开独立工作会话（飞书话题），digester 只把结论回主会话 | 已实现，演示仓库实测 | `src/agents/code.ts`、`code-chain.ts`、`agent-work.ts` |
 | 编码中同步分支：待同步请求在本轮交给主编码，评审中登记的在下次编码前执行；冲突支持继续、恢复和中止；等具体轮次结束用事件唤醒，同目标同目的不重复登记 | 已实现，临时 Git 仓库与假 ACP 测试 | `src/agents/code-round-sync.ts`、`code-sync.ts`、`wakes.ts` |
 | 编码进度卡片：已有话题解析真实消息锚点，原卡片跨轮更新；创建/更新失败持久记录脱敏错误、有限重试和重启恢复，显式 `retry_code_progress` 恢复；自动三轮上限后持久等待本人，手动继续可到第 4 轮及以后 | 假客户端和工具回归覆盖；真实飞书待应用后验收 | `src/channels/lark-code-progress.ts`、`src/agents/code-chain.ts`、`tools.ts` |

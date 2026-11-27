@@ -13,6 +13,7 @@ import { testApp } from "./helpers.ts";
 // longer than MCP's. Allow each measurement up to 64 extra characters across all five blocks.
 // Re-measured affected roles after integrating quiet outcomes, change receipts and the new role sections.
 const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground: number, noneChat: number, noneBackground: number]> = {
+  supervisor: ["supervise", 5044, 5044, 2001, 2001],
   "commit-claim": ["commit-claim", 4630, 4735, 2206, 2206],
   // The item-follow role now classifies actual next steps and records their completion conditions.
   "item-follow": ["item-follow", 6004, 6109, 3602, 3602],
@@ -21,9 +22,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   // Mid-round branch sync: the assistant passes `sync` and waits on the round, the coder calls sync_branch.
   // 情境 became 持续跟进的规则: the assistant's note on save_situation says what to call it with the owner.
   // 实测 2026-11-25：中途交付和编码补充的说明已计入。
-  // 实测 2026-11-28：合并 AI 规则（长期 AI 规则一段）和 main 上“帮你回复”、卡片的说明之后。
-  // 实测 2026-11-28：工作文件一节加了查数结果放哪一句。
-  "assistant": ["agent", 21352, 20653, 1679, 1581],
+  // main 的预算已计入长期 AI 规则和查数结果的存放约定。MCP 对话另含长任务跟进工具说明。
+  "assistant": ["agent", 21526, 20653, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   "ai-policy-writer": ["ai-policy-draft", 2763, 2763, 1748, 1748],

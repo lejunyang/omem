@@ -37,7 +37,7 @@ import { cloudToolGuide } from "./cloud-tools.ts";
 import { backendCapabilities, hasHostTools, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE, doubaoFeatures } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken, toolList } from "./tools.ts";
-import { aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
+import { agentRunError, aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { pluginSourceSpaces } from "../plugins/registry.ts";
 import { trimTools } from "../auth/tools.ts";
@@ -304,6 +304,8 @@ export type RoleRunInput = {
   /** Tools the caller needs for delivery. An empty list explicitly permits a text-only answer. */
   requiredTools?: string[];
   execution?: Execution;
+  /** Deadline for acquiring the specified backend before an expensive task yields its slot. */
+  queueUntil?: number;
   /** Which choice setting applies when nothing pins the AI (choose-ai.ts): a rule's run, or any other task (the default). */
   choose?: ChooseScene;
   role: RoleName;
@@ -988,12 +990,13 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   }
   const borrowed = input.borrow;
   const raw = member ? resolveRunProfile(app, { ...input, actor }) : undefined;
-  const memberOptions = { userId: input.userId!, runId: input.runId, threadId: runInput.conversationId ?? runInput.threadId, pinned: specified || execution?.source === "user", ownOnly: runInput.ownAccountOnly, signal: input.signal };
+  const supervising = input.role === "supervisor";
+  const memberOptions = { userId: input.userId!, runId: input.runId, threadId: runInput.conversationId ?? runInput.threadId, pinned: specified || execution?.source === "user" || supervising, ownOnly: runInput.ownAccountOnly, signal: input.signal };
   const primary = borrowed ? peerProfile({
     id: `peer:${borrowed.device}:${borrowed.backend}`, peer: { id: borrowed.device, agent: borrowed.backend },
     transport: "acp", command: "omem", args: [], env: { OMEM_HOME: app.home }, idleTimeoutMs: 600000,
     model: input.execution?.model, effort: input.execution?.effort,
-  }) : member && raw ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, member, scope ?? null).filter(p => p !== raw).filter(p => supports(p) && meetsFloor(p)) })
+  }) : member && raw ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: supervising ? [] : failoverProfiles(app, actor, raw, own, member, scope ?? null).filter(p => p !== raw).filter(p => supports(p) && meetsFloor(p)) })
     : accountProfile(app, { ...input, actor });
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : undefined;
@@ -1018,10 +1021,11 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
 
   // The order to move on in: the chooser's ranking by the owner's routing notes when it ran, then the
   // static order (the role's other backends, the fallbacks, the candidates) for whatever it did not rank.
-  const single = !!input.boardAccess || !!input.shadow || execution?.source === "flow" || ((execution || specified || login) && app.config.agents.routing.pinnedFallback === "never");
+  const single = supervising || !!input.boardAccess || !!input.shadow || execution?.source === "flow" || ((execution || specified || login) && app.config.agents.routing.pinnedFallback === "never");
   const fallbacks = single ? [] : [...failoverProfiles(app, actor, primary, own, member, scope ?? null), ...tierProfiles.filter((p): p is AgentProfile => !!p && backendAvailable(p, app.home))];
   const list = distinctProfiles([primary, ...(single ? [] : chosen?.order ?? []), ...fallbacks]);
-  const allowed = scopedProfiles(app, scope, needsHost && !single ? list.filter(hasHostTools) : list, !single);
+  const hostable = needsHost && !single ? list.filter(hasHostTools) : list;
+  const allowed = supervising ? hostable.filter(p => !policyReason(scope, p)) : scopedProfiles(app, scope, hostable, !single);
   const options = chosen && !single ? distinctProfiles([...list.filter(p => !policyReason(scope, p)), ...allowed]) : allowed;
   // An explicit choice (including the chooser's first group) leads the allowed alternatives.
   const primaryIndex = options.findIndex(p => p.id === primary.id && p.model === primary.model && p.effort === primary.effort);
@@ -1055,7 +1059,9 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       : `跳过后端 ${p.id}：本次运行需要 ${requirement}，该后端没有 omem 工具通道`);
     return false;
   });
-  if (scope?.strict && (!chain.length || chain.every(p => !backendAvailable(p, app.home) || excluded(app, p) || !!downReason(app, p) || !hasRoom(app, p)))) {
+  // The long task owns the queue deadline and reports timeouts in its work topic.
+  if (supervising && !chain.length) throw agentRunError("指定的 AI 无法接手本轮，所需工具：" + requirement, "queue");
+  if (!supervising && scope?.strict && (!chain.length || chain.every(p => !backendAvailable(p, app.home) || excluded(app, p) || !!downReason(app, p) || !hasRoom(app, p)))) {
     await waitForPolicy(app, scope, input.runId);
   }
   if (choiceRecorded || (scope && (scope.use.length || scope.deny.length))) {
@@ -1152,7 +1158,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       }
       let slot;
       try {
-        slot = await acquire(app, retry || (coding || pinned) && i === 0 ? [chain[i]] : chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
+        slot = await acquire(app, retry || (coding || pinned) && i === 0 ? [chain[i]] : chain.slice(i), { runId: input.runId, signal: input.signal, waitUntil: input.queueUntil, onWait: (text) => emit({ type: "status", text }) });
       } catch (e) {
         if (i === 0) revokeToolToken(base.token);
         if (coding && !input.signal?.aborted && isBackendDown(e) && i < chain.length - 1) {
@@ -1213,7 +1219,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           extraMcp: prep.extraMcp,
           resumeSessionId,
           persistSession: input.persistSession ?? !!input.resumeSessionId,
-          queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
+          queueTimeoutMs: input.queueUntil === undefined ? app.config.agents.queueTimeoutMinutes * 60_000 : Math.max(1, input.queueUntil - Date.now()),
         };
         if (i > 0 && !retry) {
           const network = networkReason(app, chain[0]);
@@ -1288,7 +1294,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         const movable = e instanceof SandboxStartError || (pinned && i === 0 ? busy || down || resumeLost : busy || untouched || down);
         if (e instanceof ResumeRunAt || (e as Error).message === "CANCELLED" || input.signal?.aborted || !movable) throw e;
         if (i === chain.length - 1) {
-          if (scope?.strict && untouched && (busy || down)) await waitForPolicy(app, scope, input.runId);
+          if (!supervising && scope?.strict && untouched && (busy || down)) await waitForPolicy(app, scope, input.runId);
           if (coding) throw new Error(`没有可用且确认不低于原编码档位的后端，已停止，不降档：${(e as Error).message}`, { cause: e });
           throw e;
         }

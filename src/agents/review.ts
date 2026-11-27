@@ -500,6 +500,7 @@ export type LeadResult = {
   /** Accepted findings the owner has to decide (business or product choices), by finding id. */
   owner?: Record<string, { question: string; options: string[] }>;
   /** Accepted findings that are follow-up fixes of a task (it did not come out right, or broke something), by finding id: the task's number. */
+  goals?: Record<string, string>;
   follows?: Record<string, number>;
   stop?: StopReason;
   by: "lead" | "host";

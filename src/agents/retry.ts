@@ -1,3 +1,4 @@
+import { createCodeRound } from "./supervisor-code.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
@@ -18,6 +19,7 @@ export async function retryRun(app: App, id: string, userId?: string): Promise<R
   if (r.kind === "code") {
     const continued = await continueCode(app, r, owner);
     if (continued) return { ...continued, continued: true };
+    return createCodeRound(app, { kind: "code", spaceId: r.spaceId, title: r.title, input: r.input, parentId: r.parentId, lane: r.lane, userId: owner });
   }
   if (r.kind === "agent") {
     // Only work rounds and silent investigations keep their session; others start a new one.
@@ -74,7 +76,7 @@ async function continueCode(app: App, r: Run, owner?: string): Promise<Run | nul
     return queueNextCodeRound(app, chain, String(r.input.task ?? ""), { resumeSessionId: session, manual: true, extraInput })?.run ?? null;
   }
   // Not tied to a conversation (delegated from the web page): the same work, in its worktrees.
-  return createRun(app, {
+  return createCodeRound(app, {
     kind: "code",
     spaceId: r.spaceId,
     title: r.title,
