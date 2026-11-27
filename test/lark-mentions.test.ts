@@ -543,6 +543,56 @@ describe("someone looking for the owner: free checks, a small triage, then maybe
     app.config.agents.default = "handle";
   }, 90000);
 
+  it("帮你回复 first: an answer is the reminder with the reply drafted under it; what it cannot answer goes on to the handling; nothing to say, nothing", async () => {
+    useDecision(false);
+    app.config.mentions.firstLook = true;
+    app.config.mentions.reply.lark.group = "auto";
+    try {
+      const a = msg("@本人 退款口径是什么 [answered]", { thread_id: "omt_fl1" });
+      store([a]);
+      const ran = await waitForRun(app, queueMention(app, group, [a], "ou_owner")!.id);
+      expect(ran.output.handleRun).toBeUndefined();
+      const look = await waitForRun(app, String(ran.output.lookRun));
+      expect(look.status, look.error ?? "").toBe("done");
+      expect(look.kind).toBe("first-look");
+      expect(look.output).toMatchObject({ outcome: "answered", delivered: { to: "dm" } });
+      // The look read what the triage gathered, and every space the owner can.
+      expect(look.input).toMatchObject({ source: "mention", spaces: null, mention: { lastMessageId: a.message_id, reply: "draft" } });
+      // Even with replies on auto, its answer is only a draft under the reminder.
+      const told = notifiedBy(look.id)!;
+      expect(told.title).toBe("小王 在「项目 A 讨论群」找你：问退款口径");
+      expect(JSON.parse(told.context).replyDraft).toBe("快速结论 answered");
+      expect(one(app.db, "select handle_run from reply_samples where id = ?", ran.id)).toMatchObject({ handle_run: look.id });
+      expect(one(app.db, "select decision from handled_messages where channel = 'handled:mention' and message_id = ?", a.message_id)).toMatchObject({ decision: "drafted" });
+
+      const b = msg("@本人 接口一直报 500，帮忙查下", { thread_id: "omt_fl2" });
+      store([b]);
+      const ran2 = await waitForRun(app, queueMention(app, group, [b], "ou_owner")!.id);
+      const look2 = await waitForRun(app, String(ran2.output.lookRun));
+      expect(look2.output).toMatchObject({ outcome: "escalate", delivered: { to: "none" } });
+      expect(notifiedBy(look2.id)).toBeUndefined();
+      const h = getRun(app, String((look2.output.deep as { runId: string }).runId));
+      expect(getRun(app, ran2.id).output.handleRun).toBe(h.id);
+      expect(h.kind).toBe("agent");
+      expect(String(h.input.task)).toContain("# 帮你回复已经看过的");
+      expect(String(h.input.task)).toContain("还要查：查日志");
+      // The handling runs as it did without the look (replies as the settings allow: auto here).
+      expect((h.input.mention as MentionInfo).reply).toBe("auto");
+      await waitForRun(app, h.id);
+
+      const c = msg("@本人 好的收到 [quiet]", { thread_id: "omt_fl3" });
+      store([c]);
+      const ran3 = await waitForRun(app, queueMention(app, group, [c], "ou_owner")!.id);
+      const look3 = await waitForRun(app, String(ran3.output.lookRun));
+      expect(look3.output).toMatchObject({ outcome: "quiet", delivered: { to: "none" } });
+      expect(notifiedBy(look3.id)).toBeUndefined();
+      expect(getRun(app, ran3.id).output.handleRun).toBeUndefined();
+    } finally {
+      app.config.mentions.firstLook = false;
+      app.config.mentions.reply.lark.group = "off";
+    }
+  }, 120000);
+
   it("a handling replies through the tool; auto without the triage's go-ahead becomes a draft", async () => {
     app.config.lark.enabled = true;
     botIn = true;

@@ -126,7 +126,7 @@ describe("持续跟进的规则", () => {
         const first = one<{ id: string }>(app.db, "select id from runs where lane=? and kind='ask'", i.conversationId)!;
         expect((await waitForRun(app, look.id)).output).toMatchObject({ outcome: "answered", delivered: { to: "chat" } });
         expect((await waitForRun(app, first.id)).status).toBe("done");
-        const lookPrompt = promptsOf().find(p => p.includes("# 先看一眼：持续跟进「项目 B 演练」"))!;
+        const lookPrompt = promptsOf().find(p => p.includes("# 帮你回复：持续跟进「项目 B 演练」"))!;
         for (const piece of [c.note!, c.recognize!, "演练开始 项目 B", "PROBE-OUT:om_situation_first"]) expect(lookPrompt).toContain(piece);
         const handler = promptsOf().find(p => p.includes(`# 持续跟进：${i.title}`))!;
         for (const piece of ["PROBE-OUT:om_situation_first", "快速结论 answered", "窗口内别的运行"]) expect(handler).toContain(piece);
@@ -153,7 +153,7 @@ describe("持续跟进的规则", () => {
         expect((await waitForRun(app, runId!)).status).toBe("done");
         const handler = promptsOf().find(p => p.includes(`# 持续跟进：${i.title}`))!;
         expect(handler).toContain("PROBE-OUT:situation-start");
-        expect(handler).toContain("先看一眼没有结论");
+        expect(handler).toContain("帮你回复没有结论");
         expect(sent.find(x => x.op === "create")?.args.data.receive_id).toBe("ou_owner");
         expect(JSON.stringify(sent)).not.toContain("不用查了");
         expect(JSON.stringify(sent)).not.toContain('"action":"continue"');

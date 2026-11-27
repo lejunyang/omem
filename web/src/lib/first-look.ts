@@ -35,7 +35,7 @@ export const PROBE_SAMPLE: Record<Runtime, string> = {
     "// 触发的消息在 OMEM_EVENT（JSON，也从标准输入传进来）；匹配条件的捕获组在 OMEM_CAPTURES。",
     "const event = JSON.parse(process.env.OMEM_EVENT);",
     "const captures = JSON.parse(process.env.OMEM_CAPTURES || \"{}\");",
-    "// 只读：查完把结论打印出来，交给后面的“先看一眼”。",
+    "// 只读：查完把结论打印出来，交给后面的“帮你回复”。",
     "console.log(`消息：${event.message?.text ?? \"\"}`);",
     "console.log(`捕获：${captures[\"1\"] ?? \"（没有）\"}`);",
   ].join("\n"),
@@ -44,13 +44,13 @@ export const PROBE_SAMPLE: Record<Runtime, string> = {
     "import json, os",
     "event = json.loads(os.environ[\"OMEM_EVENT\"])",
     "captures = json.loads(os.environ.get(\"OMEM_CAPTURES\") or \"{}\")",
-    "# 只读：查完把结论打印出来，交给后面的“先看一眼”。",
+    "# 只读：查完把结论打印出来，交给后面的“帮你回复”。",
     "print(\"消息：\", (event.get(\"message\") or {}).get(\"text\", \"\"))",
     "print(\"捕获：\", captures.get(\"1\", \"（没有）\"))",
   ].join("\n"),
   bash: [
     "# 触发的消息在 $OMEM_EVENT（JSON，也从标准输入传进来）；匹配条件的捕获组在 $OMEM_CAPTURES。",
-    "# 只读：查完把结论打印出来，交给后面的“先看一眼”。",
+    "# 只读：查完把结论打印出来，交给后面的“帮你回复”。",
     "echo \"捕获：$OMEM_CAPTURES\"",
   ].join("\n"),
 };
@@ -78,12 +78,12 @@ export function forgetFirstLookOptions() {
 /** The three settings, on a rule's agent action and in a 关注's knobs. `firstTo` absent: the setting `firstLook.to`. */
 export type FirstLookFields = { firstLook?: boolean; probes?: string[]; firstTo?: FirstTo };
 
-/** One sentence for a rule's summary: “先看一眼（预查 a、b）· 第一条私聊发给我”. */
+/** One sentence for a rule's summary: “帮你回复（预查 a、b）· 第一条私聊发给我”. */
 export function firstLookLine(f: FirstLookFields, defaults?: Pick<FirstLookOptions, "to" | "destinations">) {
   if (!f.firstLook) return f.probes?.length ? `预查 ${f.probes.join("、")}` : "";
   const to = f.firstTo ?? defaults?.to;
   const dest = defaults?.destinations.find((d) => d.value === to)?.label ?? (to ? DEST_SHORT[to] : "");
-  return ["先快速看一眼", f.probes?.length ? `预查 ${f.probes.join("、")}` : "", dest ? `第一条${dest}` : ""].filter(Boolean).join(" · ");
+  return ["帮你回复", f.probes?.length ? `预查 ${f.probes.join("、")}` : "", dest ? `第一条${dest}` : ""].filter(Boolean).join(" · ");
 }
 const DEST_SHORT: Record<FirstTo, string> = { chat: "发到群里", dm: "私聊发给我", ephemeral: "群里只有我看得到" };
 

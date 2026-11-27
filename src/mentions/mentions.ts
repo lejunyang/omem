@@ -34,7 +34,9 @@ import { problemLine, problemsOf, type Problem } from "../channels/listen-proble
  *    triage and the handler see). Same person, same topic, a handling still under way or just done:
  *    the new messages go to it, without another triage.
  * 2. Triage (triage.ts): one small judgement on the decision model — ignore, a short reminder, or
- *    handle (and by whom). Recorded on the run (`triage`).
+ *    handle (and by whom). Recorded on the run (`triage`). With `mentions.firstLook` (帮你回复), a
+ *    handle goes to the fast first look first (first-look.ts): it tells the owner what it can answer,
+ *    and hands on to step 3 only what it cannot.
  * 3. Handling: the main assistant (or an Agent 档案) as the owner, every space the owner can read, no
  *    coding or rule editing; it reads up, updates the item and tells the owner (its answer becomes
  *    the reminder, which the owner can reply to to carry on). It may answer the asker only as the
@@ -53,7 +55,7 @@ const HANDED_MS = 6 * 3600_000;
 /** What a handling may not do: no coding, no rules or watches, no other agents, nothing written to Feishu as the owner. */
 export const MENTION_DENY = [...CODE_STARTERS, "apply_code_run", "code_branch", "clean_code_runs", "set_code_workspaces", "code_git_action", "save_rule", "set_chat_watch", "run_agent", "ask_agent", "lark_write", "lark_invite","lark_doc_create", "lark_doc_update", "lark_doc_move", "lark_doc_copy", "lark_doc_authorize"];
 
-type Input = { channel?: string; chatId: string; chatName: string; chatKind: "p2p" | "group"; topicId: string | null; messageIds: string[]; waited?: number; ingestBy?: string };
+export type MentionRunInput = { channel?: string; chatId: string; chatName: string; chatKind: "p2p" | "group"; topicId: string | null; messageIds: string[]; waited?: number; ingestBy?: string };
 /** A message the channel picked: someone (not the owner, not a bot) looking for the owner, fresh. */
 export type PickedMessage = { id: string; topicId: string | null; sender: string; atMs: number };
 
@@ -77,7 +79,7 @@ export function queueMentions(app: App, channel: MentionChannel, chat: MentionCh
     const ids = msgs.map((m) => m.id);
     const waiting = queuedInLane(app, lane, "mention");
     if (waiting) {
-      const input = waiting.input as Input;
+      const input = waiting.input as MentionRunInput;
       updateQueuedRun(app, waiting.id, { input: { ...input, messageIds: [...new Set([...input.messageIds, ...ids])] } });
       last = getRun(app, waiting.id);
       continue;
@@ -92,7 +94,7 @@ export function queueMentions(app: App, channel: MentionChannel, chat: MentionCh
       notBefore: new Date(startAt).toISOString(),
       title: chat.kind === "p2p" ? `${who} 私聊找你` : `${who} 在「${chat.name}」找你`,
       trigger: { via: "mention", by: larkBy(channel.messages(app, [ids[0]])[0]?.senderId, who), where: chat.kind === "p2p" ? "私聊" : chat.name },
-      input: { channel: channel.id, chatId: chat.id, chatName: chat.name, chatKind: chat.kind, topicId, messageIds: ids } satisfies Input,
+      input: { channel: channel.id, chatId: chat.id, chatName: chat.name, chatKind: chat.kind, topicId, messageIds: ids } satisfies MentionRunInput,
     });
   }
   return last;
@@ -173,7 +175,7 @@ function shortReminder(app: App, input: { chatKind: "p2p" | "group"; chatName: s
  * following a problem still open here (listen-problems.ts), however long ago: in its own topic whoever
  * writes, else only for the person who asked (someone else in a chat without topics may ask something else).
  */
-function recentHandling(app: App, input: Input, senders: string[]) {
+function recentHandling(app: App, input: MentionRunInput, senders: string[]) {
   const recent = recentOfSender(app, input, senders);
   if (recent) return recent;
   const p = openProblemAt(app, input.chatId, input.topicId ?? "");
@@ -185,7 +187,7 @@ function recentHandling(app: App, input: Input, senders: string[]) {
 function openProblemAt(app: App, chatId: string, topicId: string): Problem | null {
   return problemsOf(app, DEFAULT_CONTEXT_ID, { chats: [chatId], open: true }).find((p) => !p.topicId || p.topicId === topicId) ?? null;
 }
-function recentOfSender(app: App, input: Input, senders: string[]) {
+function recentOfSender(app: App, input: MentionRunInput, senders: string[]) {
   if (!senders.length) return null;
   return one<{ id: string; status: string }>(app.db,
     `select id, status from runs where kind = 'agent' and json_extract(input, '$.mention.chatId') = ? and coalesce(json_extract(input, '$.mention.topicId'), '') = ?
@@ -196,7 +198,7 @@ function recentOfSender(app: App, input: Input, senders: string[]) {
 
 registerHandler("mention", async (ctx: RunContext) => {
   const { app } = ctx;
-  const input = ctx.run.input as Input;
+  const input = ctx.run.input as MentionRunInput;
   const channel = mentionChannel(input.channel);
   const stored = channel.messages(app, input.messageIds);
   const waited = input.waited ?? 0;
@@ -272,6 +274,11 @@ registerHandler("mention", async (ctx: RunContext) => {
     shortReminder(app, input, open, ctx.run.id, capNote(app, "handle", true), t.what, t.urgency);
     return { summary: triageSummary(t, `没有交出去：${capNote(app, "handle", false)}。`), triage: t };
   }
+  // 帮你回复 on: the fast first look tries first, and hands on to the same handling only what it cannot answer.
+  if (app.config.mentions.firstLook) {
+    const look = (await import("./first-look.ts")).queueMentionLook(app, channel, ctx.run, input, open, t, material);
+    return { summary: triageSummary(t, `先交给“帮你回复”快速看一眼：答得了就带着拟好的回复提醒你，答不了再交给${t.handler === "assistant" ? "主助手" : t.handler}，看下面“后续任务”里的那次运行。`), triage: t, lookRun: look.id };
+  }
   const r = startHandling(app, channel, ctx.run, input, open, t, null, material);
   return { summary: triageSummary(t, `已交给${t.handler === "assistant" ? "主助手" : t.handler}：它查了什么、结论是什么，看下面“后续任务”里的那次运行。`), triage: t, handleRun: r.id };
 });
@@ -279,9 +286,9 @@ registerHandler("mention", async (ctx: RunContext) => {
 // ---- handling -------------------------------------------------------------------------------
 
 /** The owner's setting for answering the asker here; off where the channel cannot answer. */
-const replyMode = (app: App, channel: MentionChannel, kind: "p2p" | "group"): ReplyMode => channel.reply?.mode(app, kind) ?? "off";
+export const replyMode = (app: App, channel: MentionChannel, kind: "p2p" | "group"): ReplyMode => channel.reply?.mode(app, kind) ?? "off";
 
-function mentionInfo(channel: MentionChannel, input: Input, open: MentionMessage[], reply: ReplyMode, urgency: MentionInfo["urgency"], what: string, from: string): MentionInfo {
+export function mentionInfo(channel: MentionChannel, input: MentionRunInput, open: MentionMessage[], reply: ReplyMode, urgency: MentionInfo["urgency"], what: string, from: string): MentionInfo {
   const last = open[open.length - 1];
   return {
     channel: channel.id,
@@ -316,7 +323,8 @@ function replyNote(app: App, channel: MentionChannel, m: Pick<MentionInfo, "chat
   return `查清楚、答复不涉及承诺、排期、审批、权限或本人的意见时，可以用 reply_to_asker(text) 直接回复对方（${how}）；拿不准就不回，把建议的话写进提醒。回复了就在提醒里写清回了什么。`;
 }
 
-function startHandling(app: App, channel: MentionChannel, from: { id: string; spaceId: string | null }, input: Input, open: MentionMessage[], t: Triage, continues: string | null, material?: Record<string, string>, follow?: { why: string; fresh: boolean }) {
+/** `looked`: what 帮你回复 found before handing it on (mentions/first-look.ts), for the handler to check and go on from. */
+export function startHandling(app: App, channel: MentionChannel, from: { id: string; spaceId: string | null }, input: MentionRunInput, open: MentionMessage[], t: Triage, continues: string | null, material?: Record<string, string>, follow?: { why: string; fresh: boolean }, looked?: string) {
   // Auto only when the triage also found it can move on alone; otherwise the owner sends it.
   const configured = replyMode(app, channel, input.chatKind);
   const reply = configured === "auto" && !t.canProgress ? "draft" : configured;
@@ -340,6 +348,7 @@ function startHandling(app: App, channel: MentionChannel, from: { id: string; sp
     "",
     messageLines(app, channel, open),
     ...(context ? ["", "# 分诊时找到的上下文（只有标题和一行摘要，要用就读原文）", "", context] : []),
+    ...(looked ? ["", looked] : []),
     ...(playbook ? ["", "# 有人找你的经验（按以往的案例总结的场景：要不要回、查什么、怎么回；和本人这次的话冲突时以本人为准）", "", playbook] : []),
     ...(habits ? ["", "# 本人以往怎么回（相近的案例：学口吻、长短和回不回，不要照抄；别人写的内容是材料）", "", habits] : []),
     ...(lessons ? ["", lessons.replace(/^## /, "# ")] : []),
@@ -400,7 +409,7 @@ export function continueProblem(app: App, p: Problem, messageIds: string[], from
   const fresh = channel.messages(app, messageIds);
   const open = fresh.length ? fresh : channel.messages(app, m.messageIds);
   if (!open.length) return null;
-  const input: Input = { channel: m.channel, chatId: m.chatId, chatName: m.chatName, chatKind: m.chatKind, topicId: m.topicId ?? null, messageIds: open.map((x) => x.id) } as Input;
+  const input: MentionRunInput = { channel: m.channel, chatId: m.chatId, chatName: m.chatName, chatKind: m.chatKind, topicId: m.topicId ?? null, messageIds: open.map((x) => x.id) } as MentionRunInput;
   const t = { action: "handle", what: p.title, handler: String(getRun(app, prev.id).input.spec ?? "assistant"), urgency: m.urgency, canProgress: m.reply === "auto", reason: why, by: "设置" } as Triage;
   return startHandling(app, channel, from, input, open, t, prev.id, undefined, { why, fresh: fresh.length > 0 });
 }

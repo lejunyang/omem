@@ -38,13 +38,13 @@ export function continuedMaterial(app: App, look: Run, input: FirstLookInput, me
     else missing = true;
   }
   return [
-    `${OWNER_CONTINUED}：本人看了先看一眼的结论，请继续核对和补查。`,
+    `${OWNER_CONTINUED}：本人看了帮你回复的结论，请继续核对和补查。`,
     input.listen ? `要接着查的原消息：\n${messages.map((message) => `- ${message.sender}（飞书消息 ${message.id}）：${truncate(message.text, 1500)}`).join("\n")}` : "",
-    typeof text === "string" && text ? `先看一眼的结论：\n${text}` : `先看一眼的结论见运行 ${look.id}`,
+    typeof text === "string" && text ? `帮你回复的结论：\n${text}` : `帮你回复的结论见运行 ${look.id}`,
     outcome?.evidence ? `依据：\n${outcome.evidence}` : "",
     outcome?.next ? `还要查：${outcome.next}` : "",
-    outcome?.reason ? `先看一眼的说明：${outcome.reason}` : "",
+    outcome?.reason ? `帮你回复的说明：${outcome.reason}` : "",
     results.length ? `预查结果：\n${probesText(results, 2500)}` : "",
-    missing ? `预查结果见先看一眼运行 ${look.id}` : "",
+    missing ? `预查结果见帮你回复运行 ${look.id}` : "",
   ].filter(Boolean).join("\n\n");
 }

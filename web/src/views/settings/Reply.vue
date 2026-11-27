@@ -48,7 +48,7 @@ const fastAI = computed(() => {
   if (role || models) {
     const backend = role || a.default || "";
     const m = (backend && models?.[backend]) || undefined;
-    return { what: [backend || "默认后端", m?.model, m?.effort].filter(Boolean).join(" · "), from: "按你在 Agent 页给“先看一眼”指定的" };
+    return { what: [backend || "默认后端", m?.model, m?.effort].filter(Boolean).join(" · "), from: "按你在 Agent 页给“帮你回复”指定的" };
   }
   const cheap = a.tiers?.cheap as { profile: string; model?: string; effort?: string } | undefined;
   if (cheap) return { what: [cheap.profile, cheap.model].filter(Boolean).join(" · ") + " · low", from: `跟随“省的”档位，用低 effort（后端没有 low 时用档上写的${cheap.effort ? ` ${cheap.effort}` : ""}，再没有用最低一档）` };
@@ -60,7 +60,7 @@ const skipKeys = [
   { key: "replied" as const, label: "在那里回复了" },
 ];
 function saveMentions(patch: Record<string, unknown>, note = "已保存") {
-  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 1000 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } };
+  const cur = config.value.mentions ?? { enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 1000 }, firstLook: false, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } };
   void saveConfig({ mentions: { ...cur, ...patch } }, note);
 }
 /** Answering the asker is per channel (`mentions.reply.<channel>`); Feishu is the one there is. */
@@ -166,6 +166,10 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
       <div v-if="replyStats?.samples" class="set-pad small muted">
         <p>近 60 天 {{ replyStats.samples }} 条找你的消息：<template v-if="replyStats.drafts">拟了 {{ replyStats.drafts }} 条回复，照发 {{ replyStats.sent }}、改后发 {{ replyStats.edited }}、没发 {{ replyStats.dropped }}<template v-if="reasonText(replyStats.reasons)">（{{ reasonText(replyStats.reasons) }}）</template>；</template>你自己回了 {{ replyStats.ownReplies }} 条<template v-if="replyStats.typicalLength">，通常 {{ replyStats.typicalLength }} 字左右</template>，没回 {{ replyStats.noReply }} 条。之后的分诊和草稿会参照这些。</p>
       </div>
+      <SetRow :keys="['mentions.firstLook']" label="先帮你回复" :off="off">
+        <template #hint><HelpText>值得查的先交给快模型（Agent 页的“帮你回复”角色）在 {{ fl?.budgetSec ?? 90 }} 秒内看一眼：答得了就马上提醒你结论，拟好给对方的回复附在下面（“替你回复对方”是自动也只拟草稿，你点了才发；关着时写在提醒里）；要你拍板的提醒你定；不用回的不打扰你；答不了才交给主助手接着查，带上它看到的。比直接交给主助手快、省，但它答完的不会顺手记事项、跟进问题。</HelpText></template>
+        <UiCheckbox :model-value="!!config.mentions?.firstLook" switch :disabled="off" aria-label="先帮你回复" @change="(v) => saveMentions({ firstLook: v }, v ? '值得查的先帮你回复' : '值得查的直接交给主助手')" />
+      </SetRow>
 
       <SetRow label="次数和时限" hint="没有决策模型时怎么分诊、每天最多几次、查多久" :off="off">
         <button class="btn ghost sm" :aria-expanded="showMore" @click="showMore = !showMore">{{ showMore ? "收起" : "展开" }}</button>
@@ -199,18 +203,18 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
     </SetCard>
 
     <SetCard id="set-first-look" title="快速通道" :keys="['firstLook']">
-      <template #help>规则或关注打开“先快速看一眼”后，消息一来先跑选的预查，再让快模型在 {{ fl?.budgetSec ?? 90 }} 秒内看一眼：答完了、要接着查、要你定。只有要接着查才起深查。这里定第一条消息默认发到哪，每条规则和每个关注可以自己改。</template>
+      <template #help>规则或关注打开“帮你回复”后，消息一来先跑选的预查，再让快模型在 {{ fl?.budgetSec ?? 90 }} 秒内看一眼：答完了、要接着查、要你定。只有要接着查才起深查。这里定第一条消息默认发到哪，每条规则和每个关注可以自己改。有人找你用上面的“先帮你回复”，结论总是作为提醒发给你。</template>
       <SetRow label="第一条消息默认发到哪" block>
         <UiSegmented :model-value="firstTo" size="sm" :options="FIRST_TO" aria-label="第一条消息默认发到哪" @change="(v) => saveFirstTo(v as FirstTo)" />
         <template #hint>{{ FIRST_TO_EFFECT[firstTo] }}</template>
       </SetRow>
-      <SetRow label="先看一眼用的 AI" block>
+      <SetRow label="帮你回复用的 AI" block>
         <div class="fast-ai">
           <code v-if="fastAI">{{ fastAI.what }}</code>
           <span v-else class="muted">看不到 AI 的设置</span>
           <router-link to="/agents?tab=agents&role=first-look" class="small">在 Agent 页换</router-link>
         </div>
-        <template v-if="fastAI" #hint>{{ fastAI.from }}。和其他内置角色一样，在 Agent 页的“先看一眼”角色里改后端、模型和思考强度。</template>
+        <template v-if="fastAI" #hint>{{ fastAI.from }}。和其他内置角色一样，在 Agent 页的“帮你回复”角色里改后端、模型和思考强度。</template>
       </SetRow>
       <SetRow v-if="fl" label="预查库" :hint="fl.probes.length ? `${fl.probes.length} 个预查：${fl.probes.slice(0, 3).map((p) => p.name).join('、')}${fl.probes.length > 3 ? ' 等' : ''}` : '还没有预查'">
         <router-link to="/rules/probes" class="btn sm">管理预查</router-link>

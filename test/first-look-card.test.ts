@@ -67,7 +67,7 @@ it("私聊卡片只让本人交接一次，旧预查没有全文时链接运行"
   expect(JSON.stringify(accepted[0].card)).not.toContain('"action":"continue"');
   const [deep] = listRuns(app, { parentId: look.id, kind: "agent" });
   expect(listRuns(app, { parentId: look.id, kind: "agent" })).toHaveLength(1);
-  for (const part of ["本人要求接着查", outcome.text, outcome.evidence!, outcome.next!, outcome.reason!, `预查结果见先看一眼运行 ${look.id}`]) expect(deep.input.task).toContain(part);
+  for (const part of ["本人要求接着查", outcome.text, outcome.evidence!, outcome.next!, outcome.reason!, `预查结果见帮你回复运行 ${look.id}`]) expect(deep.input.task).toContain(part);
   expect(handlingOf(app, "om_export").map((entry) => entry.decision)).toEqual(["drafted", "handed"]);
   expect((await click(delivered.messageId!, "stop")).toast.content).toBe("已停下深查");
   expect(getRun(app, deep.id).status).toBe("cancelled");
@@ -132,7 +132,7 @@ it("在群里公开答复或情境照常跟进时没有接着查", async () => {
   const { delivered } = await ruleLook("chat", outcome);
   expect(delivered.interactionId).toBeNull();
   expect(sent[0].content).not.toContain("接着查");
-  const look = createRun(app, { kind: "first-look", title: "情境先看一眼" });
+  const look = createRun(app, { kind: "first-look", title: "情境帮你回复" });
   const input: FirstLookInput = { source: "situation", userId: OWNER, messages: [], brief: "", probes: [], to: "dm", direct: false, situation: { instanceId: "example", contextId: "example", name: "项目 A 演练", text: "演练开始", event: {} } };
   await deliverFirst(app, look, input, [], outcome);
   expect(sent.at(-1)!.content).toContain("照常跟进");
