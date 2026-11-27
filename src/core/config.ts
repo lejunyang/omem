@@ -1,4 +1,4 @@
-import { builtinGroups, emptyGroups, groupsSchema, policySchema } from "./ai-policy-schema.ts";
+import { emptyGroups, groupsSchema, policySchema } from "./ai-policy-schema.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1555,16 +1555,9 @@ export function loadConfig(home = omemHome()): Config {
  * been turned on anywhere yet, so this can go after a release or two.
  */
 export function moveOldSettings(raw: Record<string, any>) {
-  const agents = raw.agents;
-  if (agents && agents.groups === undefined) {
-    agents.groups = Object.entries(builtinGroups).map(([id, name]) => ({
-      id, name, items: agents.tiers?.[id] ? [agents.tiers[id]] : [],
-    }));
-    if (agents.routing?.candidates?.length) agents.groups.push({
-      id: "candidates", name: "候选",
-      items: agents.routing.candidates.map(({ when, ...pick }: { when: string; profile: string }) => ({ ...pick, note: when }))
-    });
-  }
+  // The old tiers and routing candidates are not copied into `agents.groups`: an empty built-in group
+  // (and a missing `candidates` group) reads them where they are (agents/ai-policy.ts groupItems), so
+  // the settings page that still edits them keeps working. Saving groups (PUT /api/ai/groups) moves them.
   const old = raw?.lark?.mentions;
   if (!old || typeof old !== "object") return raw;
   delete raw.lark.mentions;

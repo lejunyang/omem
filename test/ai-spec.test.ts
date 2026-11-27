@@ -112,7 +112,9 @@ it("本人点名、成员点名及默认值保存分别校验", async () => {
   await group("/agent claude");
   expect(updateThread(app, named.thread.id, { settings: { profile: "codex" } }).settings.ownerNamedAi).toBeUndefined();
 });
-it("组名和后端名同样检查成员账号", () => {
+// A member's own-account rule only blocks where their runs can be isolated (Linux sandbox); elsewhere
+// the run borrows the owner's login (agents/accounts.ts accountBlocked), so the block is not observable.
+it.skipIf(process.platform === "win32")("组名和后端名同样检查成员账号", () => {
   createUser(app, { id: "member", name: "成员" });
   app.config.agents.accounts.codex = "own";
   for (const text of ["/codex", "/强"]) {

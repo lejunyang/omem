@@ -68,7 +68,7 @@ it.each([
   }
 }, 60_000);
 
-it("加载旧配置后，流程档位不接管普通运行，旧候选仍可和角色默认 AI 比较", async () => {
+it("加载旧配置后，档位和候选留在原处，选型照旧，流程档位不接管普通运行", async () => {
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -85,15 +85,19 @@ it("加载旧配置后，流程档位不接管普通运行，旧候选仍可和�
       const app = testApp(home);
       try {
         const opt = { scene: "tasks" as const, who: "ingest", task: "整理项目记录", current: profiles[0] };
-        const result = await chooseAI(app, opt);
-        if (!useCandidates) { expect(result).toBeNull(); continue; }
-        expect(result?.order.map(p => p.id)).toEqual(["original", "alternate"]);
+        // Nothing was copied into the groups: the settings page that edits tiers and candidates still applies.
+        expect(app.config.agents.groups.every(g => !g.items.length)).toBe(true);
+        // As before the rules: without a decision model, a run of this kind is not re-chosen.
+        expect(await chooseAI(app, opt)).toBeNull();
+        if (!useCandidates) continue;
         app.config.ai.providers = [{ id: "d", name: "测试", kind: "openai", backends: [] }];
         app.config.ai.decision.provider = "d";
         setKey(home, "d", "test-key");
-        setDecisionFetchForTests(async () => Response.json({ answers: [{ name: "q", type: "choice", choice: "candidates",
-          probabilities: [{ value: "ai:original · demo", probability: 0.1 }, { value: "candidates", probability: 0.9 }] }] }));
-        expect((await chooseAI(app, opt))?.order.map(p => p.id)).toEqual(["alternate", "original"]);
+        setDecisionFetchForTests(async () => Response.json({ answers: [{ name: "q", type: "choice", choice: "c1",
+          probabilities: [{ value: "keep", probability: 0.1 }, { value: "c1", probability: 0.9 }] }] }));
+        const order = (await chooseAI(app, opt))?.order.map(p => p.id);
+        expect(order).toEqual(["alternate", "original"]);
+        expect(order).not.toContain("flow-ai");
       } finally { app.db.close(); }
     }
   } finally { rmSync(home, { recursive: true, force: true }); }

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { configSchema, loadConfig, mergeConfig, saveConfig } from "../src/core/config.ts";
+import { groupItems } from "../src/agents/ai-policy.ts";
 
 it("merges only what changed since loading", () => {
   const base = { a: 1, b: { c: 2, d: [1] }, e: { f: 1 } };
@@ -62,16 +63,20 @@ it("accepts a search API on localhost or the LAN and only http(s)", () => {
   for (const bad of ["ftp://example.com/v1", "javascript:alert(1)", "api.example.com/v1"]) expect(url(bad), bad).toBe(false);
 });
 
-it("旧档位与任务候选原样迁入有序组，重新加载保留新组", () => {
+it("旧档位与任务候选留在原处，空的组读它们；保存过的组重新加载后保留", () => {
   const home = mkdtempSync(join(tmpdir(), "omem-ai-policy-"));
   const ai = { profile: "example", model: "small", effort: "low" };
   writeFileSync(join(home, "config.json"), JSON.stringify({ agents: { tiers: { cheap: ai }, routing: { candidates: [{ ...ai, when: "短任务" }] } } }));
   const config = loadConfig(home);
-  expect(config.agents.groups.map(g => [g.id, g.items])).toEqual([
-    ["strong", []], ["standard", []], ["cheap", [ai]], ["candidates", [{ ...ai, note: "短任务" }]],
-  ]);
+  // Not copied: the settings page that still edits tiers and candidates keeps taking effect.
+  expect(config.agents.groups.map(g => [g.id, g.items])).toEqual([["strong", []], ["standard", []], ["cheap", []]]);
+  expect(groupItems({ config }, "cheap")).toEqual([ai]);
+  expect(groupItems({ config }, "candidates")).toEqual([{ ...ai, note: "短任务" }]);
+  config.agents.tiers.cheap = { profile: "edited" };
+  expect(groupItems({ config }, "cheap")).toEqual([{ profile: "edited" }]);
   config.agents.groups[2].items.push({ profile: "second" });
   saveConfig(config, home);
   expect(loadConfig(home).agents.groups).toEqual(config.agents.groups);
+  expect(groupItems({ config: loadConfig(home) }, "cheap")).toEqual([{ profile: "second" }]);
   expect(config.agents.policy).toEqual({ deny: [], classes: {} });
 });
