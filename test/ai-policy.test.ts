@@ -70,3 +70,17 @@ it("近七天的选择计入类别，包括升级前只有运行类型的记录"
   expect(policyUsage(app)).toEqual([{ class: "routine", profile: "second", model: "gpt-sol", effort: "low", count: 2 }]);
   app.db.close();
 });
+
+it("后端按 Agent 程序认，没指定模型时只用已知的默认模型族", () => {
+  for (const model of ["gemini-neon", undefined]) {
+    for (const extra of [{ source: "antigravity" }, { stateLayout: "antigravity" }, { command: "demo/bin/agy.cmd" }]) {
+      const custom = { id: "my-google-acp", model, ...extra };
+      for (const sel of ["model:gemini", "backend:antigravity", "backend:gemini"]) expect(matchesSelector(sel, custom)).toBe(true);
+    }
+  }
+  expect(matchesSelector("backend:claude", { id: "remote", peer: { id: "other", agent: "claude-cli" }, source: "codex" })).toBe(true);
+  expect(matchesSelector("backend:claude", { id: "claude@demo", source: "key:demo" })).toBe(true);
+  expect(matchesSelector("model:gpt", { id: "codex@demo", source: "key:demo" })).toBe(true);
+  expect(matchesSelector("model:gemini", { id: "unknown-gemini-wrapper" })).toBe(false);
+  expect(matchesSelector("model:gemini", { id: "antigravity-acp", model: "custom-model" })).toBe(false);
+});

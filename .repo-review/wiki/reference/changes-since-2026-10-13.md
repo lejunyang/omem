@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-27
 ---
 
+## 自定义后端按实际程序匹配规则（2026-11-27）
+
+`src/agents/backend-names.ts` 统一识别本地、密钥和远端后端的程序。后端换了编号仍受同一条规则约束；没有给出型号时，只对 Codex、Claude、Gemini 和 Antigravity 采用已知的默认模型族。
+
 ## 运行入口按允许的组选择和接手（2026-11-27）
 
 从 `src/agents/choose-ai.ts` 的 `chooseAI` 读起。新会话和后台运行先检查类别规则与成员账号，再把前三个可用组交给决策模型。组内按时段和可用情况选择后端。首选失败后沿用同一次判断的顺序，后续组保留设置中的先后。概率门槛和最小领先差距分别由 `ai.decision.thresholds.route` 和 `ai.decision.routeMinGap` 控制，默认 0.55 和 0.15。

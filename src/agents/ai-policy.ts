@@ -6,6 +6,7 @@ import { HttpError } from "../core/util.ts";
 import { modelDisplayName } from "../core/ai-keys.ts";
 import { backendAvailable } from "./availability.ts";
 import { downReason, excluded, hasRoom } from "./capacity.ts";
+import { backendProgram, commonBackendAliases, defaultModelFamilies, normalizeProgram } from "./backend-names.ts";
 import { modelFamily } from "./families.ts";
 import { quotaAvoid } from "./quota.ts";
 import { runClass, runClasses, type RunClass } from "./run-classes.ts";
@@ -17,15 +18,21 @@ const parseAI = (text: string): PickAI => {
   const [profile, model, effort] = text.split("·").map(x => x.trim());
   return { profile, model, effort };
 };
-const backend = (name: string) => name.split("@")[0].replace(/-cli$/, "");
-export type PolicyAI = Pick<AgentProfile, "id" | "model" | "effort" | "peer" | "keyRef">;
+export type PolicyAI = Pick<AgentProfile, "id" | "model" | "effort" | "peer" | "keyRef" | "source" | "stateLayout"> & { command?: string };
 const sameAI = (ai: PickAI, p: PolicyAI) => ai.profile === p.id && (!ai.model || ai.model === p.model) && (!ai.effort || ai.effort === p.effort);
 export function matchesSelector(selector: string, p: PolicyAI): boolean {
   const pos = selector.indexOf(":");
   const value = selector.slice(pos + 1).trim();
   switch (selector.slice(0, pos)) {
-    case "backend": return backend(p.peer?.agent ?? p.id) === backend(value);
-    case "model": return modelFamily({ profile: p.peer?.agent ?? (p.id === "antigravity" ? "gemini" : p.id), model: p.model }) === (modelFamily({ model: value }) ?? value);
+    case "backend": {
+      const program = backendProgram(p);
+      const wanted = normalizeProgram(value);
+      return program === wanted || program === commonBackendAliases[wanted];
+    }
+    case "model": {
+      const family = p.model ? modelFamily({ model: p.model }) : defaultModelFamilies[backendProgram(p)];
+      return family === (modelFamily({ model: value }) ?? value);
+    }
     case "key": return p.keyRef === value;
     case "ai": return sameAI(parseAI(value), p);
     default: return false;

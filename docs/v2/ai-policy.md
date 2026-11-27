@@ -95,7 +95,7 @@ policy:
 
 | 写法 | 排除什么 |
 | --- | --- |
-| `backend:claude` | 这个 Agent 程序的所有形态：ACP 版、命令行后备（claude-cli）、API key 生成的（claude@编号）、别的设备上的（peer 的 agent 是 claude） |
+| `backend:claude` | 这个 Agent 程序的所有形态：ACP 版、命令行后备（claude-cli）、API key 生成的（claude@编号）、别的设备上的（peer 的 agent 是 claude）及自定义编号。依次按 peer 的 agent、程序来源、状态目录类型、目录里的启动命令、后端编号识别程序 |
 | `model:gemini` | 这一家的模型，在哪个后端上跑都算（按 `families.ts` 认：gemini / claude / gpt / deepseek / doubao / qwen……） |
 | `ai:traex · deepseek-v4.1-flash` | 某个后端上的某个模型（强度不写就是全部） |
 | `key:<编号>` | 某个 API key 生成的全部后端 |
