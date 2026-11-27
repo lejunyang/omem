@@ -8,6 +8,7 @@ updated: 2026-11-28
 ## 云端后端调工具（2026-11-28）
 
 - 试验、编码和评审、带工作区或要求运行本机命令的阶段只走本机后端。流程用 `by.run.local: true` 声明；入口见 `src/flows/engine.ts` 和 `src/agents/runner.ts`。
+- 云端工具凭据按活动运行续期。名单外的调用返回本轮工具及用途，无头 GET 可用 next 继续。工具失败事件写截断脱敏的原因。角色说明按 HTTP 名单裁剪。见 `src/agents/cloud-tools.ts` 和 `instruction-sections.ts`。
 
 ## 进度块的任务行对齐（2026-11-28）
 

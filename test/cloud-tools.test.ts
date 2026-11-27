@@ -16,7 +16,7 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
   const profile = agentProfileSchema.parse({ id: "cloud-a", command: "unused", transport: "doubao" });
   app.config.agents.profiles = [profile];
   app.config.webUrl = "https://8.8.8.8";
-  Object.assign(app.config.agents.cloudTools, { enabled: true, backends: [profile.id], credentialIn: "message", maxCalls: 5 });
+  Object.assign(app.config.agents.cloudTools, { enabled: true, backends: [profile.id], credentialIn: "message", maxCalls: 6 });
   const probe = await probeCloud(app, profile.id, async (_app, _p, req) => {
     const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
     return { text: fakeCloudReceipt(app, nonce, mode), agent: "test", stopReason: "end_turn" };
@@ -37,7 +37,7 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
   const events: unknown[] = [];
   let first = "";
   const req = { cwd: app.home, prompt: "任务", system: "常驻说明", runId: id };
-  const perform = async (choice: "read" | "revoke" | "expire" | "cancel" | "finished" | "large", ctrl = new AbortController()) => cloudTurn(app, profile, ctx, { ...req, signal: ctrl.signal }, e => events.push(e), async (turn, emit) => {
+  const perform = async (choice: "read" | "revoke" | "renew" | "cancel" | "finished" | "large", ctrl = new AbortController()) => cloudTurn(app, profile, ctx, { ...req, signal: ctrl.signal }, e => events.push(e), async (turn, emit) => {
     first = turn.prompt.match(/oct_[\w-]+/)![0];
     expect(turn.system).toBe(req.system);
     expect(turn.mcp).toBeUndefined();
@@ -53,9 +53,12 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
       run(app.db, "update runs set status='done' where id=?", id);
       try { await expect(cloudRequest(app, first, mode)).rejects.toThrow("授权已结束"); }
       finally { run(app.db, "update runs set status='running' where id=?", id); }
-    } else if (choice === "expire") {
+    } else if (choice === "renew") {
       const time = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31 * 60000);
-      try { await expect(cloudRequest(app, first, mode)).rejects.toThrow("过期"); } finally { time.mockRestore(); }
+      try {
+        expect(cloudUsage(app).activeCredentials).toBe(1);
+        await expect(cloudRequest(app, first, mode, "read_source", args)).resolves.toMatchObject(expected);
+      } finally { time.mockRestore(); }
     } else if (choice === "revoke") {
       expect(revokeCloud(app)).toBe(1);
       await expect(cloudRequest(app, first, mode)).rejects.toThrow("作废");
@@ -64,7 +67,7 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
       run(app.db, "update runs set status='running' where id=?", other);
       await cloudTurn(app, profile, { ...ctx, runId: other, tools: new Set() }, { ...req, runId: other }, () => {}, async otherTurn => {
         const otherSecret = otherTurn.prompt.match(/oct_[\w-]+/)![0];
-        await expect(cloudRequest(app, otherSecret, mode, "read_source", args)).rejects.toThrow("名单");
+        await expect(cloudRequest(app, otherSecret, mode, "read_source", args)).resolves.toMatchObject({ isError: true, text: expect.stringContaining("本轮可用：无") });
         expect(JSON.stringify(runEvents(app, other))).toContain("read_source");
         return { text: "", agent: "test", stopReason: "end_turn" };
       });
@@ -78,8 +81,9 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
       const denied = await cloudRequest(app, secret, mode, "read_source", { source: outside });
       expect(denied).toMatchObject({ isError: true });
       secret = denied.next?.split("/").pop() ?? first;
-      await expect(cloudRequest(app, secret, mode, "remember", {})).rejects.toThrow("名单");
-      if (mode === "header") await expect(cloudRequest(app, first, mode)).rejects.toThrow("用完");
+      const unavailable = await cloudRequest(app, secret, mode, "remember", {});
+      expect(unavailable).toMatchObject({ isError: true, text: expect.stringContaining("本轮可用：read_source（读原件）") });
+      await expect(cloudRequest(app, unavailable.next?.split("/").pop() ?? first, mode)).rejects.toThrow("用完");
     }
     emit({ type: "thought", text: first });
     return { text: first, agent: "test", stopReason: "end_turn" };
@@ -88,7 +92,7 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
     await perform("large");
     await perform("cancel");
     await perform("finished");
-    await perform("expire");
+    await perform("renew");
     await perform("revoke");
     const result = await perform("read");
     expect(result.text).not.toContain(first);
@@ -97,6 +101,12 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
     const recorded = JSON.stringify(runEvents(app, id));
     expect(recorded).toContain("cloud-http");
     expect(recorded).toContain(inside);
+    const reasons = runEvents(app, id).filter(e => e.type === "tool" && (e.data as { status?: string }).status === "failed");
+    expect(reasons).toEqual(expect.arrayContaining([
+      expect.objectContaining({ data: expect.objectContaining({ title: "remember", output: expect.stringContaining("read_source（读原件）") }) }),
+      expect.objectContaining({ data: expect.objectContaining({ title: "read_source", output: expect.stringContaining("原件") }) }),
+      expect.objectContaining({ data: expect.objectContaining({ title: "云端工具请求", output: expect.stringContaining("调用次数") }) }),
+    ]));
     expect(JSON.stringify([events, recorded, all(app.db, "select * from audit_events")])).not.toContain("oct_");
   } finally { app.db.close(); }
 });

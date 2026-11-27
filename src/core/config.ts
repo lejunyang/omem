@@ -23,7 +23,7 @@ export const cloudToolsSchema = z.object({
    */
   privateAddress: z.boolean().default(false),
   tools: z.array(z.enum(cloudToolNames)).max(cloudToolNames.length).default(["search", "read_source"]),
-  ttlMinutes: z.number().int().min(1).max(30).default(15),
+  ttlMinutes: z.number().int().min(1).max(30).default(15).describe("云端工具凭据的续期窗口（分钟）。运行仍在执行时可续期，运行结束即作废"),
   maxCalls: z.number().int().min(1).max(100).default(32),
   backends: z.array(z.string().min(1)).max(100).default([]),
   credentialIn: z.enum(["channel", "message"]).default("channel"),
