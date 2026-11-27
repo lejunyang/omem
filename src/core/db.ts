@@ -2515,6 +2515,20 @@ export const migrations: readonly string[] = [
    update credential_holds set state='logged-in', refresh_at=0, error='正在重试续签：先前续签或供给失败'
      where user_id!='owner' and state='expired' and error='续签或供给失败，请重新授权';`,
   `create index ai_choice_at on run_events(at) where type='status' and json_type(data,'$.choice')='object';`,
+  // Resolve outcomes at read time so that late owner feedback and withdrawals are reflected.
+  `alter table decisions add column route text;
+   create view route_decision_outcomes as
+     select d.id, d.at, d.ref, json_extract(d.route,'$.classId') class_id, json_extract(d.route,'$.by') ordering,
+       case
+         when json_extract(r.output,'$.replacedBy') is not null then 'rerun'
+         when exists (select 1 from feedback f where f.run_id=d.ref and f.actor_kind='owner'
+           and f.on_bot=1 and f.polarity='negative' and f.removed_at is null) then 'negative'
+         when exists (select 1 from run_events e where e.run_id=d.ref and e.at>=d.at and e.type='status'
+           and json_type(e.data,'$.failover')='object') then 'replaced'
+         when r.status='done' then 'completed'
+         when r.status='failed' then 'failed'
+       end outcome
+     from decisions d left join runs r on r.id=d.ref where d.scene='route';`,
 ];
 
 export type Db = DatabaseSync;

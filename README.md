@@ -450,7 +450,7 @@ omem import-v1 path/to/old/omem.db          # 从 v1 导入原件、记忆和事
 omem memories stats|check|prune|rejections  # 记忆质量：按模型统计、用写入检查过一遍旧记忆、撤回不合格的、看被拒绝的写入
 omem skills [take-over [--dry-run] [--on]|restore|group <技能> <分组>]  # 技能分组；接管各 Agent 自带的技能目录，只留 omem 说明和每组的总入口
 omem roles [list|customize|reset|merge] <名>  # 内置角色：复制到知识库自定义、恢复源码版本、合并源码更新（冲突交给模型）
-omem decision report [--days N]                  # 决策场景的门槛、结果与校准建议
+omem decision report [--days N]                  # 决策场景的门槛与结果，按任务类别比较 AI 组选型完成率
 omem decision replay --scene <scene> --model <提供方ID>:<模型> [--days 30] [--limit 200]  # 只读回放比较
 omem replay [list] / omem replay run [--run <运行id>] [--axis M1]  # 夜间复盘：看状态和结论；立即复盘（不给 --run 时按选题规则挑 replay.max 题）
 omem agents [--all]                         # 查看 Agent 配置与安装状态（--all 含未安装的和安装方式）

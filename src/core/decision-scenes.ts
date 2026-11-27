@@ -1,5 +1,6 @@
 /** 场景定义同时供配置、设置页和报告使用。门槛只限制 risky，其他答案照常执行。 */
 export const DECISION_SCENES = {
+  route: { label: "AI 组选型", risky: "decision", cautious: "static", default: 0.55, help: "首选组达到门槛并领先第二名至少 0.15 时采用模型排序，否则按规则里的组顺序。" },
   heartbeat: { label: "巡检预筛", risky: "no", cautious: "yes", default: 0.6, help: "有这么大把握不用看，才跳过助手巡检。" },
   watch: { label: "盯群预筛", risky: "no", cautious: "yes", default: 0.6, help: "有这么大把握不用看，才跳过这一批群聊。" },
   follow: { label: "事项上下文预筛", risky: "no", cautious: "yes", default: 0.6, help: "有这么大把握无关，才跳过这件事的新内容。" },
@@ -22,4 +23,10 @@ export type DecisionSceneReport = {
   thresholds: { threshold: number; risky: number; labelled: number; misses: number }[];
   suggested: number | null; suggestion: string;
 };
-export type DecisionReport = { days: number; scenes: DecisionSceneReport[] };
+export type RouteResults = { completed: number; settled: number; pending: number };
+export type RouteClassReport = { classId: string; name: string; decision: RouteResults; static: RouteResults };
+export type DecisionReport = { days: number; scenes: DecisionSceneReport[]; routes: RouteClassReport[] };
+
+export function completionRate({ completed, settled }: RouteResults) {
+  return settled ? `${Math.round(100 * completed / settled)}%（${completed}/${settled}）` : "暂无已知结果";
+}

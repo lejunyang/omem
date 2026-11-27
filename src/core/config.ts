@@ -912,6 +912,7 @@ export const configSchema = z.object({
         pick: z.enum(["fixed", "random"]).optional(),
         fallback: z.enum(["general", "none"]).default("general"),
         thresholds: z.object({
+          route: z.number().min(0.5).max(0.99).default(DECISION_SCENES.route.default),
           heartbeat: z.number().min(0.5).max(0.99).default(DECISION_SCENES.heartbeat.default),
           watch: z.number().min(0.5).max(0.99).default(DECISION_SCENES.watch.default),
           follow: z.number().min(0.5).max(0.99).default(DECISION_SCENES.follow.default),

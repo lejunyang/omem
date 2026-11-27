@@ -1,7 +1,8 @@
 import type { App } from "./app.ts";
 import { all, one, run, tx } from "./db.ts";
 import { decide, decideMany, describeDecision, type DecisionOptions, type DecisionQuestion, type DecisionResult } from "./decision.ts";
-import { DECISION_SCENES, type DecisionScene, type DecisionReport } from "./decision-scenes.ts";
+import { runClasses, type RunClass } from "../agents/run-classes.ts";
+import { completionRate, DECISION_SCENES, type DecisionScene, type DecisionReport, type RouteResults, type RouteClassReport } from "./decision-scenes.ts";
 import { json, newId, now } from "./util.ts";
 
 export { DECISION_SCENES, type DecisionScene } from "./decision-scenes.ts";
@@ -12,7 +13,7 @@ type Verdict = { label: Label; why: string };
 export type DecisionRow = {
   id: string; at: string; scene: DecisionScene; by: string; question: string; material: string;
   probabilities: string; choice: string; taken: string; threshold: number; ref: string | null;
-  sources: string; label: Label | null;
+  sources: string; label: Label | null; route: string | null;
 };
 const DAY = 86400_000;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -24,7 +25,7 @@ export function takeDecision(scene: DecisionScene, r: Pick<DecisionResult, "choi
 }
 
 /** Keep valid JSON and every named part; escaped characters also count toward the cap. */
-function capMaterial(material: Material): string {
+export function capMaterial(material: Material): string {
   if (typeof material === "string") {
     let text = material.slice(0, 11900);
     while (JSON.stringify(text).length > 12000) text = text.slice(0, Math.floor(text.length * 0.9));
@@ -175,9 +176,23 @@ export function labelDecisions(app: App, { limit = 200 } = {}) {
 
 const THRESHOLDS = [0.5, 0.6, 0.7, 0.8, 0.9];
 const enough = "有结果的记录还不到 20 条，先按现在的门槛";
+function routeReport(app: App, since: string): RouteClassReport[] {
+  const rows = all<RouteResults & { classId: RunClass; ordering: "decision" | "static" }>(app.db, `select class_id classId, ordering,
+    count(case when outcome='completed' then 1 end) completed, count(outcome) settled, count(*)-count(outcome) pending
+    from route_decision_outcomes where at >= ? group by class_id, ordering order by class_id`, since);
+  const classes = new Map<RunClass, RouteClassReport>();
+  for (const { classId, ordering, ...results } of rows) {
+    const empty = { completed: 0, settled: 0, pending: 0 };
+    const row = classes.get(classId) ?? { classId, name: runClasses[classId].name, decision: empty, static: empty };
+    row[ordering] = results;
+    classes.set(classId, row);
+  }
+  return [...classes.values()];
+}
+
 export function decisionReport(app: App, { days = 30 } = {}): DecisionReport {
   days = Math.max(1, Math.min(90, Math.floor(days) || 30));
-  const scenes = (Object.entries(DECISION_SCENES) as [DecisionScene, typeof DECISION_SCENES[DecisionScene]][]).map(([scene, s]) => {
+  const scenes = (Object.entries(DECISION_SCENES) as [DecisionScene, typeof DECISION_SCENES[DecisionScene]][]).filter(([scene]) => scene !== "route").map(([scene, s]) => {
     // Aggregates stay in SQLite; no material or questions enter the report.
     const base = one<{ records: number; risky: number; lowered: number; needed: number; unneeded: number; unclear: number; misses: number; wasted: number; labelledRiskyChoices: number }>(app.db, `select count(*) records,
       coalesce(sum(taken = ?),0) risky, coalesce(sum(choice != taken),0) lowered,
@@ -196,7 +211,7 @@ export function decisionReport(app: App, { days = 30 } = {}): DecisionReport {
     return { scene, ...s, threshold: sceneThreshold(app, scene), ...base, labelled: base.needed + base.unneeded + base.unclear, labelsEnabled, thresholds, suggested: labelsEnabled ? suggested : null,
       suggestion: !labelsEnabled ? "这个场景只记录，不标注结果" : base.labelledRiskyChoices < 20 ? enough : suggested === null ? "已知漏看仍超过 5%，先按现在的门槛" : `可考虑门槛 ${suggested}，只供参考，不会自动修改` };
   });
-  return { days, scenes };
+  return { days, scenes, routes: routeReport(app, iso(Date.now() - days * DAY)) };
 }
 export type { DecisionReport } from "./decision-scenes.ts";
 
@@ -214,12 +229,17 @@ export async function replayDecisions(app: App, { scene, model, days = 30, limit
     if (taken === DECISION_SCENES[scene].risky && label === "needed") stats.misses++;
     if (taken === DECISION_SCENES[scene].cautious && label === "unneeded") stats.wasted++;
   };
+  const rank = scene === "route" ? (await import("../agents/route-groups.ts")).rankRoute : null;
   for (const d of rows) {
     try {
-      const r = await decide(app, JSON.parse(d.material) as Material, JSON.parse(d.question) as DecisionQuestion, { only });
+      const question = JSON.parse(d.question) as DecisionQuestion;
+      const r = await decide(app, JSON.parse(d.material) as Material, question, { only });
       if (!r) throw new Error("候选模型不可用");
-      const taken = takeDecision(scene, r, threshold);
-      const old = takeDecision(scene, { choice: d.choice, probabilities: JSON.parse(d.probabilities) }, threshold);
+      const order: string[] = d.route ? JSON.parse(d.route).defaultOrder : [];
+      const take = (answer: Pick<DecisionResult, "choice" | "probabilities">) => rank
+        ? (rank(order, answer, threshold) ?? order)[0] : takeDecision(scene, answer, threshold);
+      const taken = take(r);
+      const old = take({ choice: d.choice, probabilities: JSON.parse(d.probabilities) });
       models.add(d.by);
       compared++; agreement += Number(d.choice === r.choice); takenAgreement += Number(old === taken);
       count(original, old, d.label); count(candidate, taken, d.label);
@@ -234,5 +254,5 @@ export function decisionReportText(report: DecisionReport) {
   return [`最近 ${report.days} 天的决策记录（已知结果仅供校准）`, ...report.scenes.flatMap((s) => [
     `${s.label}：${s.records} 条，放行 ${s.risky}，门槛改判 ${s.lowered}；有结果 ${s.labelled}（需要 ${s.needed} / 不需要 ${s.unneeded} / 不明确 ${s.unclear}），漏看 ${s.misses}，多看 ${s.wasted}`,
     ...s.thresholds.map((t) => `  门槛 ${t.threshold}：放行 ${t.risky}，已知漏看 ${t.misses} / 有结果的 ${t.labelled}`), `  ${s.suggestion}`,
-  ])].join("\n");
+  ]), ...report.routes.map(r => `${r.name}完成率：采用模型的选择 ${completionRate(r.decision)}，按默认先后 ${completionRate(r.static)}`)].join("\n");
 }
