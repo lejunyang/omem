@@ -499,7 +499,10 @@ function unloadCode(p: LoadedPlugin) {
   p.slots.splice(0);
   stopPluginServices(p.manifest.id);
   const group = TOOL_GROUPS.findIndex((g) => g.id === p.manifest.id);
-  if (group >= 0) TOOL_GROUPS.splice(group, 1);
+  if (group >= 0) {
+    if (TOOL_GROUPS[group].doc) TOOL_GROUPS[group].tools = [];
+    else TOOL_GROUPS.splice(group, 1);
+  }
 }
 
 /** Its services and streams are usable only when its code may run. */

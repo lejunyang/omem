@@ -146,13 +146,13 @@ export function snapshot(store: PluginStore, at = Date.now()) {
   const points = store.list<PointState>("points", { limit: 5000 });
   const weak = points
     .filter((p) => (p.data.seen >= 2 && p.data.correct / p.data.seen < 0.6) || !p.data.lastCorrect)
-    .map((p) => ({ point: p.key, expression: p.data.expression, seen: p.data.seen, accuracy: Math.round((p.data.correct / p.data.seen) * 100) / 100, lastScore: p.data.lastScore, lastAt: p.data.lastAt, errors: p.data.errors }))
+    .map((p) => ({ point: p.key, ...(p.data.expression ? { expression: p.data.expression } : {}), seen: p.data.seen, accuracy: Math.round((p.data.correct / p.data.seen) * 100) / 100, lastScore: p.data.lastScore, lastAt: p.data.lastAt, errors: p.data.errors }))
     .sort((a, b) => a.accuracy - b.accuracy || b.lastAt.localeCompare(a.lastAt))
     .slice(0, 15);
   // Answered right a few times in a row, then not seen for a while (1, 2, 4 … days, at most 30).
   const due = points
     .filter((p) => p.data.streak >= 1 && p.data.lastCorrect && at - Date.parse(p.data.lastAt) >= Math.min(30, 2 ** (p.data.streak - 1)) * DAY)
-    .map((p) => ({ point: p.key, expression: p.data.expression, streak: p.data.streak, lastAt: p.data.lastAt }))
+    .map((p) => ({ point: p.key, ...(p.data.expression ? { expression: p.data.expression } : {}), streak: p.data.streak, lastAt: p.data.lastAt }))
     .sort((a, b) => a.lastAt.localeCompare(b.lastAt))
     .slice(0, 15);
   const errorCount = new Map<string, number>();
@@ -213,7 +213,7 @@ export function snapshotText(s: ReturnType<typeof snapshot>) {
 // ---------------------------------------------------------------- question bank
 
 /** A question the tutor wrote ahead of time; drawn into a set when the owner wants the next one. */
-export type BankEntry = { item: Record<string, unknown> & { type: string; skill: Skill; level: Level; points: string[] }; scene: string; addedAt: string };
+export type BankEntry = { item: Record<string, unknown> & { type: string; skill: Skill; level: Level; points: string[] }; scene: string; addedAt: string; lessonDate?: string };
 
 const TYPE_ORDER = ["choice", "cloze", "dictation", "translate"];
 

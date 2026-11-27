@@ -104,6 +104,20 @@ const speakingBlock = z.object({
   scene: z.string().trim().min(1).max(120).describe("场景，如“在餐厅点餐，问推荐菜，说明忌口”；自由聊写“自由对话”"),
   goal: z.string().trim().max(300).optional().describe("这次要刻意练的说法或目标（可选），如“用 Could I… / I'd like… 点餐”"),
 });
+const lesson = z.object({
+  theme: z.string().trim().min(1).max(60),
+  expressions: z.array(expression.extend({ material })).min(1).max(10),
+  quiz,
+  speaking: speakingBlock,
+});
+type Lesson = z.infer<typeof lesson> & { date: string; updatedAt: string };
+const lessonDay = (ctx: PluginContext) => new Date().toLocaleDateString("sv-SE", { timeZone: ctx.app.config.timezone });
+const lessonLink = (date: string) => `#/plugin/english?lesson=${date}`;
+
+function bankItem(it: Item) {
+  const { id: _id, ...rest } = it;
+  return { ...rest, points: rest.points.map(p => p.trim().toLowerCase()).filter(Boolean) };
+}
 type SpeakingBlock = z.infer<typeof speakingBlock>;
 const speakingAnswer = z.object({
   transcript: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(4000) })).max(400),
@@ -284,9 +298,13 @@ export default function register(api: PluginApi) {
     handler: (ctx, a) => {
       const s = snapshot(ctx.store);
       const settings = ctx.settings();
-      if (a.format === "json") return JSON.stringify({ ...s, settings });
+      const date = lessonDay(ctx);
+      const current = ctx.store.get<Lesson>("lessons", date);
+      const todayLesson = { date, ready: !!current, theme: current?.theme, link: lessonLink(date) };
+      const recentScenes = ctx.store.list<Lesson>("lessons", { limit: 7 }).map(r => r.data.speaking.scene);
+      if (a.format === "json") return JSON.stringify({ ...s, settings, todayLesson, recentScenes });
       const materials = `材料空间：${Array.isArray(settings.materialSpaces) && settings.materialSpaces.length ? settings.materialSpaces.join("、") : "未选择，用画像和场景练习"}。最近用过：${s.recentMaterials.slice(0, 15).map(m => `${m.ref}（${m.title}，${m.lastUsedAt.slice(0, 10)}）`).join("、") || "无"}`;
-      return `${snapshotText(s)}\n${materials}\n本人的设置：出题方式 ${settings.source === "bank" ? "题库（本人从题库取下一组，你负责点评和补题）" : "陪练现出（每组由你用 english_quiz 出）"}，每组 ${settings.quizSize} 题，每天目标 ${settings.dailyGoal} 题。`;
+      return `${snapshotText(s)}\n${materials}\n今日学习（${date}）：${current?.theme ?? "待生成"}。最近课程场景：${recentScenes.join("、") || "无"}。\n本人的设置：出题方式 ${settings.source === "bank" ? "题库（本人从题库取下一组，你负责点评和补题）" : "陪练现出（每组由你用 english_quiz 出）"}，每组 ${settings.quizSize} 题，每天目标 ${settings.dailyGoal} 题。`;
     },
   });
 
@@ -305,20 +323,59 @@ export default function register(api: PluginApi) {
       checkMaterials(ctx, a.items, warnings);
       rememberMaterials(ctx.store, a.items, at);
       for (const it of a.items) {
-        const { id: _id, ...rest } = it;
-        ctx.store.put("bank", null, { item: { ...rest, points: rest.points.map((p) => p.trim().toLowerCase()).filter(Boolean) }, scene: a.scene.trim(), addedAt: at } satisfies BankEntry);
+        ctx.store.put("bank", null, { item: bankItem(it), scene: a.scene.trim(), addedAt: at } satisfies BankEntry);
       }
       return `已加入题库 ${a.items.length} 题（场景：${a.scene || "不限"}），题库现在 ${have + a.items.length} 题。` + warnings.join("");
     },
   });
 
   api.tool({
+    name: "english_lesson",
+    description: "交一份今日学习。theme 写主题，expressions 写中英文说法，有材料的逐条带出处，quiz 是一组题，speaking 是一个新口语场景。同一天再交会更新。保存后用 notify 的 link 参数发送返回的链接。",
+    schema: lesson,
+    write: true,
+    handler: (ctx, a) => {
+      const date = lessonDay(ctx);
+      const at = new Date().toISOString();
+      const warnings: string[] = [];
+      a.quiz.items.forEach(checkItem);
+      const entries = [...a.expressions, ...a.quiz.items, a.speaking];
+      checkMaterials(ctx, entries, warnings);
+      ctx.store.transaction(() => {
+        const previous = ctx.store.get<Lesson>("lessons", date);
+        previous?.quiz.items.forEach((_, i) => ctx.store.delete("bank", `${date}:${i + 1}`));
+        // Keep ordinary bank questions. Older lesson questions remain playable from their dated lesson.
+        const excess = ctx.store.count("bank") + a.quiz.items.length - BANK_MAX;
+        if (excess > 0) {
+          const older = ctx.store.list<BankEntry>("bank", { limit: BANK_MAX + 20 }).reverse().filter(r => r.data.lessonDate);
+          for (const r of older.slice(0, excess)) ctx.store.delete("bank", r.key);
+        }
+        a.quiz.items.forEach((it, i) => ctx.store.put("bank", `${date}:${i + 1}`, {
+          item: bankItem(it), scene: a.theme, lessonDate: date, addedAt: at,
+        } satisfies BankEntry));
+        ctx.store.put("lessons", date, { ...a, date, updatedAt: at } satisfies Lesson);
+        rememberMaterials(ctx.store, entries, at);
+      });
+      return `已保存 ${date} 今日学习「${a.theme}」，${a.quiz.items.length} 题。用 notify 通知本人一次，link 填 ${lessonLink(date)}` + warnings.join("");
+    },
+  });
+
+  api.tool({
     name: "english_next",
     description: "从题库里按画像挑下一组题，放进练习页的会话（页面上的“下一组”按钮用）。题库不够时不出题，返回 drawn=false。",
-    schema: z.object({ session_id: z.string(), scene: z.string().max(40).optional() }),
+    schema: z.object({ session_id: z.string(), scene: z.string().max(40).optional(), lessonDate: z.iso.date().optional() }),
     page: true,
     write: true,
     handler: (ctx, a) => {
+      if (a.lessonDate) {
+        const current = ctx.store.get<Lesson>("lessons", a.lessonDate);
+        if (!current) throw new Error("这一天还没有课程");
+        return ctx.store.transaction(() => {
+          const blockId = ctx.present("quiz", current.quiz, a.session_id);
+          current.quiz.items.forEach((_, i) => ctx.store.delete("bank", `${current.date}:${i + 1}`));
+          return JSON.stringify({ drawn: true, blockId, bank: ctx.store.count("bank") });
+        });
+      }
       const size = Number(ctx.settings().quizSize) || 8;
       const entries = ctx.store.list<BankEntry>("bank", { limit: 5000 });
       const picked = pickFromBank(entries, snapshot(ctx.store), { size, scene: a.scene });

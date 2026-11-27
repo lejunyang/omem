@@ -4,6 +4,7 @@ import { callTool, issueToolToken, toolContextForToken } from "../src/agents/too
 import { all, one, run } from "../src/core/db.ts";
 import { prepareRun } from "../src/agents/runner.ts";
 import { upsertSource } from "../src/sources/store.ts";
+import { listRules } from "../src/rules/store.ts";
 import { savePluginSettings } from "../src/plugins/settings.ts";
 import { findSpace } from "../src/core/spaces.ts";
 import { createSession, sessionView, submitBlock } from "../src/plugins/blocks.ts";
@@ -221,6 +222,48 @@ describe("plugins", () => {
     await submitBlock(app, env, { userId: "owner", blockId: block.id, answers: { q1: 0 } });
     expect(store.get("points", "phrase:to-go")).toMatchObject({ lastCorrect: false, expression: { ...expression, material } });
     expect(snapshot(store).recentMaterials).toMatchObject([{ sourceId: id, ...material }]);
+  });
+
+  it("imports a disabled morning lesson rule, updates the same day's bank and opens the notified lesson", async () => {
+    const app = await englishApp();
+    const { ctx, conversationId } = await tutorTurn(app);
+    const { env, manifest } = getPlugin("english");
+    expect(listRules(app).find(rule => rule.origin?.plugin === "english")).toMatchObject({
+      enabled: false, trigger: { event: "schedule", cron: "0 8 * * *" }, actions: [{ type: "agent", spec: "english-tutor", task: expect.stringContaining("notify") }],
+    });
+    const expr = { zh: "留出时间", en: "leave time for" };
+    const lesson = { theme: "留出时间", expressions: [expr], quiz, speaking: { scene: "和同事安排一次试用" } };
+    const first = await callTool(ctx, "english_lesson", lesson);
+    expect(first.isError, first.text).toBe(false);
+    const store = pluginStore(app, "english", "owner", "english");
+    expect(store.count("bank")).toBe(4);
+    const date = store.list("lessons")[0].key;
+    const link = `#/plugin/english?lesson=${date}`;
+    expect(first.text).toContain(link);
+    expect((await callTool(ctx, "notify", { title: lesson.theme, body: "今天练习安排时间。", link })).isError).toBe(false);
+    expect(all(app.db, "select link from notifications where link=?", link)).toEqual([{ link }]);
+    const id = upsertSource(app, { spaceId: "english", kind: "doc", uri: "schedule", title: "安排", text: "预留答疑时间。" }).id;
+    savePluginSettings(app, "english", manifest.settings, "owner", "english", { materialSpaces: ["english"] });
+    expect((await callTool(ctx, "list_sources", { recent_days: 2 })).text).toContain(id);
+    const material = { ref: `src:${id}#L1-L1`, title: "安排", summary: "要留出答疑时间。" };
+    const update = await callTool(ctx, "english_lesson", { ...lesson, expressions: [{ ...expr, material }], speaking: { ...lesson.speaking, material }, quiz: { ...quiz, items: [{ ...quiz.items[0], material }] } });
+    expect(update.isError, update.text).toBe(false);
+    expect(store.count("lessons")).toBe(1);
+    expect(store.list("bank")).toMatchObject([{ data: { lessonDate: date, item: { material } } }]);
+    expect(store.get("lessons", date)).toMatchObject({ expressions: [{ ...expr, material }], speaking: { material } });
+    const bad = await callTool(ctx, "english_lesson", { ...lesson, quiz: { ...quiz, items: [{ ...quiz.items[0], answer: 99 }] } });
+    expect(bad.isError).toBe(true);
+    expect(store.count("bank")).toBe(1);
+    const snap = JSON.parse((await callTool(ctx, "english_snapshot", { format: "json" })).text);
+    expect(snap.todayLesson).toEqual({ date, ready: true, theme: lesson.theme, link });
+    const drawn = JSON.parse((await callTool(ctx, "english_next", { session_id: conversationId, lessonDate: date })).text);
+    expect(drawn).toMatchObject({ drawn: true, bank: 0 });
+    expect(sessionView(app, env, conversationId, "owner").blocks[0].data.items[0].material).toEqual(material);
+    for (let i = 0; i < 300; i++) store.put("bank", `ordinary-${i}`, { item: quiz.items[0], scene: "点餐" });
+    expect((await callTool(ctx, "english_lesson", lesson)).isError).toBe(false);
+    expect(store.count("bank")).toBe(304);
+    expect((await callTool(ctx, "english_lesson", lesson)).isError).toBe(false);
+    expect(store.count("bank")).toBe(304);
   });
 
   it("questions and views in a plugin session are its page's blocks: a form is checked and answered, a view is only shown", async () => {

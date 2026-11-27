@@ -2561,6 +2561,7 @@ export const migrations: readonly string[] = [
    alter table reply_outcomes add column sweep_tries integer not null default 0;
    create index reply_outcomes_task on reply_outcomes(task_id);
    create index reply_outcomes_unswept on reply_outcomes(at) where swept_at is null;`,
+  `create index sources_recent_in_space on sources(space_id, updated_at desc) where deleted_at is null;`,
 ];
 
 export type Db = DatabaseSync;

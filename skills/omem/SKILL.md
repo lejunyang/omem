@@ -96,6 +96,7 @@ MCP 同理，`omem mcp --peer <设备>`（`args` 写 `["mcp", "--peer", "<设备
 | `lark-docs` | 用自己的飞书连接读写文档，目录长期授权仅限本人 | 同上 |
 | `lark-owner` | 用自己的飞书连接读表格、多维表格、任务、日历、邮件、妙记等（`lark_read`），本人可按审批规则写表格、多维表格、幻灯片、Markdown 文件、任务和评论（`lark_write`），本人可把人或机器人拉进本人的群（`lark_invite`，拉人每次经本人批准） | 同上 |
 | `lark-capture` | 飞书会话列表、盯群、采集设置、历史回溯、知识库归属 | 同上 |
+| `english` | 英语练习、陪练画像与今日学习 | [references/learning.md](references/learning.md) |
 | `learning` | 学习目标与卡片 | [references/learning.md](references/learning.md) |
 | `media` | 图片生成（配好图片模型后才有） | [references/media.md](references/media.md) |
 | `data` | 数据：指标的定义、采集、读数和报表，变化超过门槛时告诉本人 | [references/data.md](references/data.md) |

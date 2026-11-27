@@ -819,6 +819,7 @@ def({
     "按目录浏览某空间的原件（不是全文检索）。不给 under 时列出顶层目录（知识库、飞书云文档、各类会话、网站、会议……）；under 给节点 key 列它下面 depth 层（默认 1），每行带节点 key、数量和关注程度。query/kind/level 筛选（level：focus 重点关注 / normal 一般 / reference 仅检索 / ignore 忽略）；给了 query 但没给 under 时按标题/路径平铺列出原件。",
   schema: z.object({
     space: z.string().optional(),
+    recent_days: z.number().int().min(1).max(30).optional().describe("列出最近几天新增或更新的原件，最新在前，可配 kind 或 query"),
     under: z.string().optional().describe("目录节点 key，如 wiki:<知识库id>、wn:<节点>、chat:group、chat:<会话id>、lark-drive、site:<域名>、dir:<路径>"),
     depth: z.number().int().min(1).max(4).optional(),
     query: z.string().optional(),
@@ -828,11 +829,12 @@ def({
   }),
   handler: (ctx, a) => {
     const sp = space(ctx, a.space);
-    if (a.under !== undefined || !a.query) return catalogListing(ctx, sp, a.under ?? "", a.depth ?? 1, { hiddenSources: hiddenSourceIds(ctx.app, ctx.userId ?? OWNER, sp), kind: a.kind, level: a.level, q: a.query }, a.limit ?? 200);
-    const r = listSources(ctx.app, { userId: ctx.userId, spaceId: sp, q: a.query, kind: a.kind, level: a.level, limit: a.limit ?? 200 });
+    if (a.recent_days && a.under !== undefined) throw new HttpError(400, "recent_days 按整个空间列出，请去掉 under");
+    if (a.under !== undefined || (!a.query && !a.recent_days)) return catalogListing(ctx, sp, a.under ?? "", a.depth ?? 1, { hiddenSources: hiddenSourceIds(ctx.app, ctx.userId ?? OWNER, sp), kind: a.kind, level: a.level, q: a.query }, a.limit ?? 200);
+    const r = listSources(ctx.app, { userId: ctx.userId, spaceId: sp, q: a.query, kind: a.kind, level: a.level, updatedSince: a.recent_days ? new Date(Date.now() - a.recent_days * 86400000).toISOString() : undefined, limit: Math.max(1, a.limit ?? 200) });
     // A replay arm does not see what was captured after the question or levels it was told to leave out.
     if (ctx.view) r.sources = r.sources.filter((s) => !sourceHidden(ctx.view, { captured_at: s.capturedAt, level: s.level?.level ?? null }));
-    return `共 ${r.total} 个原件${r.total > r.sources.length ? `，显示前 ${r.sources.length} 个` : ""}\n` + r.sources.map((s) => `- ${s.id} ${s.uri} (${s.kind}, ${s.lines} 行${s.attention ? `，${LEVEL_LABELS[s.attention as Level]}` : ""})`).join("\n");
+    return `共 ${r.total} 个原件${r.total > r.sources.length ? `，显示前 ${r.sources.length} 个` : ""}\n` + r.sources.map((s) => `- ${s.id} ${s.uri}${a.recent_days ? `「${s.title}」 ${s.updatedAt.slice(0, 10)}` : ""} (${s.kind}, ${s.lines} 行${s.attention ? `，${LEVEL_LABELS[s.attention as Level]}` : ""})`).join("\n");
   },
 });
 

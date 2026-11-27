@@ -285,7 +285,7 @@ export function readSource(app: App, id: string, from?: number, to?: number, las
   return { source: { ...source, lines: total }, lineStart: start, lineEnd: end, text: total ? sliceLines(text, start, end) : "" };
 }
 
-export function listSources(app: App, opts: { userId?: string; spaceId?: string; kind?: string; q?: string; limit?: number; offset?: number; includeDeleted?: boolean; level?: string }) {
+export function listSources(app: App, opts: { userId?: string; spaceId?: string; kind?: string; q?: string; limit?: number; offset?: number; includeDeleted?: boolean; updatedSince?: string; level?: string }) {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (opts.userId) {
@@ -305,13 +305,17 @@ export function listSources(app: App, opts: { userId?: string; spaceId?: string;
     where.push("kind = ?");
     params.push(opts.kind);
   }
+  if (opts.updatedSince) {
+    where.push("updated_at >= ?");
+    params.push(opts.updatedSince);
+  }
   if (!opts.includeDeleted) where.push("deleted_at is null");
   if (opts.q) {
     where.push("(title like ? or uri like ?)");
     params.push(`%${opts.q}%`, `%${opts.q}%`);
   }
   const sql = `select ${COLS}, length(text) - length(replace(text, char(10), '')) + 1 as line_count
-    from sources ${where.length ? "where " + where.join(" and ") : ""} order by uri limit ? offset ?`;
+    from sources ${where.length ? "where " + where.join(" and ") : ""} order by ${opts.updatedSince ? "updated_at desc" : "uri"} limit ? offset ?`;
   const lim = Math.min(opts.limit ?? 500, 5000);
   const rows = all<Row & { line_count: number }>(app.db, sql, ...params, lim, opts.offset ?? 0);
   const total = one<{ n: number }>(app.db, `select count(*) n from sources ${where.length ? "where " + where.join(" and ") : ""}`, ...params)?.n ?? 0;
