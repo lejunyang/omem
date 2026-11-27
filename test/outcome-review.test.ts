@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App } from "../src/core/app.ts";
 
-type Verdict = { run_id: string; label: string; why: string };
-/** What the fake reviewer hands in for a run's task; every task it was given is kept. */
-let hand: (task: string) => Verdict[] = () => [];
+/** What the fake reviewer hands in for a run's task (the `tasks` of review_reply_outcomes); every task it was given is kept. */
+let hand: (task: string) => unknown[] = () => [];
 const tasks: string[] = [];
 vi.mock("../src/agents/runner.ts", async (orig) => ({
   ...(await orig<typeof import("../src/agents/runner.ts")>()),
@@ -11,7 +10,8 @@ vi.mock("../src/agents/runner.ts", async (orig) => ({
     tasks.push(input.task);
     const { callTool, issueToolToken, toolContextForToken } = await import("../src/agents/tools.ts");
     const ctx = toolContextForToken(app, issueToolToken({ runId: input.runId, actor: "agent", role: input.role, spaceId: "personal", spaces: ["personal"], tools: null, agentProfile: "strong", model: "model-x" }))!;
-    const r = await callTool(ctx, "review_reply_outcomes", { verdicts: hand(input.task) });
+    const given = hand(input.task);
+    const r = given.length ? await callTool(ctx, "review_reply_outcomes", { tasks: given }) : { text: "" };
     return { text: r.text, profileId: "fake", agent: "fake", ai: { profile: "fake" } };
   }),
 }));
@@ -20,14 +20,13 @@ const { __testHandlers: handlers, getRun } = await import("../src/agents/runs.ts
 const { createRun } = await import("../src/agents/runs.ts");
 const { addMessage, createThread } = await import("../src/agents/threads.ts");
 const { callTool, issueToolToken, toolContextForToken } = await import("../src/agents/tools.ts");
-const { recordLarkSent } = await import("../src/channels/lark-feedback.ts");
-const { run } = await import("../src/core/db.ts");
+const { all, one, run } = await import("../src/core/db.ts");
+const { createUser } = await import("../src/core/users.ts");
 const { ensureDefaultSchedules, listSchedules } = await import("../src/core/scheduler.ts");
-const { metricPoints } = await import("../src/data/metrics.ts");
-const { snapshotOmemUsage } = await import("../src/data/omem-usage.ts");
 const { clearInsightsCache, insights } = await import("../src/insights/insights.ts");
-const { checkReply, replyOutcome, replyOutcomeText, reviseReply } = await import("../src/agents/reply-outcomes.ts");
-const { batchOf, pickForReview, reviewCandidates, reviewTask, scheduleOutcomeReview, SIGNAL_TEXT } = await import("../src/agents/outcome-review.ts");
+const { replyOutcome, replyOutcomeText, reviseReply } = await import("../src/agents/reply-outcomes.ts");
+const { batchOf, listReplyTasks, reviewTask, scheduleOutcomeReview, startSweepJob, sweepStatus } = await import("../src/agents/outcome-review.ts");
+const { defineTaskType, listTaskTypes, resolveTaskType, updateTaskType } = await import("../src/agents/task-types.ts");
 const { testApp } = await import("./helpers.ts");
 
 const apps: App[] = [];
@@ -36,176 +35,206 @@ const ago = (hours: number) => new Date(Date.now() - hours * HOUR).toISOString()
 afterEach(() => { hand = () => []; tasks.length = 0; for (const app of apps.splice(0)) app.db.close(); });
 const fresh = () => { const app = testApp(); apps.push(app); return app; };
 
-/** A question in a conversation, answered `hours` ago, with a first label already on it. */
-function answered(app: App, hours: number, o: { label?: string; by?: string; confidence?: number | null } = {}) {
-  const conversationId = createThread(app, { spaceId: "personal", channel: "web", title: "虚构会话" }).id;
-  const question = addMessage(app, conversationId, "user", "退款改造什么时候上线？");
-  const r = createRun(app, { kind: "ask", title: "虚构问答", input: { conversationId } });
-  const answer = addMessage(app, conversationId, "assistant", "周四上线，依据是排期表。", r.id);
-  run(app.db, "update messages set created_at = ? where id = ?", ago(hours + 0.1), question);
-  run(app.db, "update messages set created_at = ? where id = ?", ago(hours), answer);
-  run(app.db, "update runs set status = 'done', created_at = ?, finished_at = ? where id = ?", ago(hours + 0.1), ago(hours), r.id);
-  run(app.db, "update reply_outcomes set at = ?, due_at = ?, label = ?, \"by\" = ?, confidence = ?, labelled_at = ? where run_id = ?",
-    ago(hours), ago(hours - 6), o.label ?? "resolved", o.by ?? "决策模型 A", o.confidence === undefined ? 0.9 : o.confidence, ago(hours - 6), r.id);
-  return { runId: r.id, conversationId };
-}
-function says(app: App, conversationId: string, text: string, hoursAgo: number) {
-  const id = addMessage(app, conversationId, "user", text);
-  run(app.db, "update messages set created_at = ? where id = ?", ago(hoursAgo), id);
+/** A conversation; `ask` adds a question and the run that answered it `hours` ago, with a first label already on it. */
+function conversation(app: App, title = "虚构会话") {
+  const conversationId = createThread(app, { spaceId: "personal", channel: "web", title }).id;
+  const ask = (hours: number, question: string, answer: string, o: { label?: string; by?: string; confidence?: number | null; userId?: string } = {}) => {
+    const q = addMessage(app, conversationId, "user", question, null, o.userId ? { userId: o.userId } : {});
+    const r = createRun(app, { kind: "ask", title: question, input: { conversationId } });
+    const a = addMessage(app, conversationId, "assistant", answer, r.id);
+    run(app.db, "update messages set created_at = ? where id = ?", ago(hours + 0.05), q);
+    run(app.db, "update messages set created_at = ? where id = ?", ago(hours), a);
+    run(app.db, "update runs set status = 'done', created_at = ?, finished_at = ?, trigger_by = ? where id = ?", ago(hours + 0.05), ago(hours), o.userId ? `user:${o.userId}` : "user:owner", r.id);
+    run(app.db, "update reply_outcomes set at = ?, due_at = ?, label = ?, \"by\" = ?, confidence = ?, labelled_at = ? where run_id = ?",
+      ago(hours), ago(hours - 6), o.label ?? "resolved", o.by ?? "决策模型 A", o.confidence === undefined ? 0.9 : o.confidence, ago(hours - 6), r.id);
+    return r.id;
+  };
+  const says = (hours: number, text: string, userId?: string) => {
+    const id = addMessage(app, conversationId, "user", text, null, userId ? { userId } : {});
+    run(app.db, "update messages set created_at = ? where id = ?", ago(hours), id);
+  };
+  return { conversationId, ask, says };
 }
 const reviewer = (app: App, runId: string | null, role = "outcome-reviewer") =>
   toolContextForToken(app, issueToolToken({ runId, actor: "agent", role, spaceId: "personal", spaces: ["personal"], tools: null, agentProfile: "strong", model: "model-x" }))!;
 const handle = (app: App, runId: string) => handlers.get("outcome-review")!({ app, run: getRun(app, runId), signal: new AbortController().signal, event: () => {}, output: () => {} } as never);
+const answer = (run_id: string, label: string, why = "依据：之后的那句话", missing?: string) => ({ run_id, label, why, ...(missing ? { missing } : {}) });
 
-describe("夜里复查回复结果", () => {
-  it("只挑一到三天前、决策模型标的；本人标的、改过的、按表情记的、没人接话又没动静的都不挑", () => {
+describe("回扫回答", () => {
+  it("从最早的开始，一段是一个会话当天的回答；几个短会话可以一起；满一天才扫；一次只排一段；默认开着", () => {
     const app = fresh();
-    const sure = answered(app, 30), unsure = answered(app, 30, { confidence: 0.4 }), unclear = answered(app, 30, { label: "unrelated" });
-    const emoji = answered(app, 30, { by: "表情" }), owner = answered(app, 30, { by: "本人" });
-    const ownerRevised = answered(app, 30);
-    reviseReply(app, ownerRevised.runId, "corrected", "本人", "他说不对");
-    const recent = answered(app, 10), old = answered(app, 5 * 24);
-    const quiet = answered(app, 30, { label: "silent", by: "宿主", confidence: null });
-    const quietThenAsked = answered(app, 30, { label: "silent", by: "宿主", confidence: null });
-    says(app, quietThenAsked.conversationId, "退款改造到底什么时候上线", 12);
-    const askedAgain = answered(app, 30);
-    says(app, askedAgain.conversationId, "退款改造到底什么时候上线啊", 20);
-    const got = new Map(reviewCandidates(app).map((c) => [c.runId, c]));
-    expect(got.get(sure.runId)?.pick).toBe("sample");
-    expect(got.get(unsure.runId)?.pick).toBe("unsure");
-    expect(got.get(unclear.runId)?.pick).toBe("unclear");
-    expect(got.get(quietThenAsked.runId)).toMatchObject({ pick: "signal", signals: ["asked-again"] });
-    expect(got.get(askedAgain.runId)).toMatchObject({ pick: "signal", signals: ["asked-again"] });
-    for (const x of [emoji, owner, ownerRevised, recent, old, quiet]) expect(got.has(x.runId)).toBe(false);
-    expect(got.size).toBe(5);
-  });
-
-  it("先挑对不上的、再挑把握低的和看不出的，随机抽几条有把握的，每晚有上限", () => {
-    const c = (runId: string, pick: "signal" | "unsure" | "unclear" | "sample", extra: Record<string, unknown> = {}) =>
-      ({ runId, at: ago(30), label: "resolved" as const, confidence: 0.9, pick, signals: [], ...extra });
-    const cands = [c("s1", "sample"), c("u1", "unsure", { confidence: 0.5 }), c("g1", "signal", { signals: ["negative"] }), c("u2", "unsure", { confidence: 0.2 }), c("x1", "unclear"),
-      c("g2", "signal", { signals: ["negative", "correction"] }), c("s2", "sample"), c("s3", "sample")] as Parameters<typeof pickForReview>[0];
-    expect(pickForReview(cands, { max: 5, sample: 2 }, () => 0.5).map((x) => x.runId)).toEqual(["g2", "g1", "u2", "s1", "s2"]);
-    // Room left over does not grow the random share.
-    expect(pickForReview(cands, { max: 20, sample: 2 }, () => 0.5).map((x) => x.runId)).toEqual(["g2", "g1", "u2", "u1", "x1", "s1", "s2"]);
-    expect(pickForReview(cands, { max: 20, sample: 0 }).every((x) => x.pick !== "sample")).toBe(true);
-  });
-
-  it("按批排运行，一晚不超过上限；还有没跑完的不再排；默认每晚开着", () => {
-    const app = fresh();
-    ensureDefaultSchedules(app);
-    expect(listSchedules(app).find((s) => s.id === "outcome-review")).toMatchObject({ kind: "outcome-review", enabled: true });
-    app.config.replies.outcome.review = { enabled: true, max: 7, batch: 3, sample: 1, days: 3 };
-    for (let i = 0; i < 10; i++) answered(app, 30, { confidence: 0.3 });
-    answered(app, 30);
-    answered(app, 30);
-    const runs = scheduleOutcomeReview(app);
-    expect(runs.map((r) => batchOf(r.input).length)).toEqual([3, 3, 1]);
-    const picks = runs.flatMap((r) => batchOf(r.input));
-    expect(new Set(picks.map((p) => p.runId)).size).toBe(7);
-    expect(picks.filter((p) => p.pick === "sample")).toHaveLength(1);
-    expect(scheduleOutcomeReview(app)).toEqual([]);
-    run(app.db, "update runs set status = 'cancelled' where kind = 'outcome-review'");
-    app.config.replies.outcome.review.enabled = false;
-    expect(scheduleOutcomeReview(app)).toEqual([]);
-  });
-
-  it("复查交的结论：一样的记同意（把握低的也就按它算），不一样的改判，第一遍留着；别的回答、别的角色、本人标的都不动", async () => {
-    const app = fresh();
-    const unsure = answered(app, 30, { confidence: 0.4 });
-    const wrong = answered(app, 30);
-    says(app, wrong.conversationId, "不对，排期表上写的是下周二", 29);
-    const owner = answered(app, 30, { by: "本人" });
+    const a = conversation(app, "会话甲"), b = conversation(app, "会话乙");
+    const a1 = a.ask(30, "退款申请页上周的 UV 是多少？", "上周 UV 是 1,284。");
+    const a2 = a.ask(29.5, "要日均的", "日均 183。");
+    const b1 = b.ask(29, "排期表在哪？", "在项目 A 的文档里。");
+    a.ask(5, "今天的呢？", "今天还没出数。");
     const [r] = scheduleOutcomeReview(app);
-    expect(batchOf(r.input).map((p) => p.runId).sort()).toEqual([unsure.runId, wrong.runId].sort());
-    expect(replyOutcome(app, unsure.runId)!.label).toBe("unrelated");
-    hand = () => [
-      { run_id: unsure.runId, label: "resolved", why: "对方晚上说照这个做好了" },
-      { run_id: wrong.runId, label: "corrected", why: "本人一小时后说不对，是下周二" },
-      { run_id: owner.runId, label: "corrected", why: "试一下" },
-    ];
-    expect(await handle(app, r.id)).toMatchObject({ quiet: true, reviewed: 2, confirmed: 1, revised: 1 });
-    expect(tasks[0]).toContain("不对，排期表上写的是下周二");
-    expect(tasks[0]).toContain("review_reply_outcomes");
-    expect(replyOutcome(app, unsure.runId)).toMatchObject({ label: "resolved", first: { label: "resolved", confidence: 0.4 }, revised: null, checked: { verdict: "confirmed", by: "strong · model-x", pick: "unsure" } });
-    expect(replyOutcomeText(replyOutcome(app, unsure.runId)!)).toContain("夜里复查（strong · model-x）同意");
-    expect(replyOutcome(app, wrong.runId)).toMatchObject({ label: "corrected", first: { label: "resolved", confidence: 0.9 }, revised: { label: "corrected", by: "夜里复查（strong · model-x）", why: "本人一小时后说不对，是下周二" }, checked: { verdict: "revised", pick: "signal" } });
-    expect(replyOutcome(app, owner.runId)).toMatchObject({ label: "resolved", revised: null, checked: null });
-
-    // Read once: again, from the wrong role or outside such a run, it changes nothing.
-    const again = await callTool(reviewer(app, r.id), "review_reply_outcomes", { verdicts: [{ run_id: unsure.runId, label: "followup", why: "再交一次" }] });
-    expect(again.text).toContain("已经复查过");
-    expect((await callTool(reviewer(app, r.id, "coach"), "review_reply_outcomes", { verdicts: [{ run_id: unsure.runId, label: "followup", why: "换个角色" }] })).isError).toBe(true);
-    expect((await callTool(reviewer(app, null), "review_reply_outcomes", { verdicts: [{ run_id: unsure.runId, label: "followup", why: "不在复查里" }] })).isError).toBe(true);
-    expect(() => checkReply(app, owner.runId, { label: "corrected", by: "x", why: "直接改" })).toThrow(/本人标的/);
-    // The owner still has the last word; after them nobody else changes it.
-    reviseReply(app, wrong.runId, "taken_over", "本人", "其实是我自己答的");
-    expect(replyOutcome(app, wrong.runId)).toMatchObject({ label: "taken_over", checked: { verdict: "revised" } });
-    expect(() => reviseReply(app, wrong.runId, "resolved", "coach", "我觉得解决了")).toThrow(/以本人的为准/);
-    // A run whose answers all have their reading already ends quietly.
-    expect(await handle(app, r.id)).toMatchObject({ quiet: true, summary: expect.stringContaining("都已经有了结论") });
+    expect(batchOf(r.input).map((p) => p.runId)).toEqual([a1, a2, b1]);
+    expect(r.title).toBe("回扫回答（2 个会话，3 次回答）");
+    expect(scheduleOutcomeReview(app)).toEqual([]);
+    expect(sweepStatus(app).pending).toBe(3);
+    ensureDefaultSchedules(app);
+    expect(listSchedules(app).find((s) => s.kind === "outcome-review")).toMatchObject({ enabled: true });
   });
 
-  it("群里的回答：材料里有一整天的后续、本人自己答的和提问的人又问的，后来的动静对不上就先挑", () => {
+  it("材料：整段对话按时间排，回答标着 id，成员说的话署他的名字，不给第一遍的标注；之前的件和类型清单都在", () => {
     const app = fresh();
-    const r = createRun(app, { kind: "guest", title: "群里的提问", input: {} });
-    run(app.db, "update runs set status = 'done', created_at = ?, finished_at = ?, output = ? where id = ?", ago(30.05), ago(30), JSON.stringify({ answer: "周四上线，依据是排期表。" }), r.id);
-    const line = (id: string, hoursAgo: number, text: string, who: { name: string; id: string; kind?: string }) =>
-      run(app.db, "insert into lark_messages(message_id, chat_id, sender_id, sender_name, sender_kind, content, create_ms) values(?,?,?,?,?,?,?)", id, "oc_demo", who.id, who.name, who.kind ?? "user", text, Date.now() - hoursAgo * HOUR);
-    const li = { name: "小李", id: "ou_li" };
-    line("q1", 30.1, "退款改造什么时候上线？", li);
-    recordLarkSent(app, { messageId: `om_${r.id}`, chatId: "oc_demo", runId: r.id, purpose: "answer", bot: "main" });
-    run(app.db, "update reply_outcomes set at = ?, due_at = ?, label = 'resolved', \"by\" = '决策模型 A', confidence = 0.92, labelled_at = ? where run_id = ?", ago(30), ago(24), ago(24), r.id);
-    line("m1", 29.5, "我补充一下：是下周二上线，排期表改过了", { name: "本人的名字", id: "ou_owner", kind: "owner" });
-    line("m2", 12, "退款改造到底哪天上线？", li);
-    line("m3", 3, "这条是一天以后说的", li);
-    const c = reviewCandidates(app).find((x) => x.runId === r.id)!;
-    expect(c.pick).toBe("signal");
-    expect(c.signals.sort()).toEqual(["asked-again", "owner-answered"]);
-    const task = reviewTask(app, [{ runId: r.id, pick: c.pick, signals: c.signals }]);
-    for (const text of ["退款改造什么时候上线", "周四上线，依据是排期表", "小李（提问的人）", "退款改造到底哪天上线", "本人在那里说：我补充一下", SIGNAL_TEXT["owner-answered"], "第一遍标的：解决了（决策模型 A，把握 0.92）"])
-      expect(task).toContain(text);
-    expect(task).not.toContain("这条是一天以后说的");
-  });
-
-  it("成员自己和机器人的会话：他接着说的话算提问的人说的，不算本人自己答了", async () => {
-    const app = fresh();
-    const { createUser } = await import("../src/core/users.ts");
     createUser(app, { id: "xiaowang", name: "小王" });
-    const { runId, conversationId } = answered(app, 30);
-    run(app.db, "update messages set meta = json_object('userId', 'xiaowang') where conversation_id = ? and role = 'user'", conversationId);
-    const id = addMessage(app, conversationId, "user", "退款改造上线时间我自己问到了，是下周二", null, { userId: "xiaowang" });
-    run(app.db, "update messages set created_at = ? where id = ?", ago(29), id);
-    const c = reviewCandidates(app).find((x) => x.runId === runId)!;
-    expect(c.signals).not.toContain("owner-answered");
-    const task = reviewTask(app, [{ runId, pick: c.pick, signals: c.signals }]);
-    expect(task).toContain("小王（提问的人）（相关）：退款改造上线时间我自己问到了");
-    expect(task).not.toContain("本人在那里说");
+    const c = conversation(app);
+    const r1 = c.ask(30, "退款申请页上周的 UV 是多少？", "上周 UV 是 1,284。", { userId: "xiaowang", label: "followup" });
+    c.says(29.9, "PC 和移动端分开", "xiaowang");
+    defineTaskType(app, { name: "取数分析", description: "从数据平台查数", by: "owner" });
+    run(app.db, "insert into reply_tasks(id, place, conversation_id, first_at, last_at, title, outcome, created_at, updated_at) values('rt_old', ?, ?, ?, ?, '上上周的退款 UV', 'done', ?, ?)", c.conversationId, c.conversationId, ago(50), ago(49), ago(49), ago(49));
+    const task = reviewTask(app, [{ runId: r1 }]);
+    expect(task).toMatch(/\*\*回答 r[0-9a-z]+\*\*（答小王，成员）：上周 UV 是 1,284。/);
+    expect(task).toContain("小王：PC 和移动端分开");
+    expect(task).not.toContain("本人：PC 和移动端分开");
+    expect(task).not.toContain("被追问");
+    expect(task).toContain("件 rt_old「上上周的退款 UV」");
+    expect(task).toContain("- 取数分析：从数据平台查数");
+    expect(task.indexOf("上周 UV 是 1,284")).toBeLessThan(task.indexOf("PC 和移动端分开"));
   });
 
-  it("数据页和每天的用量按复查后的结果算，并给出复查同意的占比", () => {
+  it("交结论：分件、标注和缺的是什么、类型（没有的自动建）、查数记录；同意第一遍的记同意，不同的改判；本人标的不动", async () => {
     const app = fresh();
-    const a = answered(app, 30, { confidence: 0.4 }), b = answered(app, 30), s = answered(app, 30);
-    snapshotOmemUsage(app, { maxDays: 3 });
-    const before = metricPoints(app, "omem.reply_outcomes");
-    expect(before.some((p) => p.dims.review)).toBe(false);
-    checkReply(app, a.runId, { label: "resolved", by: "strong", why: "晚上说做好了", pick: "unsure" });
-    checkReply(app, b.runId, { label: "corrected", by: "strong", why: "本人说不对", pick: "signal" });
-    checkReply(app, s.runId, { label: "resolved", by: "strong", why: "道谢了", pick: "sample" });
+    const c = conversation(app);
+    const r1 = c.ask(30, "退款申请页上周的 UV 是多少？分 PC 和移动端", "上周 UV 是 1,284。", { label: "followup" });
+    const r2 = c.ask(29.5, "我说了要分 PC 和移动端", "PC 912，移动端 372。", { label: "resolved" });
+    const r3 = c.ask(29, "排期表在哪？", "在项目 A 的文档里。", { by: "本人", label: "corrected" });
+    const [sweep] = scheduleOutcomeReview(app);
+    hand = () => [
+      { title: "退款申请页上周的 UV，分端", answers: [answer(r1, "supplement", "他原话要分端，回答没分", "没分 PC 和移动端"), answer(r2, "resolved")], outcome: "done", type: "取数分析", new_type: { description: "从数据平台、日志查数和明细" }, topics: ["退款改造", "UV"],
+        queries: [{ run_id: r2, question: "退款申请页上周的 UV，分 PC 和移动端", definition: "上周一到周日，按天去重后相加", sources: ["埋点平台：refund_apply_view"], result: "PC 912，移动端 372" }] },
+      { title: "排期表在哪", answers: [answer(r3, "resolved")], outcome: "done", type: "咨询答疑", new_type: { description: "问在哪、怎么用、是什么" } },
+    ];
+    expect(await handle(app, sweep.id)).toMatchObject({ quiet: true, swept: 3, tasks: 2, left: 0 });
+    expect(replyOutcome(app, r1)).toMatchObject({ label: "supplement", missing: "没分 PC 和移动端", swept: true, first: { label: "followup" }, revised: { label: "supplement", by: "回扫（strong · model-x）" }, checked: { verdict: "revised", pick: "sweep" } });
+    expect(replyOutcome(app, r2)).toMatchObject({ label: "resolved", revised: null, checked: { verdict: "confirmed", pick: "sweep" } });
+    expect(replyOutcomeText(replyOutcome(app, r2)!)).toContain("回扫（strong · model-x）同意");
+    expect(replyOutcome(app, r3)).toMatchObject({ label: "corrected", revised: null, swept: true });
+    const [t2, t1] = listReplyTasks(app, { limit: 10 });
+    expect(t1).toMatchObject({ title: "退款申请页上周的 UV，分端", type: "取数分析", rounds: 2, supplements: 1, corrections: 0, outcome: "done", topics: ["退款改造", "UV"], asker_kind: "owner" });
+    expect(t2).toMatchObject({ title: "排期表在哪", type: "咨询答疑" });
+    expect(listTaskTypes(app).map((t) => [t.name, t.definedBy])).toEqual([["取数分析", "agent"], ["咨询答疑", "agent"]]);
+    expect(one(app.db, "select question, definition, sources, task_id from data_queries where run_id = ?", r2)).toMatchObject({ question: "退款申请页上周的 UV，分 PC 和移动端", sources: JSON.stringify(["埋点平台：refund_apply_view"]), task_id: t1.id });
+    // Each answer once; only this stretch's; only the reviewer, inside a sweep run.
+    const again = await callTool(reviewer(app, sweep.id), "review_reply_outcomes", { tasks: [{ title: "再交一次", answers: [answer(r1, "resolved")], outcome: "done", type: "取数分析" }] });
+    expect(again.text).toContain("已经交过了");
+    expect((await callTool(reviewer(app, sweep.id, "coach"), "review_reply_outcomes", { tasks: [{ title: "换个角色", answers: [answer(r1, "resolved")], outcome: "done", type: "取数分析" }] })).isError).toBe(true);
+    expect((await callTool(reviewer(app, null), "review_reply_outcomes", { tasks: [{ title: "不在回扫里", answers: [answer(r1, "resolved")], outcome: "done", type: "取数分析" }] })).isError).toBe(true);
+    // The owner still has the last word.
+    reviseReply(app, r1, "next", "本人", "其实是后来才想到的");
+    expect(replyOutcome(app, r1)!.label).toBe("next");
+  });
+
+  it("交得不对的件退回原因：不在这一段、类型不存在又没给新建、跨会话；没交的下一段再看，两回都没交按第一遍留着", async () => {
+    const app = fresh();
+    const a = conversation(app, "会话甲"), b = conversation(app, "会话乙");
+    const a1 = a.ask(30, "问题一", "回答一");
+    const b1 = b.ask(29, "问题二", "回答二");
+    const [sweep] = scheduleOutcomeReview(app);
+    const ctx = reviewer(app, sweep.id);
+    const out = await callTool(ctx, "review_reply_outcomes", { tasks: [
+      { title: "跨两个会话", answers: [answer(a1, "resolved"), answer(b1, "resolved")], outcome: "done", type: "随便" },
+      { title: "没有这个类型", answers: [answer(a1, "resolved")], outcome: "done", type: "不存在的类型" },
+      { title: "不在这一段", answers: [answer("r_other", "resolved")], outcome: "done", type: "不存在的类型" },
+    ] });
+    expect(out.text).toContain("在不同的会话");
+    expect(out.text).toContain("没有类型「不存在的类型」");
+    expect(out.text).toContain("不在这一段要判的回答里");
+    expect(out.text).toContain(`还没交的回答：${a1}、${b1}`);
+    hand = () => [];
+    await handle(app, sweep.id);
+    expect(one(app.db, "select sweep_tries, swept_at from reply_outcomes where run_id = ?", a1)).toMatchObject({ sweep_tries: 1, swept_at: null });
+    run(app.db, "update runs set status = 'done' where id = ?", sweep.id);
+    const [again] = scheduleOutcomeReview(app);
+    await handle(app, again.id);
+    expect(one(app.db, "select sweep_tries from reply_outcomes where run_id = ?", a1)).toMatchObject({ sweep_tries: 2 });
+    expect(replyOutcome(app, a1)).toMatchObject({ label: "resolved", swept: true, checked: null });
+  });
+
+  it("接着之前的件：写它的 id 就并进去，轮数和缺的跟着算", async () => {
+    const app = fresh();
+    const c = conversation(app);
+    const r1 = c.ask(53, "退款申请页上周的 UV", "1,284");
+    const [s1] = scheduleOutcomeReview(app, Date.now() - 24 * HOUR);
+    hand = () => [{ title: "退款申请页 UV", answers: [answer(r1, "resolved")], outcome: "unfinished", note: "还要分端", type: "取数分析", new_type: { description: "从数据平台查数" } }];
+    await handle(app, s1.id);
+    run(app.db, "update runs set status = 'done' where id = ?", s1.id);
+    const r2 = c.ask(30, "分一下 PC 和移动端", "PC 912，移动端 372");
+    const [s2] = scheduleOutcomeReview(app);
+    const id = listReplyTasks(app, { limit: 5 })[0].id;
+    expect(tasks.length).toBe(1);
+    hand = (task) => (task.includes(`件 ${id}「退款申请页 UV」`) ? [{ task: id, title: "退款申请页 UV，分端", answers: [answer(r2, "next")], outcome: "done", type: "取数分析" }] : []);
+    await handle(app, s2.id);
+    expect(listReplyTasks(app, { limit: 5 })).toMatchObject([{ id, title: "退款申请页 UV，分端", rounds: 2, outcome: "done" }]);
+  });
+
+  it("类型两级：细类挂在大类下，本人删掉的不再自动建，一段最多新建三个，合并后件跟过去", async () => {
+    const app = fresh();
+    const top = defineTaskType(app, { name: "问题排查", description: "查出问题出在哪", by: "owner" });
+    const alarm = defineTaskType(app, { name: "报警排查", parent: "问题排查", description: "按报警查", by: "agent" });
+    expect(alarm.parentId).toBe(top.id);
+    expect(() => defineTaskType(app, { name: "更细的", parent: "报警排查", description: "第三级", by: "agent" })).toThrow(/只有两级/);
+    const dropped = defineTaskType(app, { name: "闲聊", description: "无关", by: "agent" });
+    updateTaskType(app, dropped.id, { status: "dropped", note: "不是工作" });
+    expect(() => defineTaskType(app, { name: "闲聊", description: "再建", by: "agent" })).toThrow(/删掉过/);
+    const c = conversation(app);
+    const ids = [c.ask(30, "一", "一"), c.ask(29.9, "二", "二"), c.ask(29.8, "三", "三"), c.ask(29.7, "四", "四")];
+    const [sweep] = scheduleOutcomeReview(app);
+    const out = await callTool(reviewer(app, sweep.id), "review_reply_outcomes", { tasks: ids.map((id, i) => ({ title: `第 ${i + 1} 件`, answers: [answer(id, "resolved")], outcome: "done", type: `新类型${i}`, new_type: { description: "一句定义" } })) });
+    expect(out.text).toContain("已经新建了 3 个类型");
+    const merged = updateTaskType(app, resolveTaskType(app, "新类型0")!.id, { mergeInto: "问题排查" });
+    expect(merged.status).toBe("merged");
+    expect(resolveTaskType(app, "新类型0")!.name).toBe("问题排查");
+    expect(listReplyTasks(app, { limit: 10 }).filter((t) => t.type === "问题排查")).toHaveLength(1);
+  });
+
+  it("回补：补登记更早的回答（先标没判），按条数上限停；reset 清掉回扫的结论重扫", async () => {
+    const app = fresh();
+    const c = conversation(app);
+    const old = c.ask(24 * 40, "很早以前的问题", "很早以前的回答");
+    run(app.db, "delete from reply_outcomes where run_id = ?", old);
+    const recent = c.ask(30, "最近的问题", "最近的回答");
+    const s = startSweepJob(app, { since: ago(24 * 45), limit: 1 });
+    expect(s.registered).toBe(1);
+    expect(replyOutcome(app, old)).toMatchObject({ label: "unjudged" });
+    const [sweep] = all<{ id: string }>(app.db, "select id from runs where kind = 'outcome-review'");
+    expect(batchOf(getRun(app, sweep.id).input).map((p) => p.runId)).toEqual([old]);
+    hand = () => [{ title: "很早以前的事", answers: [answer(old, "resolved")], outcome: "done", type: "咨询答疑", new_type: { description: "问在哪、是什么" } }];
+    await handle(app, sweep.id);
+    expect(replyOutcome(app, old)).toMatchObject({ label: "resolved", first: { label: "unjudged" }, swept: true });
+    run(app.db, "update runs set status = 'done' where id = ?", sweep.id);
+    // The job's limit is reached: it ends, and the regular days go on.
+    const [next] = scheduleOutcomeReview(app);
+    expect(sweepStatus(app).job).toBeNull();
+    expect(batchOf(next.input).map((p) => p.runId)).toEqual([recent]);
+    run(app.db, "update runs set status = 'done' where id = ?", next.id);
+    const again = startSweepJob(app, { since: ago(24 * 45), until: ago(24 * 30), reset: true });
+    expect(again.reset).toBe(1);
+    expect(replyOutcome(app, old)).toMatchObject({ label: "unjudged", swept: false, taskId: null, revised: null });
+    expect(one(app.db, "select count(*) n from reply_tasks")).toMatchObject({ n: 0 });
+  });
+
+  it("数据页按回扫后的结果算：接着往下算有用、要补充单列，给出回扫同意第一遍的占比", async () => {
+    const app = fresh();
+    const c = conversation(app);
+    const r1 = c.ask(30, "一", "一", { label: "resolved" });
+    const r2 = c.ask(29.9, "二", "二", { label: "followup" });
+    const r3 = c.ask(29.8, "三", "三", { label: "resolved" });
+    const [sweep] = scheduleOutcomeReview(app);
+    hand = () => [{ title: "一件事", answers: [answer(r1, "resolved"), answer(r2, "next"), answer(r3, "supplement", "漏了", "没给时间段")], outcome: "done", type: "取数分析", new_type: { description: "从数据平台查数" } }];
+    await handle(app, sweep.id);
     clearInsightsCache(app);
     const quality = insights(app, "owner", {}).sections.find((x) => x.id === "quality")!;
     const value = (key: string) => quality.metrics.find((m) => m.key === key)?.value;
-    expect(value("quality:reply:对话里的回答:resolved")).toBe(2);
-    expect(value("quality:reply:对话里的回答:corrected")).toBe(1);
-    expect(value("quality:reply:对话里的回答:unclear") ?? 0).toBe(0);
+    expect(value("quality:reply:对话里的回答:resolved")).toBe(1);
+    expect(value("quality:reply:对话里的回答:next")).toBe(1);
+    expect(value("quality:reply:对话里的回答:supplement")).toBe(1);
+    expect(value("quality:reply:对话里的回答:followup")).toBeUndefined();
+    expect(value("quality:reply:rate")).toBe(66.7);
     expect(value("quality:reply:checked")).toBe(3);
-    expect(value("quality:reply:agree")).toBe(66.7);
-    expect(value("quality:reply:agree:sample")).toBe(100);
-    // The next day's snapshot counts the last days again, with the reading in them.
-    snapshotOmemUsage(app, { maxDays: 3, now: new Date(Date.now() + 24 * HOUR) });
-    const after = metricPoints(app, "omem.reply_outcomes").filter((p) => p.at === before[0].at);
-    expect(after.find((p) => p.dims.review === "复查同意")).toMatchObject({ value: 2, dims: { label: "resolved", judge: "模型" } });
-    expect(after.find((p) => p.dims.review === "复查改判")).toMatchObject({ value: 1, dims: { label: "corrected", revised: "改判过" } });
-    expect(after.filter((p) => !p.dims.review)).toEqual([]);
+    expect(value("quality:reply:agree")).toBe(33.3);
+    expect(quality.metrics.find((m) => m.key === "quality:reply:checked")?.label).toBe("回扫过的");
   });
 });

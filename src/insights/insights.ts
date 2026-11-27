@@ -8,7 +8,7 @@ import { accessibleSpaces, OWNER, userName } from "../core/users.ts";
 import { runReadableSpaces } from "../auth/permissions.ts";
 import { DECISION_SCENES } from "../core/decision-scenes.ts";
 import { HttpError, localStamp } from "../core/util.ts";
-import { replyOutcomes } from "../agents/reply-outcomes.ts";
+import { askerOf, CLEAR_LABELS, replyOutcomes, USEFUL_LABELS } from "../agents/reply-outcomes.ts";
 import { sceneOf, scenes, sceneTable } from "./scenes.ts";
 import type { Breakdown, Metric, RecordRef, Section, Report } from "./types.ts";
 
@@ -78,7 +78,7 @@ function queryString(f: Normal) {
 function matchesFilters(f: Normal, r: RunRow) {
   return (!f.space || r.space_id === f.space) && (!f.by || r.trigger_by === f.by) && (!f.bot || r.bot === f.bot)
     && (!f.scene || sceneOf(r) === f.scene) && (!f.profile || r.spec === f.profile || r.roles?.split("|").includes(f.profile))
-    && (!f.model || parseAi(r.ai).model === f.model) && (!f.chat || r.place === f.chat);
+    && (!f.model || parseAi(r.ai).model === modelKey(f.model)) && (!f.chat || r.place === f.chat);
 }
 function context(app: App, viewer: string, f: Normal): Ctx {
   const allowed = accessibleSpaces(app, viewer);
@@ -93,7 +93,11 @@ function context(app: App, viewer: string, f: Normal): Ctx {
   const runs = all<RunRow>(app.db, DAILY_SQL, f.start, f.end).filter(r => visible(r) && matchesFilters(f, r));
   return { app, viewer, f, runs, ids: new Set(runs.map(r => r.id)), records: new Map(), visible, link: key => `#/insights?${queryString(f)}&detail=${encodeURIComponent(key)}` };
 }
-function parseAi(s: string | null): { profile?: string; model?: string } { try { return JSON.parse(s ?? "null") ?? {}; } catch { return {}; } }
+/** One model under one name: backends report it as “GPT 6.1 Sol”, “GPT-6.1 Sol” or “gpt-6.1-sol”. */
+export const modelKey = (m: string | undefined | null) => (m ? m.trim().toLowerCase().replace(/[\s_]+/g, "-") : undefined);
+function parseAi(s: string | null): { profile?: string; model?: string } {
+  try { const v = JSON.parse(s ?? "null") ?? {}; return { ...v, model: modelKey(v.model) }; } catch { return {}; }
+}
 const RUN_STATUS: Record<string, string> = { done: "做完", failed: "失败", cancelled: "取消", running: "进行中", queued: "排队中" };
 const runReferences = new WeakMap<RunRow, RecordRef>();
 const refRun = (r: RunRow): RecordRef => {
@@ -258,30 +262,37 @@ export function qualitySection(c: Ctx): Section {
   if (outcomes.length) {
     const kindOf = new Map(c.runs.map(r => [r.id, r.kind]));
     const rowOf = (o: typeof outcomes[number]) => ({ guest: "别人问机器人的", "rule-fire": "规则触发的回答", agent: "交给 Agent 的" } as Record<string, string>)[kindOf.get(o.runId) ?? ""] ?? "对话里的回答";
-    const refs = (xs: typeof outcomes) => xs.map(o => ({ id: o.runId, at: o.at, label: `回复 · ${o.text}${o.revised ? "（改判过）" : o.checked?.verdict === "confirmed" ? "（复查同意）" : ""}`, link: `#/runs/${o.runId}` }));
+    const refs = (xs: typeof outcomes) => xs.map(o => ({ id: o.runId, at: o.at, label: `回复 · ${o.text}${o.revised ? "（改判过）" : o.checked?.verdict === "confirmed" ? (o.checked.pick === "sweep" ? "（回扫同意）" : "（复查同意）") : ""}`, link: `#/runs/${o.runId}` }));
+    const legacy = outcomes.some(o => o.label === "followup");
     const cols: [string, string, (o: typeof outcomes[number]) => boolean][] = [
-      ["resolved", "解决了", o => o.label === "resolved"], ["followup", "被追问", o => o.label === "followup"], ["corrected", "被纠正", o => o.label === "corrected"],
-      ["taken", "别人接手了", o => o.label === "taken_over"], ["unclear", "看不出", o => ["unrelated", "silent", "unjudged"].includes(o.label!)],
+      ["resolved", "解决了", o => o.label === "resolved"], ["next", "接着往下", o => o.label === "next"], ["supplement", "要补充", o => o.label === "supplement"],
+      ...(legacy ? [["followup", "被追问（旧标注）", (o: typeof outcomes[number]) => o.label === "followup"] as [string, string, (o: typeof outcomes[number]) => boolean]] : []),
+      ["corrected", "被纠正", o => o.label === "corrected"], ["taken", "别人接手了", o => o.label === "taken_over"], ["unclear", "看不出", o => ["unrelated", "silent", "unjudged"].includes(o.label!)],
     ];
     for (const row of [...new Set(outcomes.map(rowOf))]) {
       const rs = outcomes.filter(o => rowOf(o) === row);
       for (const [key, label, is] of cols) s.metrics.push(metric(c, `quality:reply:${row}:${key}`, `${row} · ${label}`, rs.filter(is).length, refs(rs.filter(is)), undefined, undefined, { table: "回复发出后的结果", row, col: label }));
     }
-    const clear = outcomes.filter(o => ["resolved", "followup", "corrected", "taken_over"].includes(o.label!));
-    s.metrics.push(metric(c, "quality:reply:rate", "回复有用的占比", ratio(clear.filter(o => o.label === "resolved").length, clear.length), refs(clear), "%", "解决了 ÷（解决了 + 被追问 + 被纠正 + 别人接手了）。没人接话和看不出的不算。按回复发出几小时后大家说的话判断，不是表情。"));
+    const clear = outcomes.filter(o => CLEAR_LABELS.includes(o.label!));
+    s.metrics.push(metric(c, "quality:reply:rate", "回复有用的占比", ratio(clear.filter(o => USEFUL_LABELS.includes(o.label!)).length, clear.length), refs(clear), "%", `（解决了 + 接着往下）÷（解决了 + 接着往下 + 要补充 + 被纠正 + 别人接手了${legacy ? " + 被追问" : ""}）。没人接话和看不出的不算。按回复之后大家说的话判断，不是表情；回扫过的按回扫的结论。`));
     const revised = outcomes.filter(o => o.revised);
     const modelled = outcomes.filter(o => o.first && o.first.confidence !== null);
-    if (modelled.length) s.metrics.push(metric(c, "quality:reply:revised", "被复盘改判的", revised.length, refs(revised), undefined, `第一遍由决策模型标（${modelled.length} 条）；夜里复查、夜间复盘的评判和 coach 重读后续消息，认为标错了就改，本人也可以在运行页改。改判得多，说明决策模型在这件事上不可靠。`));
-    // The nightly second reading (agents/outcome-review.ts): how often it agreed with the first label.
+    if (modelled.length) s.metrics.push(metric(c, "quality:reply:revised", "被复盘改判的", revised.length, refs(revised), undefined, `第一遍由决策模型标（${modelled.length} 条），是临时的；回扫、夜间复盘的评判和 coach 读了整段对话认为标错了就改，本人也可以在运行页改。`));
+    // The sweep (agents/outcome-review.ts), and the nightly reading before it: how often it agreed with the
+    // first pass, counted over answers the decision model labelled (the others had no first pass to agree with).
     const checked = outcomes.filter(o => o.checked);
+    const judgedFirst = checked.filter(o => o.first && o.first.confidence !== null);
     if (checked.length) {
       const agreed = (xs: typeof outcomes) => xs.filter(o => o.checked!.verdict === "confirmed").length;
       const sampled = checked.filter(o => o.checked!.pick === "sample");
+      const swept = outcomes.filter(o => o.swept);
       s.metrics.push(
-        metric(c, "quality:reply:checked", "夜里复查过的", checked.length, refs(checked), undefined, "回答发出一到三天后，由 outcome-reviewer 带着发出后一整天的消息重看第一遍的标注；同意的记同意，不同意的改判（第一遍的标注留着）。本人标的和按表情记的不复查。"),
-        metric(c, "quality:reply:agree", "复查同意第一遍的占比", ratio(agreed(checked), checked.length), refs(checked), "%", "复查同意 ÷ 复查过的。复查先挑后来的动静对不上的、把握不够的和标成看不出的，所以这个比例比第一遍整体的准确率低；随机抽的那部分单算一个数。"),
+        metric(c, "quality:reply:checked", swept.length ? "回扫过的" : "夜里复查过的", checked.length, refs(checked), undefined, "回答发出一天后，由 outcome-reviewer 读这个会话的整段对话，把回答分成件，重新判每次回答的结果；第一遍的标注留着。本人标的和按表情记的不改。"),
+        ...(judgedFirst.length ? [metric(c, "quality:reply:agree", "回扫同意第一遍的占比", ratio(agreed(judgedFirst), judgedFirst.length), refs(judgedFirst), "%", "只算第一遍由决策模型标过的：回扫给的结果和它一样的占多少，就是第一遍有多可信。")] : []),
       );
-      if (sampled.length) s.metrics.push(metric(c, "quality:reply:agree:sample", "随机抽查里同意第一遍的占比", ratio(agreed(sampled), sampled.length), refs(sampled), "%", "只算每晚随机抽的、第一遍有把握的回答：最接近第一遍平常有多准。条数少时只作参考。"));
+      if (sampled.length) s.metrics.push(metric(c, "quality:reply:agree:sample", "随机抽查里同意第一遍的占比", ratio(agreed(sampled), sampled.length), refs(sampled), "%", "回扫之前的夜里复查每晚随机抽的、第一遍有把握的回答。条数少时只作参考。"));
+      const left = outcomes.filter(o => !o.swept && o.label && o.label !== "unjudged");
+      if (swept.length && left.length) s.metrics.push(metric(c, "quality:reply:unswept", "还没回扫的", left.length, refs(left), undefined, "发出不满一天的回答，或回扫还没扫到的：它们按第一遍的临时结论算。"));
     }
   }
   const replay = replayRows(c);
@@ -548,7 +559,7 @@ function compute(app: App, viewer: string, input: Filters): Cached {
   }).filter(s => !s.empty || s.id !== "study" && (s.id !== "flows" || s.notes.length > 0));
   const unique = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((s): s is string => !!s))].sort();
   const result: Cached = { at: Date.now(), records: c.records, runs: new Map(c.runs.map(r => [r.id, r])), visible: c.visible, f, report: { from: f.from, to: f.to, timezone: app.config.timezone, owner: viewer === OWNER, scenes, sceneTable, generatedAt: new Date().toISOString(), sections,
-    options: { spaces: unique(c.runs.map(r => r.space_id)), people: unique(c.runs.map(r => r.trigger_by)), profiles: unique(c.runs.flatMap(r => [r.spec, ...(r.roles ?? "").split("|")])), models: unique(c.runs.map(r => parseAi(r.ai).model)), bots: unique(c.runs.map(r => r.bot)), chats: unique(c.runs.map(r => r.place)) } } };
+    options: { spaces: unique(c.runs.map(r => r.space_id)), people: unique(c.runs.map(r => r.trigger_by)), peopleNames: Object.fromEntries(unique(c.runs.map(r => r.trigger_by)).map(k => [k, personName(app, k)])), profiles: unique(c.runs.flatMap(r => [r.spec, ...(r.roles ?? "").split("|")])), models: unique(c.runs.map(r => parseAi(r.ai).model)), bots: unique(c.runs.map(r => r.bot)), chats: unique(c.runs.map(r => r.place)) } } };
   for (const [k, v] of entries) if (Date.now() - v.at >= 180_000) entries.delete(k);
   if (entries.size >= 8) entries.delete(entries.keys().next().value!);
   entries.set(key, result);
@@ -578,7 +589,9 @@ function personName(app: App, key: string) {
   if (key.startsWith("user:")) return userName(app, key.slice(5));
   const at = key.indexOf(":");
   if (at <= 0) return key;
-  return `${({ lark: "飞书", web: "网页", mcp: "外部 Agent" } as Record<string, string>)[key.slice(0, at)] ?? key.slice(0, at)}用户 …${key.slice(at + 1).slice(-4)}`;
+  // Feishu people by the name (and email) seen there, whoever looks (docs/v2/reply-sweep.md).
+  if (["lark", "bot", "name"].includes(key.slice(0, at))) { const a = askerOf(app, key); return a.kind === "owner" ? "你" : a.name; }
+  return `${({ web: "网页", mcp: "外部 Agent" } as Record<string, string>)[key.slice(0, at)] ?? key.slice(0, at)}用户 …${key.slice(at + 1).slice(-4)}`;
 }
 const BREAKDOWN_TOP = 8, BREAKDOWN_PAGE = 100;
 /**

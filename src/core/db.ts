@@ -2529,6 +2529,38 @@ export const migrations: readonly string[] = [
          when r.status='failed' then 'failed'
        end outcome
      from decisions d left join runs r on r.id=d.ref where d.scene='route';`,
+  // The sweep of answers (agents/outcome-review.ts, docs/v2/reply-sweep.md): answers grouped into tasks,
+  // the kinds of task (two levels, defined as they come up), and the data looked up for someone.
+  `create table reply_tasks (
+     id text primary key, place text not null, chat_id text, conversation_id text,
+     asker text, asker_name text not null default '', asker_kind text not null default '',
+     first_at text not null, last_at text not null, title text not null default '', type_id text,
+     topics text not null default '[]', outcome text not null default 'unclear', note text not null default '',
+     rounds integer not null default 0, supplements integer not null default 0, corrections integer not null default 0,
+     "by" text, run_id text, created_at text not null, updated_at text not null
+   );
+   create index reply_tasks_place on reply_tasks(place, last_at);
+   create index reply_tasks_first on reply_tasks(first_at);
+   create index reply_tasks_type on reply_tasks(type_id, first_at);
+   create table task_types (
+     id text primary key, name text not null, parent_id text, description text not null default '',
+     spaces text not null default '[]', status text not null default 'active', merged_into text,
+     defined_by text not null default 'agent', defined_run text, owner_note text,
+     created_at text not null, updated_at text not null
+   );
+   create table data_queries (
+     id text primary key, task_id text, run_id text not null, space_id text,
+     asker text, asker_name text not null default '', question text not null, definition text not null default '',
+     sources text not null default '[]', result text not null default '', at text not null, updated_at text not null
+   );
+   create index data_queries_at on data_queries(at);
+   create index data_queries_run on data_queries(run_id);
+   alter table reply_outcomes add column task_id text;
+   alter table reply_outcomes add column missing text;
+   alter table reply_outcomes add column swept_at text;
+   alter table reply_outcomes add column sweep_tries integer not null default 0;
+   create index reply_outcomes_task on reply_outcomes(task_id);
+   create index reply_outcomes_unswept on reply_outcomes(at) where swept_at is null;`,
 ];
 
 export type Db = DatabaseSync;

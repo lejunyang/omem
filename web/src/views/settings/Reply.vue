@@ -112,8 +112,8 @@ async function saveReplyReview(patch: Record<string, unknown>, note: string) {
 }
 function saveReplyReviewMax(raw: string) {
   const n = Number(raw);
-  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(1, Math.min(200, Math.round(n))) : 30;
-  return saveReplyReview({ max: v }, `每晚最多复查 ${v} 条回复结果`);
+  const v = Number.isFinite(n) && raw.trim() !== "" ? Math.max(1, Math.min(5000, Math.round(n))) : 200;
+  return saveReplyReview({ max: v }, `每天最多回扫 ${v} 次回答`);
 }
 const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === false);
 </script>
@@ -313,12 +313,12 @@ const outcomeOff = computed(() => config.value?.replies?.outcome?.enabled === fa
       <SetRow label="发出几小时后判断" hint="1–72" :off="outcomeOff">
         <input class="input set-num" type="number" inputmode="numeric" min="1" max="72" aria-label="发出几小时后判断" :value="config.replies?.outcome?.afterHours ?? 6" @change="saveReplyHours(($event.target as HTMLInputElement).value)" />
       </SetRow>
-      <SetRow label="每晚复查" :off="outcomeOff">
-        <template #hint><HelpText>一到三天前的回答，由 outcome-reviewer 带着发出后一整天的消息重看第一遍的标注，同意的记同意，不对的改判；你标的和按表情记的不碰。在 Agent 页给它选一个比决策模型强的模型。</HelpText></template>
-        <UiCheckbox :model-value="config.replies?.outcome?.review?.enabled !== false" switch aria-label="每晚复查回复结果" @change="(v: boolean) => saveReplyReview({ enabled: v }, v ? '每晚复查回复结果' : '不再复查回复结果')" />
+      <SetRow label="回扫" :off="outcomeOff">
+        <template #hint><HelpText>发出满一天的回答，由 outcome-reviewer 读那个会话的整段对话：分成一件件事，重新判每次回答的结果、缺了什么，记下任务类型和查数记录；第一遍的标注留着，你标的和按表情记的不改。在 Agent 页给它选一个比决策模型强的模型。</HelpText></template>
+        <UiCheckbox :model-value="config.replies?.outcome?.review?.enabled !== false" switch aria-label="回扫回答" @change="(v: boolean) => saveReplyReview({ enabled: v }, v ? '回扫回答' : '不再回扫回答')" />
       </SetRow>
-      <SetRow label="每晚最多复查几条" :hint="`1–200，其中随机抽 ${config.replies?.outcome?.review?.sample ?? 5} 条有把握的`" :off="outcomeOff || config.replies?.outcome?.review?.enabled === false">
-        <input class="input set-num" type="number" inputmode="numeric" min="1" max="200" aria-label="每晚最多复查几条" :value="config.replies?.outcome?.review?.max ?? 30" @change="saveReplyReviewMax(($event.target as HTMLInputElement).value)" />
+      <SetRow label="每天最多回扫几次回答" hint="1–5000" :off="outcomeOff || config.replies?.outcome?.review?.enabled === false">
+        <input class="input set-num" type="number" inputmode="numeric" min="1" max="5000" aria-label="每天最多回扫几次回答" :value="config.replies?.outcome?.review?.max ?? 200" @change="saveReplyReviewMax(($event.target as HTMLInputElement).value)" />
       </SetRow>
     </SetCard>
   </div>

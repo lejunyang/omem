@@ -21,18 +21,25 @@ import { HttpError, json, now, truncate } from "../core/util.ts";
  */
 export const REPLY_LABELS = {
   resolved: "解决了",
-  followup: "被追问",
+  next: "接着往下",
+  supplement: "要补充",
   corrected: "被纠正",
   taken_over: "别人接手了",
   unrelated: "看不出",
   silent: "没人接话",
   unjudged: "没判",
+  // Before the sweep (docs/v2/reply-sweep.md) “asked to add” and “went on from it” were one label; old rows keep it.
+  followup: "被追问",
 } as const;
 export type ReplyLabel = keyof typeof REPLY_LABELS;
-/** What a judge (the decision model, or a reviewer revising it) may answer. */
-export const JUDGED_LABELS = ["resolved", "followup", "corrected", "taken_over", "unrelated"] as const;
+/** What a judge (the decision model, the sweep, or a reviewer revising it) may answer. */
+export const JUDGED_LABELS = ["resolved", "next", "supplement", "corrected", "taken_over", "unrelated"] as const;
 export type JudgedLabel = (typeof JUDGED_LABELS)[number];
-const judged = (v: unknown): v is JudgedLabel => (JUDGED_LABELS as readonly unknown[]).includes(v);
+const judged = (v: unknown): v is JudgedLabel | "followup" => v === "followup" || (JUDGED_LABELS as readonly unknown[]).includes(v);
+/** The labels that say the answer was of use (the rest that are clear say it was not, or not wholly). */
+export const USEFUL_LABELS: readonly ReplyLabel[] = ["resolved", "next"];
+/** Clear outcomes: of use, or not. 看不出 / 没人接话 / 没判 are left out of any share. */
+export const CLEAR_LABELS: readonly ReplyLabel[] = ["resolved", "next", "supplement", "corrected", "taken_over", "followup"];
 
 /** Runs that answer someone. Patrols, briefs and coordination turns also post, but nobody asked. */
 const ANSWERING = new Set(["ask", "guest", "lark-command", "agent", "rule-fire"]);
@@ -48,6 +55,7 @@ export type OutcomeRow = {
   label: ReplyLabel | null; confidence: number | null; by: string | null; evidence: string; labelled_at: string | null;
   revised_label: ReplyLabel | null; revised_by: string | null; revised_why: string | null; revised_at: string | null; due_at: string;
   checked: "confirmed" | "revised" | null; checked_label: ReplyLabel | null; checked_by: string | null; checked_why: string | null; checked_pick: string | null; checked_at: string | null;
+  task_id?: string | null; missing?: string | null; swept_at?: string | null; sweep_tries?: number;
 };
 type Row = OutcomeRow;
 /** Who stands for the owner in `by` / `revised_by`: what they set is ground truth, nobody else changes it. */
@@ -64,6 +72,8 @@ export type ReplyOutcome = {
   /** The nightly second reading (outcome-review.ts): agreed with the first label, or changed it. */
   checked: { verdict: "confirmed" | "revised"; label: ReplyLabel; by: string; why: string; pick: string; at: string } | null;
   evidence: FollowUp[];
+  /** The sweep's reading (docs/v2/reply-sweep.md): the task it belongs to and what was missing. */
+  taskId: string | null; missing: string | null; swept: boolean;
 };
 
 /** A reply went out. The last message of a run is the one what follows is measured from. */
@@ -178,9 +188,10 @@ const QUESTION: DecisionQuestion = {
   type: "choice",
   instructions: "助手（机器人）回答了一个问题。只根据回答之后大家说的话，判断这条回答的结果；不评价回答本身写得好不好。",
   options: {
-    resolved: "提问的人接受了回答：道谢、确认解决、照着去做了，或在回答的基础上继续往下推进",
-    followup: "提问的人就同一件事追问、要求补充或又问了一遍，说明回答还不够",
-    corrected: "有人指出回答不对、不全、答非所问，或让它重查",
+    resolved: "提问的人接受了回答：道谢、确认解决、照着去做了，之后没再就这件事说话",
+    next: "提问的人在这次结果上提了下一步（换口径、加维度、画图、导进文档）；他原来要的已经答到了",
+    supplement: "提问的人原来要的没答全：他说过的维度、时间段、口径没给，或只给了一半，又让补",
+    corrected: "有人指出回答不对、答非所问，或让它重查",
     taken_over: "本人或别人自己把问题答了、处理了，没有用上这条回答",
     unrelated: "后面的话和这条回答无关，看不出它有没有用",
   },
@@ -193,7 +204,23 @@ const QUESTION: DecisionQuestion = {
 export function backfillReplies(app: App, days = 7): number {
   if (one(app.db, "select 1 from kv where key = 'reply_outcomes_backfill'")) return 0;
   run(app.db, "insert or replace into kv(key, value) values('reply_outcomes_backfill', ?)", now());
-  const runs = all<{ id: string; input: string; created_at: string; finished_at: string | null }>(app.db, "select id, input, created_at, finished_at from runs where created_at >= ? and kind in ('ask','guest','lark-command','agent','rule-fire') and status = 'done'", new Date(Date.now() - days * 86400_000).toISOString());
+  return registerReplies(app, new Date(Date.now() - days * 86400_000).toISOString());
+}
+
+/**
+ * For a sweep further back than replies were noted (docs/v2/reply-sweep.md): answers since `since` that
+ * have no row yet are noted now, already marked 没判 so the first pass leaves them to the sweep.
+ */
+export function registerPastReplies(app: App, since: string): number {
+  const before = new Set(all<{ run_id: string }>(app.db, "select run_id from reply_outcomes where at >= ?", since).map((r) => r.run_id));
+  const n = registerReplies(app, since, before);
+  run(app.db, "update reply_outcomes set label = 'unjudged', \"by\" = '宿主', labelled_at = ? where at >= ? and label is null and due_at <= ? and run_id not in (select value from json_each(?))",
+    now(), since, new Date(Date.now() - 86400_000).toISOString(), JSON.stringify([...before]));
+  return n;
+}
+
+function registerReplies(app: App, since: string, skip: Set<string> = new Set()): number {
+  const runs = all<{ id: string; input: string; created_at: string; finished_at: string | null }>(app.db, "select id, input, created_at, finished_at from runs where created_at >= ? and kind in ('ask','guest','lark-command','agent','rule-fire') and status = 'done'", since).filter((r) => !skip.has(r.id));
   let n = 0;
   for (const r of runs) {
     const sent = one<{ message_id: string; chat_id: string | null; conversation_id: string | null; at: string }>(app.db, "select message_id, chat_id, conversation_id, at from lark_sent where run_id = ? and purpose = 'answer' order by at desc limit 1", r.id);
@@ -265,6 +292,7 @@ function view(app: App, o: Row): ReplyOutcome {
     revised: o.revised_label ? { label: o.revised_label, by: o.revised_by ?? "", why: o.revised_why ?? "", at: o.revised_at ?? "" } : null,
     checked: o.checked && o.checked_label ? { verdict: o.checked, label: o.checked_label, by: o.checked_by ?? "", why: o.checked_why ?? "", pick: o.checked_pick ?? "", at: o.checked_at ?? "" } : null,
     evidence: json<FollowUp[]>(o.evidence, []),
+    taskId: o.task_id ?? null, missing: o.missing ?? null, swept: !!o.swept_at,
   };
 }
 
@@ -290,14 +318,15 @@ export function replyOutcomeText(o: ReplyOutcome): string {
   const first = o.first ? `${REPLY_LABELS[o.first.label]}（${o.first.by}${o.first.confidence !== null ? `，把握 ${o.first.confidence.toFixed(2)}` : ""}）` : "";
   return [
     o.revised ? `按后续消息标的结果：${REPLY_LABELS[o.revised.label]}（${o.revised.by} 改判：${o.revised.why || "没写原因"}；原先标的是 ${first}）` : `按后续消息标的结果：${o.first && o.first.label !== o.label ? `${o.text}（${first}，把握不够）` : first}`,
-    ...(o.checked?.verdict === "confirmed" ? [`夜里复查（${o.checked.by}）同意这个标注：${o.checked.why || "没写原因"}`] : []),
+    ...(o.checked?.verdict === "confirmed" ? [`${o.checked.pick === "sweep" ? "回扫" : "夜里复查"}（${o.checked.by}）同意这个标注：${o.checked.why || "没写原因"}`] : []),
+    ...(o.missing ? [`缺的是：${o.missing}`] : []),
     ...(o.evidence.length ? ["依据的后续消息：", ...o.evidence.map((l) => `- ${l.who}：${l.text}`)] : []),
   ].join("\n");
 }
 
 /** A reviewer read the same follow-up and disagrees. The first label stays; the revision is what counts from now on. */
 export function reviseReply(app: App, runId: string, label: string, by: string, why: string): ReplyOutcome {
-  if (!judged(label)) throw new HttpError(400, `结果只能是 ${JUDGED_LABELS.join(" / ")}`);
+  if (!(JUDGED_LABELS as readonly string[]).includes(label)) throw new HttpError(400, `结果只能是 ${JUDGED_LABELS.join(" / ")}`);
   const cur = replyOutcome(app, runId);
   if (!cur) throw new HttpError(404, "这次运行没有记录到发出的回复，没有可改的结果");
   if (!cur.first) throw new HttpError(400, "这条回复还没到判断的时候，等第一次标注出来再改");
@@ -333,19 +362,101 @@ export function checkReply(app: App, runId: string, r: { label: string; by: stri
   return { verdict, outcome: replyOutcome(app, runId)! };
 }
 
-export type ReplyCount = { judged: number; resolved: number; followup: number; corrected: number; taken_over: number; unclear: number };
 /** How the bot's replies in one chat went lately, as one line for whoever reads that chat next ("" when there is nothing to say). */
 export function replyLine(app: App, chatId: string, days = 30): string {
   const rows = all<Row>(app.db, "select * from reply_outcomes indexed by reply_outcomes_chat where chat_id = ? and at >= ? and label is not null", chatId, new Date(Date.now() - days * 86400_000).toISOString());
-  const c: ReplyCount = { judged: 0, resolved: 0, followup: 0, corrected: 0, taken_over: 0, unclear: 0 };
+  const c = new Map<ReplyLabel, number>();
   for (const o of rows) {
     const label = view(app, o).label!;
-    c.judged++;
-    if (label === "resolved" || label === "followup" || label === "corrected" || label === "taken_over") c[label]++;
-    else c.unclear++;
+    if (CLEAR_LABELS.includes(label)) c.set(label, (c.get(label) ?? 0) + 1);
   }
-  if (!c.judged || c.judged === c.unclear) return "";
-  return `${c.judged} 条里，解决了 ${c.resolved}、被追问 ${c.followup}、被纠正 ${c.corrected}、别人接手 ${c.taken_over}，其余看不出`;
+  const clear = [...c.values()].reduce((a, b) => a + b, 0);
+  if (!rows.length || !clear) return "";
+  const part = (l: ReplyLabel, name: string) => (c.get(l) ? [`${name} ${c.get(l)}`] : []);
+  return `${rows.length} 条里，${[...part("resolved", "解决了"), ...part("next", "接着往下"), ...part("supplement", "要补充"), ...part("followup", "被追问"), ...part("corrected", "被纠正"), ...part("taken_over", "别人接手")].join("、")}，其余看不出`;
+}
+
+/** Who asked, as the data page and the sweep count people: a stable key, a name, and which kind of asker. */
+export type Asker = { key: string; name: string; kind: "owner" | "member" | "colleague" | "bot" };
+export const ASKER_KINDS: Record<Asker["kind"], string> = { owner: "本人", member: "成员", colleague: "没登记的同事", bot: "别的机器人" };
+
+/**
+ * The person behind a run's `trigger_by`: the owner, a member by name, someone in Feishu by the name and
+ * email `lark_people` keeps (the bot and lark-cli see different open_ids; the email makes them one person,
+ * and a member's email makes them that member), another bot.
+ */
+export function askerOf(app: App, triggerBy: string | null | undefined): Asker {
+  const owner: Asker = { key: "user:owner", name: OWNER_BY, kind: "owner" };
+  if (!triggerBy || triggerBy === "user:owner") return owner;
+  const at = triggerBy.indexOf(":");
+  const kind = triggerBy.slice(0, at), rest = triggerBy.slice(at + 1);
+  if (kind === "user") return { key: triggerBy, name: userName(app, rest), kind: "member" };
+  if (kind === "name") {
+    if (rest === OWNER_BY) return owner;
+    const p = one<{ email: string | null; name: string }>(app.db, "select email, name from lark_people indexed by lark_people_name where name = ? limit 1", rest);
+    return person(app, p ?? null, `name:${rest}`, rest);
+  }
+  if (kind === "lark" || kind === "bot") {
+    const p = one<{ email: string | null; name: string }>(app.db, "select email, name from lark_people where bot_open_id = ? or cli_open_id = ? limit 1", rest, rest);
+    if (kind === "bot") return { key: triggerBy, name: p?.name || `机器人 …${rest.slice(-4)}`, kind: "bot" };
+    return person(app, p ?? null, triggerBy, `飞书用户 …${rest.slice(-4)}`);
+  }
+  return { key: triggerBy, name: rest || triggerBy, kind: "colleague" };
+}
+function person(app: App, p: { email: string | null; name: string } | null, fallback: string, fallbackName: string): Asker {
+  if (p?.email) {
+    const u = one<{ id: string; name: string }>(app.db, "select id, name from users where lower(email) = lower(?) and disabled_at is null limit 1", p.email);
+    if (u) return u.id === OWNER ? { key: "user:owner", name: OWNER_BY, kind: "owner" } : { key: `user:${u.id}`, name: u.name, kind: "member" };
+    return { key: `email:${p.email.toLowerCase()}`, name: p.name || fallbackName, kind: "colleague" };
+  }
+  return { key: fallback, name: p?.name || fallbackName, kind: "colleague" };
+}
+
+/**
+ * What the sweep (outcome-review.ts) concluded for one answer: which task it belongs to, its label and
+ * what was missing. Like the nightly reading before it, the same label as the first pass is agreement and
+ * another one is a revision (the first label stays); it supersedes earlier readings by models, never the
+ * owner's label, and keeps what an emoji said.
+ */
+export function sweepReply(app: App, runId: string, r: { label: string; by: string; why: string; missing?: string | null; taskId: string }): ReplyOutcome | null {
+  if (!(CHECK_LABELS as readonly unknown[]).includes(r.label)) throw new HttpError(400, `结果只能是 ${CHECK_LABELS.join(" / ")}`);
+  const o = one<Row & { swept_at: string | null }>(app.db, "select * from reply_outcomes where run_id = ?", runId);
+  if (!o) return null;
+  const by = truncate(r.by, 80), why = truncate(r.why.trim(), 400), at = now();
+  const missing = r.missing?.trim() ? truncate(r.missing.trim(), 80) : null;
+  run(app.db, "update reply_outcomes set task_id = ?, missing = ?, swept_at = ? where run_id = ?", r.taskId, missing, at, runId);
+  if (ownerJudged(o) || o.by === "表情") return replyOutcome(app, runId);
+  const kept = o.revised_label && o.revised_by === OWNER_BY;
+  if (kept) return replyOutcome(app, runId);
+  if (o.label && r.label === o.label)
+    run(app.db, "update reply_outcomes set revised_label = null, revised_by = null, revised_why = null, revised_at = null, checked = 'confirmed', checked_label = ?, checked_by = ?, checked_why = ?, checked_pick = 'sweep', checked_at = ? where run_id = ?", r.label, by, why, at, runId);
+  else
+    run(app.db, "update reply_outcomes set label = coalesce(label, 'unjudged'), \"by\" = coalesce(\"by\", '宿主'), labelled_at = coalesce(labelled_at, ?), revised_label = ?, revised_by = ?, revised_why = ?, revised_at = ?, checked = 'revised', checked_label = ?, checked_by = ?, checked_why = ?, checked_pick = 'sweep', checked_at = ? where run_id = ?",
+      at, r.label, truncate(`回扫（${by}）`, 80), why, at, r.label, by, why, at, runId);
+  return replyOutcome(app, runId);
+}
+
+/** Take back what the sweep concluded for these answers (a trial sweep read again after its instructions changed). */
+export function unsweepReplies(app: App, runIds: string[]): number {
+  if (!runIds.length) return 0;
+  const ids = JSON.stringify(runIds);
+  const tasks = all<{ task_id: string }>(app.db, "select distinct task_id from reply_outcomes where run_id in (select value from json_each(?)) and task_id is not null", ids).map((r) => r.task_id);
+  run(app.db, `update reply_outcomes set
+      revised_label = case when revised_by like '回扫%' then null else revised_label end,
+      revised_by = case when revised_by like '回扫%' then null else revised_by end,
+      revised_why = case when revised_by like '回扫%' then null else revised_why end,
+      revised_at = case when revised_by like '回扫%' then null else revised_at end,
+      checked = case when checked_pick = 'sweep' then null else checked end,
+      checked_label = case when checked_pick = 'sweep' then null else checked_label end,
+      checked_by = case when checked_pick = 'sweep' then null else checked_by end,
+      checked_why = case when checked_pick = 'sweep' then null else checked_why end,
+      checked_at = case when checked_pick = 'sweep' then null else checked_at end,
+      checked_pick = case when checked_pick = 'sweep' then null else checked_pick end,
+      task_id = null, missing = null, swept_at = null, sweep_tries = 0
+    where run_id in (select value from json_each(?))`, ids);
+  run(app.db, "delete from data_queries where run_id in (select value from json_each(?))", ids);
+  run(app.db, "delete from reply_tasks where id in (select value from json_each(?)) and not exists (select 1 from reply_outcomes o where o.task_id = reply_tasks.id)", JSON.stringify(tasks));
+  return runIds.length;
 }
 
 /** Replies sent in a period, for the data page. */

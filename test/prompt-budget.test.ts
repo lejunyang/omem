@@ -21,7 +21,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   // 情境 became 持续跟进的规则: the assistant's note on save_situation says what to call it with the owner.
   // 实测 2026-11-25：中途交付和编码补充的说明已计入。
   // 实测 2026-11-28：合并 AI 规则（长期 AI 规则一段）和 main 上“帮你回复”、卡片的说明之后。
-  "assistant": ["agent", 21268, 20569, 1679, 1581],
+  // 实测 2026-11-28：工作文件一节加了查数结果放哪一句。
+  "assistant": ["agent", 21352, 20653, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   "ai-policy-writer": ["ai-policy-draft", 2763, 2763, 1748, 1748],
@@ -37,7 +38,7 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "coder": ["code", 7344, 7344, 2915, 2915],
   "reviewer": ["review", 4762, 4762, 2589, 2589],
   "tutor": ["tutor", 4513, 4513, 1954, 1954],
-  "brief": ["brief", 7971, 7775, 3732, 3732],
+  "brief": ["brief", 8079, 7883, 3732, 3732],
   "curator": ["curate", 5597, 5506, 1821, 1821],
   "triager": ["triage", 4935, 5040, 2511, 2511],
   "distiller": ["digest", 8292, 8397, 3484, 3484],
@@ -65,7 +66,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "mention-triage": ["mention", 3242, 3242, 2242, 2242],
   "work-state": ["work-state", 6510, 6510, 3951, 3951],
   "listen-coach": ["listen-coach", 6049, 6154, 3044, 3044],
-  "outcome-reviewer": ["outcome-review", 4925, 4925, 2752, 2752],
+  // 实测 2026-11-28：夜里复查改成回扫（分件、两种新标注、类型、查数记录）之后。
+  "outcome-reviewer": ["outcome-review", 5800, 5800, 3612, 3612],
   // 实测：首句、短要点和改写对照，加上 text 原样发出、evidence 分条之后，MCP 为 4871 字符，无工具为 2297。
   "first-look": ["first-look", 4871, 4871, 2297, 2297],
 };

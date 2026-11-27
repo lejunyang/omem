@@ -80,7 +80,7 @@ const filters = computed(() => {
     { key: "model", label: "模型", values: options?.models ?? [] },
     { key: "bot", label: "机器人", values: options?.bots ?? [] },
     { key: "chat", label: "在哪个会话", values: options?.chats ?? [] },
-  ].map(f => ({ ...f, options: [{ value: "", label: "全部" }, ...[...new Set([...f.values, ...(q(f.key) ? [q(f.key)] : [])])].map(value => ({ value, label: value === "user:owner" ? "你" : f.key === "space" ? spaceName(value) : value }))] }));
+  ].map(f => ({ ...f, options: [{ value: "", label: "全部" }, ...[...new Set([...f.values, ...(q(f.key) ? [q(f.key)] : [])])].map(value => ({ value, label: value === "user:owner" ? "你" : f.key === "space" ? spaceName(value) : f.key === "by" ? options?.peopleNames?.[value] ?? value : value }))] }));
 });
 const activeFilters = computed(() => filters.value.filter(f => q(f.key)).length + (q("housekeeping") === "true" ? 1 : 0));
 const showFilters = ref(activeFilters.value > 0);
