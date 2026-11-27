@@ -133,7 +133,6 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     const thread = findThread(app, task.threadId)!;
     const text = "/监工 " + action;
     const reply = await runCommand(app, thread, text, { userId: task.userId, channel: thread.channel, text });
-    await (await import("../agents/supervisor-report.ts")).refreshSupervisorCard(app, getLongTask(app, task.id));
     return { toast: { type: "info", content: String(reply).slice(0, 80) } };
   }
   if (inter.purpose === "ask") {

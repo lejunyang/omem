@@ -1,17 +1,25 @@
+import { writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
+import * as runs from "../src/agents/runs.ts";
 import { addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { answerAsk, getAsk, listAsks } from "../src/agents/asks.ts";
 import { createWorkerAsk } from "../src/agents/supervisor-code.ts";
 import { addTask, taskForFinding, updateTask } from "../src/agents/code-tasks.ts";
-import { setLarkClient } from "../src/channels/lark-send.ts";
-import { reattachThread, updateThread } from "../src/agents/threads.ts";
-import { type LongTask, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
+import { setupLarkBot } from "../src/channels/lark-bot.ts";
+import { onLarkSent, setLarkBotClient, setLarkClient, setMentionResolver } from "../src/channels/lark-send.ts";
+import { handleCardAction } from "../src/channels/lark-actions.ts";
+import Fastify from "fastify";
+import { registerLongTaskRoutes } from "../src/server/long-tasks-http.ts";
+import { reattachThread, setChatSettings, updateThread } from "../src/agents/threads.ts";
+import { type LongTask, confirmLongTaskBrief, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
 import { wakeSupervisor, checkSupervisorTimer, patchSupervisorState, runSupervisor } from "../src/agents/supervisor.ts";
 import { flushSupervisorPush, submitSupervisorReport } from "../src/agents/supervisor-report.ts";
 import { reportSchema } from "../src/agents/supervisor-schema.ts";
-import { receive } from "../src/agents/inbox.ts";
+import { deliverToThread, receive } from "../src/agents/inbox.ts";
 import { pendingWakes } from "../src/agents/wakes.ts";
-import { run, all } from "../src/core/db.ts";
+import { createSpace } from "../src/core/spaces.ts";
+import { addMember, createUser, linkIdentity } from "../src/core/users.ts";
+import { run, all, one } from "../src/core/db.ts";
 import { zonedParts } from "../src/core/util.ts";
 import { testApp } from "./helpers.ts";
 import { policySchema } from "../src/core/ai-policy-schema.ts";
@@ -124,6 +132,109 @@ describe("长任务监工", () => {
       expect(reply).toHaveBeenCalledTimes(1);
       expect(getRun(app, next.run.id).output.progressText).toBe(text);
     } finally { setLarkClient(null); }
+  });
+
+  it("群话题暂停和结束、HTTP 和按钮各更新一次原卡，话题控制命令后的附件只做群采集", async () => {
+    const app = testApp();
+    app.config.lark.ownerOpenId = "ou_owner";
+    createSpace(app, { id: "docs", name: "项目文档" });
+    createUser(app, { id: "editor", name: "编辑" });
+    linkIdentity(app, "editor", "lark", "ou_editor");
+    addMember(app, "docs", "editor", "editor");
+    setChatSettings(app, "lark", "oc_example", { spaceId: "docs", mode: "chat" });
+    let replyCount = 0;
+    const reply = vi.fn(async ({ data }: { data: { content: string } }) => ({
+      code: 0, data: { message_id: data.content.includes("长任务进度") ? "om_progress" : "om_reply_" + ++replyCount, thread_id: "omt_work" },
+    }));
+    const patch = vi.fn(async (_request: { path: { message_id: string }; data: { content: string } }) => ({ code: 0 }));
+    const client = (openId: string) => ({
+      request: async () => ({ bot: { open_id: openId } }),
+      im: {
+        message: { reply, patch }, chat: { get: async () => ({ data: { name: "项目群" } }) },
+        messageResource: { get: async () => ({ writeFile: (path: string) => writeFile(path, "项目群附件") }) },
+      },
+    });
+    const bot = await setupLarkBot(app, "main", client("ou_bot"));
+    app.config.lark.bots.push({ id: "other", appId: "cli_other", agent: "assistant", enabled: true, userId: "editor", ownerOpenId: "ou_editor_other" });
+    const otherBot = await setupLarkBot(app, "other", client("ou_other"));
+    const server = Fastify();
+    registerLongTaskRoutes(server, app, () => "editor");
+    let sequence = 0;
+    const send = async (input: string | { file_key: string; file_name: string } | { image_key: string }, { sender = "ou_editor", chat = "oc_example", topic = "omt_work", mention = false, receiver = bot } = {}) => {
+      const id = "om_command_" + ++sequence;
+      await receiver.message({ sender: { sender_type: "user", sender_id: { open_id: sender } }, message: {
+        message_id: id, chat_id: chat, chat_type: "group", thread_id: topic, create_time: String(Date.now()),
+        message_type: typeof input === "string" ? "text" : "file_key" in input ? "file" : "image",
+        content: JSON.stringify(typeof input === "string" ? { text: mention ? "@_user_1 " + input : input } : input),
+        mentions: mention ? [{ key: "@_user_1", id: { open_id: "ou_bot" } }] : [],
+      } });
+      await receiver.settled();
+      return id;
+    };
+    // Observe accidental ask runs without starting a worker.
+    const wait = vi.spyOn(runs, "waitForRun").mockImplementation(async (app, id) => getRun(app, id));
+    const expectCaptureOnly = async (task: LongTask, messageId: string, key: string) => {
+      await vi.waitFor(() => {
+        const captured = one<{ resources: string }>(app.db,
+          "select resources from lark_messages where chat_id=? and message_id=?", "oc_example", messageId);
+        expect(JSON.parse(captured?.resources ?? "{}")[key]?.file).toBeTruthy();
+      });
+      expect.soft(getLongTask(app, task.id).supplements).toEqual([]);
+      expect.soft(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
+    };
+    try {
+      const anchor = await send("/监工 codex 核对示例", { topic: "", mention: true });
+      const task = getLongTask(app, one<{ id: string }>(app.db, "select id from long_tasks")!.id);
+      expect(task).toMatchObject({ spaceId: "docs", userId: "editor" });
+      expect(await deliverToThread(app, task.threadId, task.goal, { openTopicFrom: anchor })).toBe(true);
+      confirmLongTaskBrief(app, task.id, { doneWhen: ["示例已校对"] });
+      await submitSupervisorReport(app, turn(app, task).run.id, { ...draftReport, brief: undefined, stage: "校对" });
+      const repliesBefore = reply.mock.calls.length;
+      await send("/监工 暂停", { sender: "ou_owner" });
+      await send("/监工 暂停", { topic: "omt_other" });
+      await send("/监工 暂停", { chat: "oc_other" });
+      await send("/监工 暂停", { receiver: otherBot, sender: "ou_editor_other" });
+      expect(reply).toHaveBeenCalledTimes(repliesBefore);
+      addMember(app, "docs", "editor", "reader");
+      await send("/监工 暂停");
+      expect(reply.mock.calls.at(-1)?.[0].data.content).toContain("没有权限");
+      expect(getLongTask(app, task.id).status).toBe("active");
+      expect(patch).not.toHaveBeenCalled();
+      addMember(app, "docs", "editor", "editor");
+
+      await send("/监工 暂停");
+      expect(getLongTask(app, task.id).status).toBe("paused");
+      expect(patch).toHaveBeenCalledTimes(1);
+      expect(patch.mock.calls[0][0].data.content).toContain("已暂停");
+      expect(patch.mock.calls[0][0].data.content).toContain('"action":"继续"');
+
+      await expectCaptureOnly(task, await send({ image_key: "img_example" }), "img_example");
+
+      const resumed = await server.inject({ method: "PATCH", url: "/api/long-tasks/" + task.id, payload: { action: "resume" } });
+      expect(resumed.json().status).toBe("active");
+      expect(patch).toHaveBeenCalledTimes(2);
+      expect(patch.mock.calls[1][0].data.content).toContain('"action":"暂停"');
+      await handleCardAction(app, { operator: { open_id: "ou_editor" }, context: { open_message_id: "om_progress" }, action: { value: { action: "暂停" } } });
+      expect(patch).toHaveBeenCalledTimes(3);
+      expect(patch.mock.calls[2][0].data.content).toContain('"action":"继续"');
+
+      await send("/监工 结束");
+      expect(patch).toHaveBeenCalledTimes(4);
+      expect(getLongTask(app, task.id).status).toBe("ended");
+      await expectCaptureOnly(task, await send({ file_key: "file_example", file_name: "示例.txt" }), "file_example");
+      const final = patch.mock.calls[3][0].data.content;
+      expect(final).toContain("已结束");
+      expect(final).not.toContain('"tag":"button"');
+      expect(patch.mock.calls.every(([request]) => request.path.message_id === "om_progress")).toBe(true);
+      expect(reply.mock.calls.filter(([request]) => request.data.content.includes("长任务进度"))).toHaveLength(1);
+    } finally {
+      wait.mockRestore();
+      onLarkSent(null);
+      setMentionResolver(null);
+      setLarkBotClient("other", null);
+      setLarkClient(null);
+      await server.close();
+    }
   });
 
   it("同阶段续用会话，阶段变化或上下文到限时从任务书接手，信号原文置顶", async () => {

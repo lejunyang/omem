@@ -49,7 +49,7 @@ export function longTaskText(app: App, task: LongTask) {
     report || task.goal].join("\n");
 }
 
-export function supervisorCommand(app: App, thread: Thread, args: string, inb: Inbound) {
+export async function supervisorCommand(app: App, thread: Thread, args: string, inb: Inbound) {
   const userId = inb.userId ?? OWNER;
   if (inb.asker || inb.speaker || thread.userId !== userId) return "请在自己的会话里使用 /监工。";
   const current = longTaskInThread(app, thread.id);
@@ -67,19 +67,19 @@ export function supervisorCommand(app: App, thread: Thread, args: string, inb: I
       case "加": {
         const hours = /^(\d+(?:\.\d+)?)\s*小时$/.exec(value);
         if (!hours || Number(hours[1]) <= 0) return "用法：/监工 加 3 小时";
-        updated = changeLongTask(app, current.id, { action: "budget", budget: { hours: current.budget.hours + Number(hours[1]) } });
+        updated = await changeLongTask(app, current.id, { action: "budget", budget: { hours: current.budget.hours + Number(hours[1]) } });
         break;
       }
       case "换": {
         const { ai, rest } = supervisorArgs(app, value, userId);
         if (!ai || rest) return "用法：/监工 换 后端 [模型] [强度]";
-        updated = changeLongTask(app, current.id, { action: "ai", ai });
+        updated = await changeLongTask(app, current.id, { action: "ai", ai });
         break;
       }
       default: {
         if (value) return "用法：/监工 暂停、/监工 继续、/监工 结束";
         const action = control[1] === "暂停" ? "pause" : control[1] === "继续" ? "resume" : "end";
-        updated = changeLongTask(app, current.id, { action });
+        updated = await changeLongTask(app, current.id, { action });
       }
     }
     return longTaskText(app, updated);
