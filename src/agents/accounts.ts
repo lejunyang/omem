@@ -306,10 +306,7 @@ export function accountFor<P extends AgentProfile>(app: App, userId: string | un
       if (use.holder === OWNER) return { ...p, [credentialUse]: use };
       ensureAccountHome(app, use.holder, entry);
       const account = accountRun(app, use.holder, entry, false);
-      if (use.holder !== userId) {
-        const state = credentialMethod(use.kind)!.provides.commands.flatMap(c => c.state ?? []);
-        account.borrowed = { state: [...new Set([...entry.account.owns, ...state])], dirs: entry.account.dirs ?? [] };
-      }
+      if (use.holder !== userId) account.borrowed = { state: entry.account.owns, dirs: entry.account.dirs ?? [] };
       return { ...p, [credentialUse]: use, ownAccount: account };
     }
     if (own) return { ...p, ownAccount: accountRun(app, userId, entry) };

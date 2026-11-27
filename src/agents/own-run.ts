@@ -38,13 +38,18 @@ function checkStateDirectory(path: string) {
     throw new Error("沙箱状态路径需要目录：" + dir);
 }
 
-type MountContext = { workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv; kind?: string; credentialState?: string[] };
+type MountContext = { workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv; kind?: string | null; credentialState?: string[] };
 
 export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: boolean, runId?: string | null, context: MountContext = {}): { box?: OwnSandbox; note?: string } {
   const settings = app.config.agents.ownSandbox;
   const local = !profile.peer && backendCapabilities(profile).where === "local";
-  if (local && !accountOf(profile) && settings.mode !== "off" && context.kind && settings.excludeKinds?.includes(context.kind))
-    return { note: "按运行类型排除本人沙箱：" + context.kind };
+  // null keeps guest and lending isolation independent of the owner’s rollout filter.
+  const kind = context.kind;
+  if (local && !accountOf(profile) && settings.mode !== "off" && kind !== null) {
+    if (settings.includeKinds?.length && (!kind || !settings.includeKinds.includes(kind)))
+      return { note: "本轮未列入本人沙箱的运行类型：" + (kind ?? "无类型") };
+    if (kind && settings.excludeKinds?.includes(kind)) return { note: "按运行类型排除本人沙箱：" + kind };
+  }
   const selected = selectOwnSandbox(settings.mode, local, !!accountOf(profile), sandboxSupport);
   if (!selected.active) return { note: selected.reason };
   const box = planRun(app, profile, cwd, readOnly, runId, context, settings);
@@ -73,7 +78,7 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   for (const file of existing) {
     if (!statSync(file).isFile()) throw new Error("沙箱状态文件需要普通文件：" + file);
   }
-  const runtime = [join(data, "bin"), join(data, "library", "_skills"), omemInstallDir(), dirname(dirname(process.execPath)),
+  const runtime = [join(data, "bin"), join(data, "library", "_skills"), join(data, "agent-skills", "hubs"), omemInstallDir(), dirname(dirname(process.execPath)),
     ...mounts.map(p => expandPath(p))].map(canonical);
   const isolatedNetwork = !!profile && egressRequested(app.config, profile, true);
   const dependencies = join(omemInstallDir(), "node_modules");
@@ -112,7 +117,7 @@ export function sandboxStatus(app: App, config = app.config) {
       where instr(json(actions), '"fullAccess":true') > 0 order by id`),
   };
   return { ...config.agents.ownSandbox, home, fullAccessGrants, fullAccess: config.agents.fullAccess, support: sandboxSupport(), backends,
-    defaults: { exampleBackend: example?.id, writable, hidden: [data], loginPaths: defaultLoginPaths },
+    defaults: { exampleBackend: example?.id, writable, hidden: [data, ...credentialStatePaths(app)], loginPaths: defaultLoginPaths },
     visibility: "默认遮住常用登录文件和凭据插件的状态目录，其他 HOME 文件只读，额外隐藏目录可加到 hidden。成员自有账号另行隔离，云端和其他设备不在这台的沙箱里。",
     warning: config.agents.fullAccess === "all" ? "没进沙箱的运行不受任何限制（指后端的沙箱和审批）。omem 工具授权与命令垫片照常检查。" : undefined };
 }

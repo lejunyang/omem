@@ -162,6 +162,39 @@ it.skipIf(!support.ok)("默认登录文件和插件状态不会随工作区挂�
   }
 });
 
+it.skipIf(!support.ok)("浏览器登录与其他运行材料隐藏，本轮目录和技能按用途挂载 " + (support.reason ?? ""), async () => {
+  const home = mkdtempSync(join(tmpdir(), "sandbox-home-"));
+  vi.stubEnv("HOME", home);
+  const app = testApp();
+  const work = join(home, "project");
+  const skill = join(app.home, "library", "_skills", "fixture");
+  const hub = join(app.home, "agent-skills", "hubs", "group");
+  const inbox = join(app.home, "artifacts", "inbox", "sample");
+  const other = join(app.runsDir, "other", "scratch");
+  const profiles = [".config/google-chrome", ".config/chromium", ".config/microsoft-edge", ".mozilla/firefox", ".config/mozilla/firefox"];
+  try {
+    for (const dir of [work, skill, hub, inbox, other, ...profiles.map(p => join(home, p))]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "fixture"), "example");
+    }
+    app.config.agents.ownSandbox.mode = "require";
+    const profile = agentProfileSchema.parse({ id: "example", transport: "acp", command: "/bin/sh" });
+    const box = ownRun(app, profile, work, false, "sample", { inbox }).box!;
+    box.plan.ro.push(home); // The fake HOME lives under the private /tmp.
+    const child = launch("/bin/sh", ["-ec", `
+      test -r "$1/fixture"; test ! -w "$1/fixture"
+      test -w "$OMEM_RUN_DIR"; test -w "$OMEM_ARTIFACTS"
+      test ! -e "$2/fixture"; test ! -e "$3/omem.db"
+      test -r "$4/fixture"; test ! -w "$4/fixture"
+      shift 4
+      for dir do test ! -e "$HOME/$dir/fixture" || exit 1; done
+    `, "sh", skill, other, app.home, hub, ...profiles], { cwd: work, ownSandbox: box, env: { OMEM_ARTIFACTS: inbox } });
+    let error = "";
+    child.stderr.on("data", data => error += data);
+    expect((await once(child, "close"))[0], error).toBe(0);
+  } finally { vi.unstubAllEnvs(); app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+});
+
 it.skipIf(!support.ok)("运行开始后新建的登录文件在只读 HOME 里仍不可用 " + (support.reason ?? ""), async () => {
   const home = mkdtempSync(join(tmpdir(), "future-login-"));
   vi.stubEnv("HOME", home);

@@ -383,12 +383,14 @@ export const searchApiFields = {
 };
 
 export const sandboxPaths = z.array(z.string().trim().min(1).max(1024)).max(32);
+const sandboxRunKinds = z.array(z.string().trim().min(1).max(100)).max(64);
 export const ownSandboxSchema = z.object({
   mode: z.enum(["off", "prefer", "require"]).default("off"),
   writable: sandboxPaths.default([]),
   hidden: sandboxPaths.default([]),
   loginPaths: sandboxPaths.optional(),
-  excludeKinds: z.array(z.string().trim().min(1).max(100)).max(64).optional(),
+  includeKinds: sandboxRunKinds.optional(),
+  excludeKinds: sandboxRunKinds.optional(),
 }).strict();
 export const fullAccessMode = z.enum(["per-role", "sandboxed", "all"]);
 

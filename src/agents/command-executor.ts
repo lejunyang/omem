@@ -24,6 +24,7 @@ import { accountOf, bwrapArgs, egressRelayPath, sandboxSupport, type WorkspaceMo
 import { remoteGit } from "./git-command.ts";
 import { stop } from "./spawn.ts";
 import { onToolTokenRevoked, toolContextForToken, type ToolContext } from "./tools.ts";
+import { larkCliInstallation } from "../channels/lark-cli-path.ts";
 import { actingAs } from "../rules/run-as.ts";
 
 export type CommandSandbox = { profile: AgentProfile; workspace: WorkspaceMounts; own?: OwnSandbox };
@@ -36,12 +37,17 @@ const standardLoginEnv: ReadonlyMap<string, readonly string[]> = new Map([
   ["aws", ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE"]],
   ["az", ["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]],
   ["gcloud", ["CLOUDSDK_AUTH_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS"]],
+  ["lark-cli", ["LARKSUITE_CLI_APP_ID", "LARKSUITE_CLI_APP_SECRET", "LARKSUITE_CLI_USER_ACCESS_TOKEN", "LARKSUITE_CLI_TENANT_ACCESS_TOKEN", "LARKSUITE_CLI_BRAND", "LARKSUITE_CLI_PROFILE"]],
   ["kubectl", ["KUBECONFIG"]], ["docker", ["DOCKER_AUTH_CONFIG"]],
   ["npm", npmLogin], ["pnpm", npmLogin],
 ]);
 
 function program(name: string, writable: string[]) {
   if (basename(name) !== name || !/^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$/.test(name)) throw new Error("需要命令名");
+  if (name === "lark-cli") {
+    const file = realpathSync(larkCliInstallation().binary);
+    return { real: file, path: file };
+  }
   for (const dir of (process.env.PATH ?? "").split(":").filter(isAbsolute)) {
     if (writable.some(path => under(canonical(dir), path)) || dir.endsWith("/guarded")) continue;
     const file = join(dir, name);
@@ -65,7 +71,7 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
   if (writable.some(dir => under(runtime, dir) || under(dir, runtime))) throw new Error("执行器运行库位于 Agent 可写目录");
   ro.push(runtime, file);
   const dependencies = file.indexOf("/node_modules/");
-  if (dependencies > 0) {
+  if (dependencies > 0 && call.command !== "lark-cli") {
     const modules = file.slice(0, dependencies) + "/node_modules";
     if (writable.some(dir => under(dir, modules) || under(modules, dir))) throw new Error("命令依赖与 Agent 可写目录重叠");
     ro.push(modules);

@@ -3,6 +3,7 @@
 import { accessSync, closeSync, constants, openSync, readSync, existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { larkCliInstallation } from "../channels/lark-cli-path.ts";
 
 function entryHeader(file: string) {
   const fd = openSync(file, "r");
@@ -28,6 +29,12 @@ export function commandMounts(guarded: string | undefined, path: string | undefi
   const packages = new Set<string>();
   for (const name of readdirSync(guarded)) {
     const wrapper = join(guarded, name);
+    if (name === "lark-cli") {
+      const { root, binary, script } = larkCliInstallation();
+      packages.add(root);
+      binds.set(binary, wrapper);
+      binds.set(script, wrapper);
+    }
     for (const dir of (path ?? "").split(":").filter(isAbsolute)) {
       const link = join(dir, name);
       if (!existsSync(link)) continue;

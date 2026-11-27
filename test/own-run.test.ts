@@ -53,7 +53,7 @@ it.skipIf(process.platform === "win32")("validates and returns the externally ed
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
   const path = join(app.home, "config.json");
   const url = app.baseUrl + "/api/security/sandbox";
-  const patch = { mode: "require", writable: [], hidden: [], fullAccess: "per-role" };
+  const patch = { mode: "require", writable: [], hidden: [], includeKinds: ["archive"], excludeKinds: ["ask"], fullAccess: "per-role" };
   const put = () => fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
   const audits = app.db.prepare("select detail from audit_events where action = 'sandbox.settings'");
   const before = structuredClone(app.config.agents);
@@ -144,6 +144,25 @@ it.skipIf(process.platform === "win32")("checks required state directories and o
   } finally {
     app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
   }
+});
+
+it.skipIf(process.platform !== "linux")("只让选中的本人运行进沙箱，排除项优先", () => {
+  const app = testApp();
+  const home = mkdtempSync(join(tmpdir(), "sandbox-kinds-"));
+  vi.stubEnv("HOME", home);
+  setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+  try {
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/true" });
+    const box = (kind?: string | null) => ownRun(app, profile, join(home, "work"), false, null, { kind }).box;
+    app.config.agents.ownSandbox = { mode: "require", hidden: [], writable: [], includeKinds: ["archive", "ask"], excludeKinds: ["ask"] };
+    expect(box("archive")).toBeDefined();
+    expect(box("ask")).toBeUndefined();
+    expect(box("new-kind")).toBeUndefined();
+    expect(box()).toBeUndefined();
+    expect(box(null)).toBeDefined();
+    app.config.agents.ownSandbox.includeKinds = [];
+    expect(box("new-kind")).toBeDefined();
+  } finally { app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
 });
 
 it.skipIf(process.platform !== "linux")("reports exactly the writable plan used to launch multiple worktrees", async () => {

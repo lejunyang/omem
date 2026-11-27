@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, win32 } from "node:path";
+import { isAbsolute, join, sep, win32 } from "node:path";
 import { z } from "zod";
 import type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome } from "../../packages/plugin-sdk/credential.ts";
 import type { App } from "../core/app.ts";
@@ -7,6 +7,7 @@ import { run } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { canonical, normalizeSandbox, under } from "./own-sandbox.ts";
+import { accountCatalog } from "./catalog.ts";
 import { commandCredentialVariable } from "./sandbox.ts";
 
 export type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome };
@@ -43,11 +44,22 @@ function stateRel(path: string) {
   return path;
 }
 export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
+  const home = process.platform === "win32" ? homedir() : canonical(homedir());
+  const state = m.provides.commands.flatMap(c => (c.state ?? []).map(p => join(home, stateRel(p))));
+  if (process.platform === "linux" && state.length) {
+    for (const backend of accountCatalog(app.config.agents.profiles, "declared")) {
+      const suppliesBackend = m.provides.backends.includes(backend.id);
+      for (const rel of backend.account.owns) {
+        const path = join(home, rel);
+        // A different provider's narrower subdirectory stays masked inside the backend directory.
+        if (state.some(dir => path === dir || path.startsWith(dir + sep) || (suppliesBackend && dir.startsWith(path + sep))))
+          throw new Error(`后端 ${backend.id} 的账号状态 ${rel} 与命令登录目录重叠，请分别声明并供给两份状态`);
+      }
+    }
+  }
   // Windows starts no sandbox, so nothing is mounted: only the relative-to-HOME and `..` rules apply
   // (the mount checks below are POSIX paths and would reject every declaration there).
   if (process.platform === "win32") {
-    const home = homedir();
-    const state = m.provides.commands.flatMap(c => (c.state ?? []).map(p => join(home, stateRel(p))));
     const install = m.provides.commands.flatMap(c => c.install ?? []).map(p => {
       if (p.split("/").includes("..")) throw new Error("安装目录不能包含 ..");
       if (!(isAbsolute(p) || p.startsWith("~/"))) throw new Error("凭据安装目录需要绝对路径或 ~/ 开头");
@@ -55,8 +67,7 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
     });
     return { state, install };
   }
-  const home = canonical(homedir()), data = canonical(app.home);
-  const state = m.provides.commands.flatMap(c => (c.state ?? []).map(p => join(home, stateRel(p))));
+  const data = canonical(app.home);
   const writable = normalizeSandbox({ mode: "off", writable: state, hidden: [] }, home, data).writable;
   if (writable.some(p => !under(p, home))) throw new Error("凭据状态目录必须位于 HOME 内");
   const install = m.provides.commands.flatMap(c => c.install ?? []).map(p => {

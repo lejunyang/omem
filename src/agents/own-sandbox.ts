@@ -39,10 +39,12 @@ export const standardCommandLogins: ReadonlyMap<string, readonly string[]> = new
   ["gh", [".config/gh"]], ["glab", [".config/glab-cli"]],
   ["aws", [".aws"]], ["az", [".azure"]], ["gcloud", [".config/gcloud"]], ["kubectl", [".kube"]],
   ["docker", [".docker/config.json"]],
+  ["lark-cli", [".lark-cli", ".local/share/lark-cli"]],
 ]);
 export const gitLoginPaths = [".ssh", ".gitconfig", ".config/git/config", ".git-credentials", ".config/git/credentials", ".netrc", ".config/gh"];
 export const defaultLoginPaths = [...new Set([
   ...gitLoginPaths, ...[...standardCommandLogins.values()].flat(), ".gnupg", ".authinfo",
+  ".config/google-chrome", ".config/chromium", ".config/microsoft-edge", ".mozilla/firefox", ".config/mozilla/firefox",
   ".terraform.d/credentials.tfrc.json", ".npmrc", ".pypirc",
 ])].map(path => "~/" + path).concat(["/run/docker.sock", "/run/podman/podman.sock", "/run/systemd/private", "/run/dbus/system_bus_socket"]);
 

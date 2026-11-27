@@ -56,13 +56,15 @@ it.skipIf(process.platform === "win32")("示例插件一次登录供给命令行
     writeFileSync(join(account.home, "private.txt"), "private");
     const prompt = JSON.stringify({ id: 1, method: "session/prompt", params: { sessionId: "demo" } });
     const command = sandboxCommand({ file: process.execPath, prefix: [join(bin, "acme-demo-agent")] }, [], {}, cwd, account);
-    expect(command.args).toContain(join(account.home, ".acme-demo"));
+    expect(account.borrowed?.state).toEqual([".acme-demo-agent.json"]);
     expect(command.args.slice(command.args.indexOf(account.home) - 1, command.args.indexOf(account.home) + 1)).toEqual(["--tmpfs", account.home]);
     if (support.ok) {
       const output = execFileSync(command.file, command.args, { input: prompt + "\n", env: command.env, encoding: "utf8" });
       expect(output).toContain("当前示例账号 bob");
       const files = sandboxCommand({ file: "/bin/ls", prefix: [] }, [account.home], {}, cwd, account);
       expect(execFileSync(files.file, files.args, { env: files.env, encoding: "utf8" })).not.toContain("private.txt");
+      const hidden = sandboxCommand({ file: "/usr/bin/test", prefix: [] }, ["!", "-s", join(account.home, ".acme-demo/account.json")], {}, cwd, account);
+      execFileSync(hidden.file, hidden.args, { env: hidden.env });
     }
   } finally {
     forgetPlugin("acmeauth"); setSandboxSupportForTests(undefined);

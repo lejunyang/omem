@@ -372,6 +372,14 @@ posixIt("同种凭据从 A 改供 B，旧文件仍按持有退出，新后端要
   } finally { await server.close(); }
 });
 
+it.skipIf(process.platform !== "linux")("Linux 凭据插件须为后端与命令分别供给登录状态", () => {
+  const profile = agentProfileSchema.parse({ id: "demo", transport: "acp", command: "fixture", account: { owns: [".example/backend"] } });
+  app.config.agents.profiles = [profile];
+  for (const path of [".example", ".example/backend", ".example/backend/login"]) {
+    expect(() => add({ provides: { backends: ["demo"], commands: [{ name: "example-cli", state: [path] }] } })).toThrow(/后端 demo.*与命令登录目录重叠/);
+  }
+});
+
 it("登录排队时按该次请求拦截退出，即使插件再次重新登记", async () => {
   const kind = "sample:sso";
   const def = add({ provides: { backends: ["echo-a"] }, provide: undefined, login: async () => ({ user: "demo" }) });
@@ -560,7 +568,7 @@ it.skipIf(process.platform === "win32")("安装目录只读、状态预建；本
   expect(existsSync(join(home, ".fixture-state"))).toBe(true);
   expect(credentialInstallDirs(app)).toEqual([canonical(install)]);
   expect(myCredentials(app, "ann").credentials[0].missingInstall).toEqual(["~/.fixture-install-missing"]);
-  expect(sandboxStatus(app).defaults.writable).toContain(canonical(join(homedir(), ".fixture-state")));
+  expect(sandboxStatus(app).defaults.hidden).toContain(canonical(join(homedir(), ".fixture-state")));
   expect(() => registerCredential("bad", { id: "sso", name: "坏路径", login: async () => ({ user: "a" }), provides: { commands: [{ name: "x", state: ["../secrets"] }] } }, () => ({}), app)).toThrow();
   const rel = ".fixture-link"; symlinkSync(app.home, join(home, rel), "dir");
   undo.push(registerCredential("second", { id: "sso", name: "连接", login: async () => ({ user: "a" }), provides: { commands: [{ name: "x", state: [rel] }] } }, () => ({}), app));
@@ -752,7 +760,7 @@ posixIt("CLI 续接成功后即使最近使用时间写入失败也只执行一�
   } finally { backend.mockRestore(); }
 });
 
-posixIt("长驻会话重建换出借人时，启动、审计、最近使用和后续会话都跟随新的持有", async () => {
+posixIt("隔离会话恢复失败换出借人时，启动、审计、最近使用和后续会话都跟随新的持有", async () => {
   const acp = await import("../src/agents/acp.ts");
   const dispatch = await import("../src/agents/dispatch.ts");
   const { releaseThreadSession, threadTurn } = await import("../src/agents/sessions.ts");
@@ -772,13 +780,12 @@ posixIt("长驻会话重建换出借人时，启动、审计、最近使用和�
     setCredentialSharing(app, id, kind, { scope: "all" });
   }
   const thread = createThread(app, { channel: "web", userId: "ann", spaceId: personalSpaceId("ann"), settings: { profile: "fixture" } });
-  const open = vi.spyOn(acp, "openAcp").mockImplementation(async profile => {
+  const open = vi.spyOn(acp, "openAcp").mockImplementation(async (profile, req) => {
     const holder = selectedCredential(profile)!.holder;
-    let turns = 0;
-    return { sessionId: "session-" + holder, agent: "fixture", resumed: false, system: false, alive: () => true,
+    return { sessionId: "session-" + holder, agent: "fixture", resumed: !!req.resumeSessionId, system: false, alive: () => true,
       close() {}, async discard() {}, steer: async () => "idle",
       async prompt() {
-        if (holder === "bob" && ++turns === 2) {
+        if (holder === "bob" && req.resumeSessionId) {
           setCredentialSharing(app, holder, kind, { scope: "self" });
           throw new Error("会话已失效");
         }
@@ -799,8 +806,8 @@ posixIt("长驻会话重建换出借人时，启动、审计、最近使用和�
     expect(getThread(app, thread.id).agentProfile).toContain("|acct:cora");
     expect(all(app.db, "select json_extract(detail,'$.holder') as holder from audit_events where action='credentials.borrow' order by rowid"))
       .toEqual([{ holder: "bob" }, { holder: "bob" }, { holder: "cora" }]);
-    expect(await turn()).toMatchObject({ text: "cora", mode: "live" });
-    expect(open).toHaveBeenCalledTimes(2);
+    expect(await turn()).toMatchObject({ text: "cora", mode: "resumed" });
+    expect(open).toHaveBeenCalledTimes(4);
   } finally { releaseThreadSession(thread.id); open.mockRestore(); retire.mockRestore(); }
 });
 
