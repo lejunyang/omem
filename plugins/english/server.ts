@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PluginApi, PluginContext } from "../../src/plugins/types.ts";
+import { material, expression, checkMaterials, rememberMaterials } from "./materials.ts";
 import { applyAttempt, applyPoint, applySpeaking, LEVELS, normalize, PASS, pickFromBank, SKILLS, snapshot, snapshotText, wordAccuracy, type Attempt, type BankEntry, type SpeakingAssessment, type SpeakingRecord } from "./learner.ts";
 
 /**
@@ -13,6 +14,8 @@ const audio = z.object({
   rate: z.number().min(0.5).max(1.5).default(1).describe("语速，1 为正常"),
 });
 const base = {
+  material,
+  expression: expression.optional().describe("材料题主要知识点（points 第一项）的中英文说法"),
   id: z.string().max(20).optional().describe("题号，不填自动编"),
   skill: z.enum(SKILLS).describe("考哪项技能"),
   level: z.enum(LEVELS).describe("难度（CEFR）"),
@@ -58,7 +61,7 @@ function grade(ctx: PluginContext & { blockId: string }, data: Quiz, answers: Re
   for (const it of data.items) {
     const { given, score } = gradeItem(it, answers[it.id!]);
     const correct = score === null ? null : it.type === "dictation" ? score >= 0.9 : score >= PASS;
-    const attempt: Attempt = { block: ctx.blockId, item: it.id!, type: it.type, skill: it.skill, level: it.level, points: it.points, prompt: promptOf(it), given, expected: expectedOf(it), score, correct, errorTags: [], feedback: "", at };
+    const attempt: Attempt = { block: ctx.blockId, item: it.id!, type: it.type, skill: it.skill, level: it.level, points: it.points, prompt: promptOf(it), given, expected: expectedOf(it), score, correct, errorTags: [], feedback: "", at, expression: it.material && it.expression ? { ...it.expression, material: it.material } : undefined };
     ctx.store.put("attempts", `${ctx.blockId}:${it.id}`, attempt);
     applyAttempt(ctx.store, attempt);
     items.push({ id: it.id!, correct, score, given, expected: expectedOf(it), explanation: it.explanation, pending: score === null });
@@ -97,6 +100,7 @@ const BANK_MAX = 300;
  * then the transcript is handed in as the answer, and the tutor assesses it with english_speaking_grade.
  */
 const speakingBlock = z.object({
+  material,
   scene: z.string().trim().min(1).max(120).describe("场景，如“在餐厅点餐，问推荐菜，说明忌口”；自由聊写“自由对话”"),
   goal: z.string().trim().max(300).optional().describe("这次要刻意练的说法或目标（可选），如“用 Could I… / I'd like… 点餐”"),
 });
@@ -118,6 +122,7 @@ export function speakingInstructions(b: SpeakingBlock, o: { level: string | null
     free
       ? "Have a natural conversation on a topic the learner picks; start by asking what they want to talk about."
       : `Scene: ${b.scene}. Play the other person in this scene naturally and keep it going; start by greeting the learner in character.`,
+    b.material ? `Background for this role-play: ${b.material.summary}` : "",
     b.goal ? `What the learner wants to practise this time: ${b.goal}. Give them chances to use it.` : "",
     o.level ? `The learner's speaking level is about ${o.level} (CEFR). Speak natural, everyday English a little above that level; keep each turn short so they speak more than you.` : "Speak natural, everyday English; keep each turn short so the learner speaks more than you.",
     o.phrases.length ? `Expressions they are working on; bring a few into the conversation naturally: ${o.phrases.join(", ")}.` : "",
@@ -134,11 +139,12 @@ function gradeSpeaking(ctx: PluginContext & { blockId: string }, data: SpeakingB
   if (!a.success) throw new Error("口语练习的记录格式不对");
   const transcript = a.data.transcript.map((t) => ({ role: t.role, text: t.text.trim() })).filter((t) => t.text);
   if (!transcript.some((t) => t.role === "user")) throw new Error("这次还没有说话，没有可以交给陪练的记录");
-  const record: SpeakingRecord = { scene: data.scene, goal: data.goal, startedAt: a.data.startedAt, endedAt: a.data.endedAt, model: a.data.model, transcript, assessment: null };
+  const record: SpeakingRecord = { scene: data.scene, material: data.material, goal: data.goal, startedAt: a.data.startedAt, endedAt: a.data.endedAt, model: a.data.model, transcript, assessment: null };
   ctx.store.put("speaking", ctx.blockId, record);
   const minutes = Math.max(1, Math.round((Date.parse(a.data.endedAt) - Date.parse(a.data.startedAt)) / 60_000) || 1);
   const message = [
     `【口语练习】${data.scene}，约 ${minutes} 分钟，学习者说了 ${transcript.filter((t) => t.role === "user").length} 段。${data.goal ? `这次想练：${data.goal}。` : ""}`,
+    ...(data.material ? [`场景材料：${data.material.summary} [${data.material.title}](${data.material.ref})`] : []),
     "",
     "对话记录（learner 是学习者，partner 是语音模型；学习者的话是语音转写，个别词可能转错）：",
     ...transcript.map((t) => `${t.role === "user" ? "learner" : "partner"}: ${t.text}`),
@@ -154,7 +160,8 @@ export default function register(api: PluginApi) {
     description:
       "在练习页上交给本人一组英语题（1–20 题，通常 6–12 题），本人做完一次提交。题型：choice（中选英、英选中、听音选意，可带 audio）、cloze（句子填空）、dictation（听写，audio 是原句）、translate（句子翻译，由你评分）。每题标 skill、level、points。交出后这一轮只说一句开场白，不要在文字里重复题目。",
     schema: quiz,
-    prepare: (q) => {
+    prepare: (q, ctx, warnings) => {
+      checkMaterials(ctx, q.items, warnings);
       const used = new Set<string>();
       const items = q.items.map((it, i) => {
         checkItem(it, i);
@@ -163,13 +170,14 @@ export default function register(api: PluginApi) {
         used.add(id);
         return { ...it, id, points: it.points.map((p) => p.trim().toLowerCase()).filter(Boolean) };
       });
+      rememberMaterials(ctx.store, items, new Date().toISOString());
       return { ...q, items };
     },
     publicView: (q) => ({
       title: q.title,
       intro: q.intro,
       items: q.items.map((it) => {
-        const { explanation: _e, ...rest } = it;
+        const { explanation: _e, expression: _expr, ...rest } = it;
         if (rest.type === "choice") {
           const { answer: _a, ...shown } = rest;
           return shown;
@@ -194,6 +202,11 @@ export default function register(api: PluginApi) {
     description:
       "在练习页上放一次英语口语练习：本人和语音模型按场景对话（语音模型扮演场景里的另一个人，卡住时可以用中文问），结束后对话记录作为下一条消息回来，你用 english_speaking_grade 评价。本人想练口语、或你觉得该练说的时候用；交出后这一轮只说一句开场白。",
     schema: speakingBlock,
+    prepare: (b, ctx, warnings) => {
+      checkMaterials(ctx, [b], warnings);
+      rememberMaterials(ctx.store, [b], new Date().toISOString());
+      return b;
+    },
     grade: gradeSpeaking,
     presented: (b, id) => `已在练习页上放好口语练习“${b.scene}”（${id}）。本人对话结束后，记录会作为下一条消息到达；这一轮只说一句开场白。`,
   });
@@ -201,10 +214,10 @@ export default function register(api: PluginApi) {
   api.tool({
     name: "english_speaking_start",
     description: "在练习页的会话里放一次口语练习（页面上的“开始对话”用）。",
-    schema: z.object({ session_id: z.string(), scene: speakingBlock.shape.scene, goal: speakingBlock.shape.goal }),
+    schema: z.object({ session_id: z.string(), ...speakingBlock.shape }),
     page: true,
     write: true,
-    handler: (ctx, a) => JSON.stringify({ blockId: ctx.present("speaking", { scene: a.scene, goal: a.goal || undefined }, a.session_id) }),
+    handler: (ctx, a) => JSON.stringify({ blockId: ctx.present("speaking", { scene: a.scene, goal: a.goal || undefined, material: a.material }, a.session_id) }),
   });
 
   api.tool({
@@ -234,7 +247,7 @@ export default function register(api: PluginApi) {
       level: z.enum(LEVELS),
       scores: z.object({ fluency: dimension, grammar: dimension, vocab: dimension, fit: dimension }),
       review: z.string().trim().min(1).max(6000),
-      points: z.array(z.object({ point: z.string().max(60), correct: z.boolean(), error_tag: z.string().max(30).optional() })).max(15).default([]),
+      points: z.array(z.object({ point: z.string().max(60), expression: expression.optional(), correct: z.boolean(), error_tag: z.string().max(30).optional() })).max(15).default([]),
     }),
     write: true,
     handler: (ctx, a) => {
@@ -242,7 +255,8 @@ export default function register(api: PluginApi) {
       if (!block || block.kind !== "speaking") return `没有这次口语练习：${a.block_id}`;
       if (block.status !== "submitted" || !block.result) return "这次口语练习本人还没有交";
       const at = new Date().toISOString();
-      const assessment: SpeakingAssessment = { level: a.level, scores: { ...a.scores }, review: a.review, at };
+      const source = (block.data as SpeakingBlock).material;
+      const assessment: SpeakingAssessment = { material: source, level: a.level, scores: { ...a.scores }, review: a.review, at };
       const first = !(block.result as SpeakingRecord).assessment;
       ctx.setBlockResult(a.block_id, { ...block.result, assessment });
       const record = ctx.store.get<SpeakingRecord>("speaking", a.block_id);
@@ -255,7 +269,7 @@ export default function register(api: PluginApi) {
         const score = known.length ? known.reduce((x, y) => x + y, 0) / known.length / 5 : 0.5;
         for (const p of a.points) {
           const point = p.point.trim().toLowerCase();
-          if (point) applyPoint(ctx.store, point, p.correct, p.correct ? Math.max(score, PASS) : Math.min(score, 0.5), p.error_tag ? [p.error_tag.trim().toLowerCase()] : [], at);
+          if (point) applyPoint(ctx.store, point, p.correct, p.correct ? Math.max(score, PASS) : Math.min(score, 0.5), p.error_tag ? [p.error_tag.trim().toLowerCase()] : [], at, source && p.expression ? { ...p.expression, material: source } : undefined);
         }
       }
       return `已记下评价（${a.level}${first ? `，口语水平和 ${a.points.length} 个知识点已更新` : "，改了上一次的评价"}）。`;
@@ -271,7 +285,8 @@ export default function register(api: PluginApi) {
       const s = snapshot(ctx.store);
       const settings = ctx.settings();
       if (a.format === "json") return JSON.stringify({ ...s, settings });
-      return `${snapshotText(s)}\n本人的设置：出题方式 ${settings.source === "bank" ? "题库（本人从题库取下一组，你负责点评和补题）" : "陪练现出（每组由你用 english_quiz 出）"}，每组 ${settings.quizSize} 题，每天目标 ${settings.dailyGoal} 题。`;
+      const materials = `材料空间：${Array.isArray(settings.materialSpaces) && settings.materialSpaces.length ? settings.materialSpaces.join("、") : "未选择，用画像和场景练习"}。最近用过：${s.recentMaterials.slice(0, 15).map(m => `${m.ref}（${m.title}，${m.lastUsedAt.slice(0, 10)}）`).join("、") || "无"}`;
+      return `${snapshotText(s)}\n${materials}\n本人的设置：出题方式 ${settings.source === "bank" ? "题库（本人从题库取下一组，你负责点评和补题）" : "陪练现出（每组由你用 english_quiz 出）"}，每组 ${settings.quizSize} 题，每天目标 ${settings.dailyGoal} 题。`;
     },
   });
 
@@ -286,11 +301,14 @@ export default function register(api: PluginApi) {
       if (have + a.items.length > BANK_MAX) return `题库最多 ${BANK_MAX} 题，现在有 ${have} 题；少加一些，或等本人做掉一部分再补。`;
       a.items.forEach((it, i) => checkItem(it, i));
       const at = new Date().toISOString();
+      const warnings: string[] = [];
+      checkMaterials(ctx, a.items, warnings);
+      rememberMaterials(ctx.store, a.items, at);
       for (const it of a.items) {
         const { id: _id, ...rest } = it;
         ctx.store.put("bank", null, { item: { ...rest, points: rest.points.map((p) => p.trim().toLowerCase()).filter(Boolean) }, scene: a.scene.trim(), addedAt: at } satisfies BankEntry);
       }
-      return `已加入题库 ${a.items.length} 题（场景：${a.scene || "不限"}），题库现在 ${have + a.items.length} 题。`;
+      return `已加入题库 ${a.items.length} 题（场景：${a.scene || "不限"}），题库现在 ${have + a.items.length} 题。` + warnings.join("");
     },
   });
 

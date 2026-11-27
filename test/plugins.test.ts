@@ -193,6 +193,36 @@ describe("plugins", () => {
     expect((await callTool(ctx, "read_source", { source: selected })).isError).toBe(true);
   });
 
+  it("keeps verified citations and bilingual points, and drops invalid quiz and bank citations with a reason", async () => {
+    const app = await englishApp();
+    const { ctx, conversationId } = await tutorTurn(app);
+    const { env, manifest } = getPlugin("english");
+    savePluginSettings(app, "english", manifest.settings, "owner", "english", { materialSpaces: ["english"] });
+    const source = (spaceId: string) => upsertSource(app, { spaceId, uri: "packing", title: "打包笔记", kind: "note", text: "收拾剩下的饭菜。\n想请店员打包。" }).id;
+    const id = source("english"), other = source("personal");
+    const material = { ref: `src:${id}#L2-L2`, title: "打包笔记", summary: "请店员打包。" };
+    const expression = { zh: "打包", en: "to go" };
+    const items = [
+      { ...quiz.items[0], material: { ...material, title: "标题以原件为准" }, expression },
+      ...["bad", "src:missing#L1-L1", `src:${id}#L2-L1`, `src:${id}#L1-L3`, `src:${other}#L1-L1`].map(ref => ({ ...quiz.items[1], material: { ...material, ref } })),
+      { ...quiz.items[2], material: { title: "缺少引用" } },
+    ];
+    for (const tool of ["english_bank_add", "english_quiz"]) {
+      const out = await callTool(ctx, tool, { title: "打包", items });
+      expect(out.isError, out.text).toBe(false);
+      expect(out.text).toContain("去掉 6 处");
+    }
+    const store = pluginStore(app, "english", "owner", "english");
+    expect(store.list<BankEntry>("bank").filter(r => r.data.item.material)).toHaveLength(1);
+    const block = sessionView(app, env, conversationId, "owner").blocks[0];
+    expect(block.data.items[0].material).toEqual(material);
+    expect(block.data.items[0]).not.toHaveProperty("expression");
+    expect(block.data.items.slice(1).every((it: { material?: unknown }) => !it.material)).toBe(true);
+    await submitBlock(app, env, { userId: "owner", blockId: block.id, answers: { q1: 0 } });
+    expect(store.get("points", "phrase:to-go")).toMatchObject({ lastCorrect: false, expression: { ...expression, material } });
+    expect(snapshot(store).recentMaterials).toMatchObject([{ sourceId: id, ...material }]);
+  });
+
   it("questions and views in a plugin session are its page's blocks: a form is checked and answered, a view is only shown", async () => {
     const app = await englishApp();
     const { conversationId, ctx, runId } = await tutorTurn(app);
