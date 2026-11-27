@@ -1,6 +1,7 @@
 import type { App } from "../core/app.ts";
-import { featuresOf, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE } from "../auth/features.ts";
+import { featuresOf, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE, scopesFor } from "../auth/features.ts";
 import { featuresOff } from "../auth/connections.ts";
+import { loginProvider } from "../auth/providers.ts";
 import { findConnection } from "../auth/vault.ts";
 import { inQuietHours, notify } from "../core/notify.ts";
 import { HttpError, zonedParts } from "../core/util.ts";
@@ -109,19 +110,38 @@ export async function requestUserScopes(app: App, scopes: string[], reason: stri
   return { url, reused: false };
 }
 
+type ScopeRequest = { feature?: string; alternatives?: readonly string[]; readOnly?: boolean };
+const LEGACY_WRITE_SCOPES = new Set([
+  "drive:drive", "docs:doc", LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, "sheets:spreadsheet", "bitable:app", "calendar:calendar", "im:message",
+]);
+const LEGACY_READ_SCOPES = new Set([
+  "drive:drive:readonly", "docs:doc:readonly", "wiki:wiki:readonly", "sheets:spreadsheet:readonly", "bitable:app:readonly",
+  "calendar:calendar:readonly", "im:chat:readonly", "im:message:readonly",
+]);
+
+function scopeCandidates(scopes: string[], permission?: ScopeRequest) {
+  const explicit = permission?.alternatives;
+  if (explicit?.some((s) => scopes.includes(s))) return [explicit[0]];
+  const safe = permission?.readOnly
+    ? scopes.filter((s) => !LEGACY_WRITE_SCOPES.has(s) && !/:(?:write(?:_only)?|create|update|delete|upload|send)$/.test(s))
+    : scopes;
+  const granular = safe.filter((s) => !LEGACY_WRITE_SCOPES.has(s) && !LEGACY_READ_SCOPES.has(s));
+  return granular.length ? granular : safe;
+}
+
 /**
  * Run a lark-cli call as the owner; a missing scope becomes a login link for the owner and an error
  * the agent can act on (wait, tell the owner) instead of an opaque failure.
  */
-export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>, permission?: { feature: string; alternatives?: string[] }): Promise<T> {
+export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>, permission?: ScopeRequest): Promise<T> {
   try {
     return await fn();
   } catch (e) {
     if (!(e instanceof LarkScopeError)) throw e;
-    // Feishu often lists broad legacy scopes first. Prefer the permission for the actual operation.
-    const alternatives = permission?.alternatives;
-    const preferred = alternatives?.some((s) => e.scopes.includes(s)) ? alternatives[0] : undefined;
-    const scope = preferred ?? e.scopes[0];
+    const requested = scopeCandidates(e.scopes, permission);
+    if (!requested.length)
+      throw new HttpError(403, `${reason}未找到适合申请的只读权限（飞书返回：${e.scopes.join(" 或 ")}）。请应用管理员核对接口权限；不会为这次读取申请读写权限。`);
+    const scope = requested[0];
     // Someone else's connection (src/auth/lark-user.ts): they authorize the scope on their own connection, from the account page.
     const actor = larkActing();
     // A colleague's grant (auth/grants.ts) lacks it: dropped, so the next try gives them a fresh link with what is needed.
@@ -130,7 +150,10 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>,
       throw new HttpError(403, `对方的飞书授权少了 ${scope}：再用 identity=bot 试一次会拿到新的授权链接，发给他重新同意。`);
     }
     if (actor) {
-      const candidates = preferred ? [preferred] : e.scopes;
+      const enabled = await loginProvider("lark")?.grantedScopes?.(app).catch(() => null);
+      const candidates = enabled ? requested.filter((s) => enabled.has(s)) : requested;
+      if (!candidates.length)
+        throw new HttpError(403, `${reason}需要飞书权限 ${requested.join(" 或 ")}，但当前飞书应用没有开通。请应用管理员开通后再试。`);
       const features = featuresOf("lark");
       let feature = features.find((f) => f.id === permission?.feature);
       let required = candidates.find((s) => feature?.scopes.includes(s));
@@ -140,16 +163,18 @@ export async function asOwner<T>(app: App, reason: string, fn: () => Promise<T>,
         required = candidates.find((s) => privateChats?.scopes.includes(s));
         if (required) feature = privateChats;
       }
-      if (feature && required && featuresOff(app, actor.userId, "lark").includes(feature.id))
+      if (feature && featuresOff(app, actor.userId, "lark").includes(feature.id))
         throw new HttpError(403, `你在 omem 的账号页关掉了「${feature.label}」，要用请在账号页重新打开。`);
       const have = findConnection(app, actor.userId, "lark")?.scopes ?? [];
-      const granted = required && candidates.find((s) => feature?.scopes.includes(s) && have.includes(s));
+      const granted = candidates.find((s) => (!required || feature?.scopes.includes(s)) && have.includes(s));
       if (granted) throw new HttpError(403, `${reason}被飞书拒绝。当前连接已授权 ${granted}，请检查飞书里的资源访问权限。`);
       const { needConnection } = await import("../auth/connect-wait.ts");
-      const request = feature && required ? { features: [feature.id], requiredScopes: [required] } : { scopes: [scope] };
-      throw new HttpError(403, needConnection(app, actor.userId, actor.ruleId ? null : actor.runId, { ...request, reason: `${reason}缺少飞书权限 ${required ?? scope}` }));
+      const ask = required ?? candidates[0];
+      const request = feature && required && (!enabled || scopesFor("lark", [feature.id]).every((s) => s === "offline_access" || enabled.has(s)))
+        ? { features: [feature.id], requiredScopes: [required] } : { scopes: [ask] };
+      throw new HttpError(403, needConnection(app, actor.userId, actor.ruleId ? null : actor.runId, { ...request, reason: `${reason}缺少飞书权限 ${ask}` }));
     }
-    const missing = preferred ?? e.scopes.join(" 或 ");
+    const missing = requested.join(" 或 ");
     let link = "";
     try {
       link = (await requestUserScopes(app, [scope], reason)).url;

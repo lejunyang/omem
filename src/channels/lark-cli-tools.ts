@@ -1,7 +1,7 @@
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { larkDomainFeature } from "../auth/features.ts";
+import { LARK_COMMENT_READ_SCOPES, larkDomainFeature } from "../auth/features.ts";
 import type { App } from "../core/app.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { actingOpenId, asOwner } from "./lark-auth.ts";
@@ -60,14 +60,15 @@ function checkArgs(args: string[]) {
 }
 
 const isGuide = (args: string[]) => (args[0] === "skills" && (args[1] === "read" || args[1] === "list")) || args[0] === "schema";
+const COMMENT_READ_COMMANDS = new Set(["drive +list-comments", "drive file.comments list", "drive file.comments batch_query"]);
 
 /** Run in a scratch directory: files a command downloads go there and are removed after; their names are reported. */
 async function run(app: App, args: string[], label: string, execute = larkCli) {
   const dir = mkdtempSync(join(tmpdir(), "omem-lark-"));
   try {
     const feature = larkDomainFeature(args);
-    // The generic write tool may need a scope from the read feature. Its write scopes are separate.
-    const v = await asOwner(app, label, () => execute([...args, "--as", "user"], 180_000, dir), feature ? { feature } : undefined);
+    const alternatives = COMMENT_READ_COMMANDS.has(commandPath(args).join(" ")) ? LARK_COMMENT_READ_SCOPES : undefined;
+    const v = await asOwner(app, label, () => execute([...args, "--as", "user"], 180_000, dir), { feature, alternatives, readOnly: execute === larkCli });
     const files = readdirSync(dir).map((f) => `${f}（${statSync(join(dir, f)).size} 字节）`);
     return { value: v?.data ?? v, files };
   } finally {

@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 飞书补授权优先细粒度权限，只读操作不申请整域读写；成员补授权检查应用已开通的权限；旧评论请求可用只读权限续接 | 已实现（2026-11-27）；覆盖通用命令、旧评论等待续接、未登录时随登录补授权 | `src/channels/lark-auth.ts`、`src/auth/connect-wait.ts`、`test/connections.test.ts` |
 | 成员短令牌提前续签，临时故障分阶段记原因并重试，确认续签凭据失效才推重新授权 | 已实现（2026-11-27）；覆盖短令牌到期后继续重试、恢复与停止通知 | `src/agents/credentials.ts`、`test/credentials.test.ts` |
 | 普通本人阶段只发合并进展；新事实或到计划时间只读核实，带依据完成；跳过传递检查前提，收回旧规则提前打开且没人动过的阶段 | 已实现（2026-11-26）；`test/flows.test.ts`、`test/flow-blocker-review.test.ts` | `src/flows/owner-turn.ts`、`blocker-review.ts`、`reconcile.ts`、`prerequisites.ts`、`engine.ts` |
 | 新事实触发流程卡点复核，决策模型逐个判断；命中后只核对相关卡点，按结果退避，达到每日上限或模型不可用时沿用巡检 | 已实现（2026-11-25）；假决策和假对账覆盖批处理、回退及限额 | `src/flows/blocker-review.ts`、`blocker-facts.ts`、`reconcile.ts`；`test/flow-blocker-review.test.ts` |

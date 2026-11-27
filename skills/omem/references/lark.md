@@ -52,7 +52,7 @@
 - 回复群里的某条消息并 @ 人：`lark_send(reply_to=<om_…>, in_thread=true, mentions=[名字、邮箱或机器人侧 open_id], text)`。消息 id 从那个群的聊天原件（`read_source`）或 `lark_read` 的 `im +chat-messages-list` 找；只能发到本次运行允许的会话。
 - 有 `connector.use` 权限的成员用自己的飞书连接调用 `lark_read` 和文档的读取、新建、编辑、移动、复制工具。`lark_write`、`lark_invite`、`lark_doc_authorize` 和文档工具的 `identity: "bot"` 只给本人的运行。成员在 omem 账号页关掉的功能，对应的调用会被拒绝并说明（例如关了「群聊消息」就读不了群聊）。还没连接或缺授权时，工具的报错里有一个预先勾好所缺功能的授权链接，也已私聊发给他：把链接原样给他；他授权后这个会话会收到一条 `[授权]` 消息，接着做刚才没做成的事，不用他再说一遍。不要换别的办法绕过。
 - 读文档用 `import_url`（可给 `depth`）；整个知识库用 `lark_wiki_crawl`（start / continue / stop / status，可分批）。
-- 成员已连飞书时，`lark_read` 缺少功能内的权限也会收到预勾整项功能的链接，例如「表格与多维表格」。功能外的权限仍按原名出现在链接里。工具提示连接已授权而资源仍被飞书拒绝时，请成员核对那份资源的访问权限。
+- 成员已连飞书时，`lark_read` 可补授权整项功能（如「表格与多维表格」）；也可只补当前调用缺的一项权限。读文档评论用 `drive +list-comments`，只补 `docs:document.comment:read`，不要让成员另开云空间全量权限。应用本身未开通时，请应用管理员先开通；连接已授权却仍被拒绝时，请核对文档等资源本身的访问权限。
 
 ## 能看到的知识库（kb-scout）
 

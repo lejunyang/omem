@@ -57,7 +57,7 @@ export const larkProvider = {
     if (!appId || !key) return null;
     const hit = granted.get(appId);
     if (hit && hit.until > Date.now()) return hit.scopes;
-    const scopes = await larkAppScopes(appId, key);
+    const scopes = await larkAppScopes(appId, key, authFetch);
     granted.set(appId, { scopes, until: Date.now() + (scopes ? 10 : 1) * 60_000 });
     return scopes;
   },

@@ -1,10 +1,11 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, describe, expect, it, onTestFinished } from "vitest";
+import { afterAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { accessToken, disconnect, renewConnections } from "../src/auth/connections.ts";
 import { grantedFeatures, scopesFor } from "../src/auth/features.ts";
+import { larkProvider } from "../src/auth/lark.ts";
 import { asLarkUser, larkCliAs } from "../src/auth/lark-user.ts";
 import { asOwner } from "../src/channels/lark-auth.ts";
 import { personalLibrary } from "../src/channels/lark-wiki.ts";
@@ -480,6 +481,87 @@ describe("connections", async () => {
     connectionGranted(app, userId, "lark");
     expect(pending()).toEqual([]);
     await expect.poll(() => [thread.id, legacy.id].map((id) => !!one(app.db, "select 1 from messages where conversation_id = ? and text like '[授权]%'", id))).toEqual([true, true]);
+  });
+
+  it("requests only comment read access, even when the CLI names only the old Drive scope", async () => {
+    const { callTool } = await import("../src/agents/tools.ts");
+    const { createRun } = await import("../src/agents/runs.ts");
+    const { createThread } = await import("../src/agents/threads.ts");
+    const { connectionGranted } = await import("../src/auth/connect-wait.ts");
+    const userId = "comment-reader", spaceId = "personal-comment-reader", scope = "docs:document.comment:read";
+    const enabled = vi.spyOn(larkProvider, "grantedScopes").mockResolvedValue(new Set([scope]));
+    onTestFinished(() => { enabled.mockRestore(); setLarkCliForTests(null); });
+    createUser(app, { name: "小宁", id: userId });
+    const thread = createThread(app, { spaceId, channel: "lark", userId });
+    const legacy = createThread(app, { spaceId, channel: "lark", userId });
+    const other = createThread(app, { spaceId, channel: "lark", userId });
+    const r = createRun(app, { kind: "agent", spaceId, title: "读评论", input: { conversationId: thread.id }, userId });
+    const grant = (scopes: string[]) => storeConnection(app, { userId, provider: "lark", accountId: "on_ning", accountName: "小宁", scopes, accessToken: "at_ning", refreshToken: "rt_ok", expiresIn: 7200 });
+    grant(scopesFor("lark", ["docs"]));
+    setLarkCliForTests(async (args) => {
+      if (args.includes("--help")) return "Risk: read";
+      throw new LarkScopeError(["drive:drive"], "缺少权限");
+    });
+    const read = () => callTool({ app, runId: r.id, spaceId, spaces: null, tools: null, actor: "agent", userId, larkChats: [] }, "lark_read",
+      { command: ["drive", "+list-comments", "--url", "https://tenant.larkoffice.com/wiki/example"] });
+    const link = "http://omem.test/#/login?provider=lark&scopes=docs%3Adocument.comment%3Aread";
+    expect((await read()).text).toContain(`授权链接：${link}。`);
+    const login = new URL((await remote(`/api/auth/lark/start?scopes=${encodeURIComponent(scope)}`)).headers.get("location")!);
+    expect(login.searchParams.get("scope")?.split(" ").sort()).toEqual(["contact:user.email:readonly", scope, "offline_access"]);
+    const refused = new URL((await remote("/api/auth/lark/start?scopes=drive%3Adrive")).headers.get("location")!);
+    expect(decodeURIComponent(refused.hash)).toContain("当前飞书应用未开通 drive:drive");
+    const key = `connect_wait:${userId}`;
+    const pending = () => JSON.parse(one<{ value: string }>(app.db, "select value from kv where key = ?", key)?.value ?? "[]");
+    run(app.db, "update kv set value = ? where key = ?", JSON.stringify([...pending(), ...[legacy, other].map((item) => ({
+      conversationId: item.id, features: [], scopes: ["drive:drive"], at: new Date().toISOString(),
+      reason: `读取飞书（drive ${item.id === legacy.id ? "+list-comments" : "+inspect"}）缺少飞书权限 drive:drive`,
+    }))]), key);
+    grant([scope]);
+    connectionGranted(app, userId, "lark");
+    expect(pending()).toMatchObject([{ conversationId: other.id }]);
+    await expect.poll(() => [thread.id, legacy.id].map((id) => !!one(app.db, "select 1 from messages where conversation_id = ? and text like '[授权]%'", id))).toEqual([true, true]);
+    expect((await read()).text).toContain(`当前连接已授权 ${scope}，请检查飞书里的资源访问权限`);
+    expect(app.db.prepare("select link from notifications where user_id = ?").all(userId)).toEqual([{ link }]);
+  });
+
+  it("does not offer scopes the Feishu app has not enabled or bundles containing them", async () => {
+    const enabled = vi.spyOn(larkProvider, "grantedScopes").mockResolvedValue(new Set(["sheets:spreadsheet:read"]));
+    onTestFinished(() => enabled.mockRestore());
+    const userId = "scope-check";
+    createUser(app, { name: "小齐", id: userId });
+    const denied = (scopes: string[]) => asLarkUser(app, userId, () => asOwner(app, "读取表格", async () => {
+      throw new LarkScopeError(scopes, "缺少权限");
+    }, { feature: "sheets" }));
+    await expect(denied(["sheets:spreadsheet"])).rejects.toThrow(/应用没有开通/);
+    expect(one(app.db, "select link from notifications where user_id = ?", userId)).toBeUndefined();
+    await expect(denied(["sheets:spreadsheet", "sheets:spreadsheet:read"])).rejects.toThrow(/scopes=sheets%3Aspreadsheet%3Aread/);
+    expect(one(app.db, "select link from notifications where user_id = ?", userId)).toEqual({ link: "http://omem.test/#/login?provider=lark&scopes=sheets%3Aspreadsheet%3Aread" });
+  });
+
+  it("does not fall back to broad scopes for other read commands even when the app has enabled them", async () => {
+    const { callTool } = await import("../src/agents/tools.ts");
+    const userId = "safe-scope-reader", spaceId = "personal-safe-scope-reader";
+    const enabled = vi.spyOn(larkProvider, "grantedScopes").mockResolvedValue(new Set(["drive:drive", "drive:drive:readonly", "drive:drive.metadata:readonly"]));
+    onTestFinished(() => { enabled.mockRestore(); setLarkCliForTests(null); });
+    createUser(app, { name: "小唐", id: userId });
+    storeConnection(app, { userId, provider: "lark", accountId: "on_tang", accountName: "小唐", scopes: ["offline_access"], accessToken: "at_tang", expiresIn: 7200 });
+    let missing = ["drive:drive", "drive:drive:readonly", "drive:drive.metadata:readonly"];
+    setLarkCliForTests(async (args) => {
+      if (args.includes("--help")) return "Risk: read";
+      throw new LarkScopeError(missing, "缺少权限");
+    });
+    const read = () => callTool({ app, runId: null, spaceId, spaces: null, tools: null, actor: "agent", userId, larkChats: [] }, "lark_read",
+      { command: ["drive", "+inspect", "--token", "example"] });
+    expect((await read()).text).toContain("授权链接：http://omem.test/#/login?provider=lark&scopes=drive%3Adrive.metadata%3Areadonly");
+    enabled.mockResolvedValue(new Set(["drive:drive", "drive:drive:readonly"]));
+    const unavailable = await read();
+    expect(unavailable.text).toContain("当前飞书应用没有开通");
+    expect(unavailable.text).not.toContain("授权链接");
+    missing = ["drive:drive"];
+    const broad = await read();
+    expect(broad.text).toContain("不会为这次读取申请读写权限");
+    expect(broad.text).not.toContain("授权链接");
+    expect(app.db.prepare("select link from notifications where user_id = ?").all(userId)).toHaveLength(1);
   });
 
   it("requests one combined card before copying a Wiki doc and resumes legacy copy waits", async () => {

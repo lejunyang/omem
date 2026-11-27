@@ -8,6 +8,8 @@
 export type Feature = { id: string; label: string; description: string; scopes: string[]; requiredScopes?: string[] };
 
 export const LARK_DOC_READ_SCOPE = "docx:document:readonly";
+export const LARK_COMMENT_READ_SCOPE = "docs:document.comment:read";
+export const LARK_COMMENT_READ_SCOPES = [LARK_COMMENT_READ_SCOPE, "drive:drive", "drive:drive:readonly", "docs:doc", "docs:doc:readonly", "sheets:spreadsheet", "sheets:spreadsheet:readonly"];
 export const LARK_LEGACY_DOC_SCOPE = "docx:document";
 export const LARK_LEGACY_WIKI_SCOPE = "wiki:wiki";
 export const LARK_WIKI_COPY_SCOPE = "wiki:node:copy";

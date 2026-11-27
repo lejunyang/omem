@@ -3,7 +3,7 @@ import { one, run } from "../core/db.ts";
 import { notify } from "../core/notify.ts";
 import { json, now, webLink } from "../core/util.ts";
 import { findUser, OWNER, userName } from "../core/users.ts";
-import { featuresOf, grantedFeatures, LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE, scopesFor } from "./features.ts";
+import { featuresOf, grantedFeatures, LARK_COMMENT_READ_SCOPE, LARK_DOC_READ_SCOPE, LARK_LEGACY_DOC_SCOPE, LARK_LEGACY_WIKI_SCOPE, LARK_WIKI_COPY_SCOPE, scopesFor } from "./features.ts";
 import { findConnection } from "./vault.ts";
 
 /**
@@ -18,6 +18,7 @@ const KEEP_MS = 6 * 3600_000;
 const key = (userId: string) => `connect_wait:${userId}`;
 const legacyRead = `读取飞书文档缺少飞书权限 ${LARK_LEGACY_DOC_SCOPE}`;
 const legacyCopy = `以本人身份复制飞书文档缺少飞书权限 ${LARK_LEGACY_WIKI_SCOPE}`;
+const legacyComments = "读取飞书（drive +list-comments）缺少飞书权限 drive:drive";
 
 function waiting(app: App, userId: string): Waiting[] {
   const list = json<Waiting[]>(one<{ value: string }>(app.db, "select value from kv where key = ?", key(userId))?.value, []);
@@ -83,6 +84,7 @@ export function connectionGranted(app: App, userId: string, provider: string) {
   const ready = list.filter((w) => w.features.every((f) => have.has(f)) && w.scopes.every((s) => {
     if (s === LARK_LEGACY_DOC_SCOPE && w.reason === legacyRead) return scopes.has(LARK_DOC_READ_SCOPE) || scopes.has(s);
     if (s === LARK_LEGACY_WIKI_SCOPE && w.reason === legacyCopy) return scopes.has(LARK_WIKI_COPY_SCOPE) || scopes.has(s);
+    if (s === "drive:drive" && w.reason === legacyComments) return scopes.has(LARK_COMMENT_READ_SCOPE) || scopes.has(s);
     return scopes.has(s);
   }));
   save(app, userId, list.filter((w) => !ready.includes(w)));

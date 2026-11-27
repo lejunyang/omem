@@ -31,6 +31,7 @@ const qList = (k: string) => (typeof route.query[k] === "string" ? (route.query[
 const askedProvider = computed(() => (typeof route.query.provider === "string" ? route.query.provider : ""));
 const askedFeatures = computed(() => qList("features"));
 const askedScopes = computed(() => qList("scopes"));
+const loginScopes = computed(() => askedProvider.value === "lark" ? askedScopes.value : []);
 const asking = computed(() => !!askedProvider.value && (askedFeatures.value.length > 0 || askedScopes.value.length > 0));
 // With a primary provider only it logs in; an invite that allows others shows them all.
 const shown = computed(() => {
@@ -65,7 +66,7 @@ function start(p: Provider, purpose: "login" | "bind" = "login") {
   if (invite.value && purpose === "login") q.set("invite", invite.value);
   if (purpose === "login" && picked.value[p.id]?.length) q.set("features", picked.value[p.id].join(","));
   if (purpose === "login") setCapture(q, p);
-  if (purpose === "login" && p.id === askedProvider.value && askedScopes.value.length) q.set("scopes", askedScopes.value.join(","));
+  if (purpose === "login" && p.id === askedProvider.value && loginScopes.value.length) q.set("scopes", loginScopes.value.join(","));
   if (back.value !== "/") q.set("return", back.value);
   else if (purpose === "login" && asking.value) q.set("return", "/login?granted=1");
   location.href = `/api/auth/${p.id}/start?${q}`;
@@ -177,13 +178,14 @@ onMounted(async () => {
         <p v-if="s.login.invite?.invalid" class="warn-text small">这个邀请链接无效、已用过或已过期，仍可以登录，但新账号要等批准。</p>
         <p v-else-if="s.login.invite" class="muted">你收到了邀请{{ s.login.invite.note ? `：${s.login.invite.note}` : "" }}。登录后直接可以使用，不用再等批准。</p>
         <p v-else class="muted">第一次登录会建一个账号，等 omem 的主人批准后使用。</p>
+        <p v-if="loginScopes.length && shown.some((p) => p.id === askedProvider)" class="muted small">这个链接还需要你在飞书确认：<span class="scope-list">{{ loginScopes.join("、") }}</span></p>
         <div class="providers">
-          <button v-for="p in shown" :key="p.id" class="btn primary" :disabled="!!p.unavailable" :title="p.unavailable ?? ''" @click="start(p)">用{{ p.label }}登录</button>
+          <button v-for="p in shown" :key="p.id" class="btn primary" :disabled="!!p.unavailable" :title="p.unavailable ?? ''" @click="start(p)">用{{ p.label }}登录{{ p.id === askedProvider && loginScopes.length ? "并授权" : "" }}</button>
         </div>
         <p v-for="p in shown.filter((x) => x.unavailable)" :key="p.id" class="small warn-text">{{ p.label }}：{{ p.unavailable }}</p>
         <section v-for="p in shown.filter((x) => x.features?.length && !x.unavailable)" :key="`f-${p.id}`" class="pick stack tight">
           <strong class="small">登录时一并授权{{ p.label }}的功能（可选）</strong>
-          <p class="muted small">不勾就只让 omem 知道你是谁。勾上的在{{ p.label }}授权页一起确认，之后也能在账号页打开或关掉。</p>
+          <p class="muted small">还可以勾选下面的功能，在{{ p.label }}授权页一起确认，之后也能在账号页打开或关掉。</p>
           <div class="stack tight features">
             <UiCheckbox v-for="f in p.features" :key="f.id" v-model="picked[p.id]" :value="f.id" size="sm">
               <span class="feat"><span>{{ f.label }}</span><span class="muted small">{{ f.description }}</span></span>
@@ -204,6 +206,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.scope-list { overflow-wrap: anywhere; }
 .login {
   min-height: 100vh;
   display: grid;

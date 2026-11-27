@@ -197,13 +197,23 @@ export function registerAuthRoutes(server: FastifyInstance, app: App, who: (req:
       // Connecting asks for just the scopes of the features being turned on (incremental authorization).
       // A missing scope a call ran into (lark-user.ts larkAs) is asked for by name, with background access.
       const named = (o.scopes ?? "").split(/[\s,]+/).filter(Boolean).slice(0, 30);
-      // Logging in asks for nothing beyond who the person is, unless they ticked features on the login page.
       const features = (o.features ?? "").split(",").filter(Boolean);
       // Logging in and binding also ask for what recognizes an account made ahead of time (the email).
       const lp = loginProvider(provider);
-      const optional = lp?.optionalIdentityScopes?.length ? await lp.grantedScopes?.(app).catch(() => null) : null;
-      const identity = [...(lp?.identityScopes ?? []), ...(lp?.optionalIdentityScopes ?? []).filter((s) => optional?.has(s))];
-      const scopes = o.purpose === "connect" ? [...new Set([...scopesFor(provider, features), ...named, ...(named.length ? scopesFor(provider, ["offline"]) : [])])] : o.purpose === "login" ? [...new Set([...identity, ...scopesFor(provider, features)])] : identity;
+      const namedLark = provider === "lark" && o.purpose !== "bind" && named.length > 0;
+      const requested = o.purpose === "connect" || namedLark ? named : [];
+      const featureScopes = o.purpose === "bind" ? [] : scopesFor(provider, features);
+      const enabled = lp?.optionalIdentityScopes?.length || namedLark ? await lp?.grantedScopes?.(app).catch(() => null) : null;
+      if (provider === "lark" && enabled) {
+        const unavailable = [...new Set([...featureScopes, ...requested])].filter((s) => s !== "offline_access" && !enabled.has(s));
+        if (unavailable.length) throw new HttpError(403, `当前飞书应用未开通 ${unavailable.join("、")}。请让助手重新检查缺少的权限并发新链接。`);
+      }
+      const identity = [...(lp?.identityScopes ?? []), ...(lp?.optionalIdentityScopes ?? []).filter((s) => enabled?.has(s))];
+      const scopes = [...new Set([
+        ...(o.purpose === "connect" ? [] : identity),
+        ...featureScopes,
+        ...requested, ...(requested.length ? scopesFor(provider, ["offline"]) : []),
+      ])];
       const url = beginLogin(app, { provider, purpose: o.purpose, redirectUri: callbackUrl(base, provider), userId: a?.userId, sessionHash: a?.sessionHash, invite: o.invite, returnTo: o.return, scopes,
         // What to save into omem, chosen next to the features (Login.vue): applied once the authorization comes back.
         capture: provider === "lark" && o.capture !== undefined ? captureChoice(o.capture, features) : undefined });
