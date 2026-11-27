@@ -186,3 +186,33 @@ it.skipIf(!support.ok)("运行开始后新建的登录文件在只读 HOME 里�
     vi.unstubAllEnvs(); app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
   }
 });
+
+it.skipIf(!support.ok)("npm 配置保留源和代理，登录行在沙箱内不可见 " + (support.reason ?? ""), async () => {
+  const app = testApp();
+  const home = mkdtempSync(join(tmpdir(), "npm-config-"));
+  const cwd = join(home, "project");
+  mkdirSync(cwd);
+  vi.stubEnv("HOME", home);
+  try {
+    const registry = "@example:registry=https://registry.example.org/\r\nproxy=http://proxy.example.org/\r\ncafile=/etc/ssl/example.pem\r\n";
+    const auth = ["//registry.example.org/:_authToken=fixture", "_auth=fixture", "_password=fixture",
+      "username=fixture", "certfile=/private/client", "keyfile=/private/key"].join("\n");
+    app.config.agents.ownSandbox.mode = "require";
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+    for (const contents of [registry, registry + auth]) {
+      writeFileSync(join(home, ".npmrc"), contents);
+      const box = ownRun(app, profile, cwd, false).box!;
+      box.plan.ro.push(home);
+      const child = launch("/bin/sh", ["-ec", 'test ! -w "$HOME/.npmrc"; cat "$HOME/.npmrc"'],
+        { cwd, ownSandbox: box, env: { OMEM_DESKTOP_TOOLS: "off" } });
+      let output = "", errors = "";
+      child.stdout.on("data", b => output += b);
+      child.stderr.on("data", b => errors += b);
+      expect((await once(child, "close"))[0], errors).toBe(0);
+      expect(output).toBe(registry);
+      expect(readFileSync(join(home, ".npmrc"), "utf8")).toBe(contents);
+    }
+  } finally {
+    vi.unstubAllEnvs(); app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+  }
+});

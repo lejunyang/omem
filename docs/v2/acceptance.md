@@ -306,6 +306,8 @@
 
 17. 在模拟安装目录中以 PATH、绝对路径和脚本入口调用被拒绝的命令。用测试登录验证工作区内的副本读不到登录，成员命令只能读本账号的状态。让允许的命令先输出再读 stdin，检查 stderr、退出码及断开后的子进程清理。
 
+18. 临时 HOME 的 `~/.npmrc` 分别写入纯源设置、源设置带模拟认证行；在沙箱里核对源、作用域、代理、CA 设置和换行保留，认证行被移除，文件只读。宿主原文件保持原样。
+
 自动验证见 `test/command-executor.test.ts`、`test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 插件凭据第三期

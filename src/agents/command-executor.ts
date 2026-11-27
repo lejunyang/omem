@@ -39,7 +39,7 @@ function program(name: string, writable: string[]) {
   throw new Error("宿主没有安装命令 " + name);
 }
 
-function executorMounts(app: App, user: string, scope: CommandSandbox, call: Call, entry: ReturnType<typeof credentialCommand>, git: boolean) {
+function executorMounts(app: App, user: string, scope: CommandSandbox, call: Call, entry: ReturnType<typeof credentialCommand>, git: boolean, npm: boolean) {
   if (!isAbsolute(call.cwd)) throw new Error("工作目录必须是绝对路径");
   // cwd is interpreted INSIDE the new namespace. It never authorizes a host bind mount.
   const home = canonical(user === OWNER ? homedir() : accountHome(app, user));
@@ -76,11 +76,11 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
     }
   }
   const standard = standardCommandLogins.get(call.command) ?? [];
-  for (const rel of git ? gitLoginPaths : standard) {
+  for (const rel of git ? gitLoginPaths : npm ? [".npmrc"] : standard) {
     const path = join(home, rel);
     if (!granted.has(path) && existsSync(path) && canonical(path) === path) {
       // Cloud CLIs renew sessions within their own declared configuration directories.
-      (git || rel === ".ssh" ? ro : rw).push(path);
+      (git || npm || rel === ".ssh" ? ro : rw).push(path);
       granted.add(path);
     }
   }
@@ -113,8 +113,9 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
   const declared = credentialMethods().some(method => method.provides.commands.some(c => c.name === call.command));
   const standard = standardCommandLogins.has(call.command);
   if (!declared && !standard && !git && !currentRules(app).some(r => r.enabled && r.match.kind === "command" && r.match.executable === call.command)) return;
+  const npm = call.command === "npm" || call.command === "pnpm";
   const user = ctx.userId ?? OWNER;
-  if ((entry || standard || git) && (ctx.actor !== "agent" || ctx.commandHomeUser !== user || ctx.shadow || ctx.view || ctx.boardAccess || ctx.role === "guest"))
+  if ((entry || standard || git || npm) && (ctx.actor !== "agent" || ctx.commandHomeUser !== user || ctx.shadow || ctx.view || ctx.boardAccess || ctx.role === "guest"))
     throw new Error("本轮没有使用这份命令凭据的权限");
   const rules = app.config.security.operationRules, legacy = app.config.security.commandRules;
   const turn = ctx.commandTurn;
@@ -129,7 +130,7 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
     if (!live || (user !== OWNER && !activeUser(findUser(app, user))) || live.runId !== runId || live.commandTurn !== turn || live.commandSandbox !== scope ||
         app.config.security.operationRules !== rules || app.config.security.commandRules !== legacy ||
         entry?.method.signal.aborted || (runId && actingAs(runId))) throw new Error("运行、身份或规则已变化，请重新执行");
-    const { home, ro, rw, file, env, masked, links } = executorMounts(app, user, scope, call, entry, git);
+    const { home, ro, rw, file, env, masked, links } = executorMounts(app, user, scope, call, entry, git, npm);
     // The relay and its runtime are read-only. Do not mount the service checkout in the executor.
     const controller = new AbortController();
     const cancel = () => controller.abort();

@@ -1,3 +1,5 @@
+import type { Writable } from "node:stream";
+import { sandboxNpmrc } from "./sandbox-npmrc.ts";
 import { withPinnedBinds } from "./bwrap-spawn.ts";
 import { commandMounts } from "./command-mounts.ts";
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -80,14 +82,29 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
     boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
       args: bwrapArgs({ ...plan, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources) };
   } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, snapshotSources) : null;
-  const start = (argv: string[], fds: number[]) => spawn(boxed?.file ?? resolved.file, argv, {
-    cwd: opts.cwd,
-    env: boxed?.env ?? env,
-    stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...fds],
-    shell: false,
-    windowsHide: true,
-    detached: process.platform !== "win32",
-  });
+  const account = opts.ownSandbox ?? opts.sandbox;
+  const npmrc = account && join(canonical(account.home), ".npmrc");
+  const showRegistry = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => npmrc === p || npmrc.startsWith(p + "/"));
+  const start = (argv: string[], fds: number[]) => {
+    // Replace only the final credential mask for this identity. The pipe holds a
+    // snapshot, so a host-side login during the turn cannot reveal a new token.
+    const end = showRegistry ? argv.indexOf("--") : -1;
+    const index = end < 0 ? -1 : argv.findIndex((arg, i) => i < end && arg === "--ro-bind" && argv[i + 1] === "/dev/null" && argv[i + 2] === npmrc);
+    const config = index >= 0 && npmrc ? sandboxNpmrc(npmrc) : undefined;
+    const pipe = fds.length + 3;
+    if (config) argv.splice(index, 2, "--ro-bind-data", String(pipe));
+    const child = spawn(boxed?.file ?? resolved.file, argv, {
+      cwd: opts.cwd, env: boxed?.env ?? env,
+      stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...fds, ...(config ? ["pipe" as const] : [])],
+      shell: false, windowsHide: true, detached: process.platform !== "win32",
+    });
+    if (config) {
+      const input = child.stdio[pipe] as Writable;
+      input.on("error", () => {});
+      input.end(config);
+    }
+    return child;
+  };
   const child = boxed && snapshotSources.size ? withPinnedBinds(boxed.args, snapshotSources, start) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
   child.stdin?.on("error", () => {});
   return child;

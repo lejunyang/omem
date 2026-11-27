@@ -217,6 +217,12 @@ export function egressSupport(): SandboxSupport {
   return networkSupport = probe.status === 0 ? s : { ok: false, reason: "出网隔离不可用：" + (probe.error?.message ?? probe.stderr.trim()).slice(0, 200) };
 }
 
+// Backend API keys and the per-run tool token are needed by the backend itself.
+const backendLogin = /^(?:OPENAI|ANTHROPIC|CLAUDE|CODEX|TRAE|DOUBAO|GEMINI)_|^OMEM_TOKEN$/i;
+const commandLogin = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE_KEY|ACCESS_KEY|API_KEY)(?:_|$)|^(?:SSH_AUTH_SOCK|SSH_AGENT_PID|SSH_ASKPASS|GIT_ASKPASS|GIT_CONFIG_.+|GH_.+|GITHUB_.+|GITLAB_.+|GLAB_.+|DOCKER_AUTH_CONFIG|AWS_.+|AZURE_.+|CLOUDSDK_.+|GOOGLE_APPLICATION_CREDENTIALS|KUBECONFIG)$/i;
+
+export const commandCredentialVariable = (key: string) => !backendLogin.test(key) && commandLogin.test(key);
+
 /** Variables of the service that do not go into a user's sandbox: credentials, and paths into what is hidden. */
 const SECRET = /(?:^|_)(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|AUTH)(?:_|$)|^(?:ANTHROPIC|OPENAI|CLAUDE|CODEX|TRAE|TRAECLI|DOUBAO|GEMINI|GOOGLE|AWS|AZURE|GITHUB|GH|GITLAB|NPM|OMEM|SSH)_/i;
 
@@ -240,6 +246,11 @@ export function sandboxEnv(base: NodeJS.ProcessEnv, runEnv: Record<string, strin
   out.PATH = [nodeBin, ...path.split(":").filter((d) => d && d !== nodeBin)].join(":");
   out.HOME = acct.home;
   for (const [k, v] of Object.entries(acct.env)) out[k] = v;
+  const gate = runEnv.OMEM_COMMAND_GATE;
+  if (gate?.endsWith("/bin/sandbox/bin/guarded")) {
+    for (const key of Object.keys(out)) if (commandCredentialVariable(key)) delete out[key];
+    if (runEnv.GIT_ASKPASS === join(dirname(gate), "git-askpass")) out.GIT_ASKPASS = runEnv.GIT_ASKPASS;
+  }
   return out;
 }
 

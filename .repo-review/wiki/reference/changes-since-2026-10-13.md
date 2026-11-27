@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 沙箱保留 npm 的源设置（2026-11-28）
+
+从 `src/agents/sandbox-npmrc.ts` 读起。Linux 本人和成员沙箱把用户 npm 配置作为只读快照挂回原位，保留源、作用域、代理及 CA 设置，去掉登录字段。私有源需要认证时由明确授权的执行器处理，或由本人安装。
+
 ## 本人沙箱的登录路径与运行类型（2026-11-28）
 
 从 `src/agents/own-run.ts` 读起。挂载工作区后再遮住登录文件、SSH agent 套接字和插件状态，设置可替换内置路径或排除指定类型的本人运行。`src/agents/egress-run.ts` 将本人沙箱接入已有的 all-sandboxed 出网模式。命令启动从 `src/agents/command-executor.ts` 读起，同身份的命令使用独立沙箱和流式管道，原有借用流程保留。

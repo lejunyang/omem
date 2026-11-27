@@ -78,6 +78,8 @@ it.skipIf(!support.ok)("多个调用入口使用同一条拒绝规则，模拟�
   const module = join(modules, "samplepkg");
   for (const dir of [home, cwd, bin, pkg, join(python, "bin"), module]) mkdirSync(dir, { recursive: true });
   writeFileSync(join(home, ".git-credentials"), "fixture");
+  writeFileSync(join(home, ".npmrc"), "registry=https://registry.example.org/\n_authToken=fixture\n");
+  writeFileSync(join(bin, "npm"), '#!/bin/sh\ngrep -qx "_authToken=fixture" "$HOME/.npmrc"\n', { mode: 0o755 });
   const entry = join(pkg, "cli.js"), link = join(bin, "samplecli");
   writeFileSync(join(pkg, "package.json"), JSON.stringify({ bin: { samplecli: "./cli.js" } }));
   writeFileSync(entry, '#!/usr/bin/env node\nconst fs=require("node:fs"); process.exit(fs.existsSync(process.env.HOME+"/.git-credentials") && fs.statSync(process.env.HOME+"/.git-credentials").size ? 0 : 23);', { mode: 0o755 });
@@ -99,6 +101,7 @@ it.skipIf(!support.ok)("多个调用入口使用同一条拒绝规则，模拟�
   app.config.security.operationRules = ["samplecli", "guarded-tool", "samplepy"].map(executable => ({
     id: executable, revision: 1, enabled: true, action: "deny", match: { kind: "command", executable },
   }));
+  app.config.security.operationRules.push({ id: "npm-install", revision: 1, enabled: true, action: "allow", match: { kind: "command", executable: "npm" } });
   const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
   const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: "personal", runId: null, profile, cwd });
   const box = prep.isolation.box!;
@@ -127,6 +130,8 @@ it.skipIf(!support.ok)("多个调用入口使用同一条拒绝规则，模拟�
     expect((await invoke(join(bin, "guarded-tool"), [])).code).toBe(126);
     expect((await invoke(dispatcher, [])).code).toBe(126);
     expect((await invoke(process.execPath, [join(cwd, "copy.js")])).code).toBe(23);
+    const install = await invoke(join(bin, "npm"), ["install"]);
+    expect(install.code, install.out).toBe(0);
     const remote = await invoke("/bin/sh", ["-ec", "git status && git push"]);
     expect(remote.code, remote.out).toBe(0);
     expect((await invoke(join(cwd, "git-fixture"), ["push"])).code).toBe(23);

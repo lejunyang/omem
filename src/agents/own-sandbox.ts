@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, posix } from "node:path";
 import type { Config } from "../core/config.ts";
-import { installRoot, type SandboxNetwork, type SandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
+import { commandCredentialVariable, installRoot, type SandboxNetwork, type SandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 
 type Settings = Config["agents"]["ownSandbox"];
 export const under = (path: string, root: string) => path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
@@ -99,17 +99,13 @@ export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: Workspac
     pointers: workspace?.pointers?.filter(pointer => visible(pointer.path)) };
 }
 
-// Backend API keys and the per-run tool token are needed by the backend itself.
-const backendLogin = /^(?:OPENAI|ANTHROPIC|CLAUDE|CODEX|TRAE|DOUBAO|GEMINI)_|^OMEM_TOKEN$/i;
-const commandLogin = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE_KEY|ACCESS_KEY|API_KEY)(?:_|$)|^(?:SSH_AUTH_SOCK|SSH_AGENT_PID|SSH_ASKPASS|GIT_ASKPASS|GIT_CONFIG_.+|GH_.+|GITHUB_.+|GITLAB_.+|GLAB_.+|DOCKER_AUTH_CONFIG|AWS_.+|AZURE_.+|CLOUDSDK_.+|GOOGLE_APPLICATION_CREDENTIALS|KUBECONFIG)$/i;
-
 export function ownSandboxEnv(base: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv, secretEnv: string[]) {
   const out = { ...base };
   for (const key of Object.keys(out)) if (/^OMEM_/i.test(key)) delete out[key];
   Object.assign(out, run);
   const gitHint = run.GIT_ASKPASS;
   const runKeys = ["OMEM_TOKEN", "OMEM_URL", "OMEM_ARTIFACTS", "OMEM_RUN_DIR", "OMEM_COMMAND_GATE", "OMEM_DESKTOP_TOOLS", "OMEM_BROWSER_PROFILES", "OMEM_BROWSER_PROXY"];
-  for (const key of Object.keys(out)) if ((!backendLogin.test(key) && commandLogin.test(key)) || secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
+  for (const key of Object.keys(out)) if (commandCredentialVariable(key) || secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
   if (run.OMEM_COMMAND_GATE?.endsWith("/bin/sandbox/bin/guarded") && gitHint === posix.join(posix.dirname(run.OMEM_COMMAND_GATE), "git-askpass")) out.GIT_ASKPASS = gitHint;
   out.TMPDIR = "/tmp";
   return out;

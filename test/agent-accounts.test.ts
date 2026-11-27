@@ -82,6 +82,13 @@ describe("the sandbox environment", () => {
     ["/srv/omem-data", "/home/svc", "/tmp"],
     "/opt/node/bin",
   );
+  it("keeps command login variables out of a member Agent even when set by its profile", () => {
+    const run = { OMEM_COMMAND_GATE: "/data/bin/sandbox/bin/guarded", OMEM_TOKEN: "turn", NPM_TOKEN: "fixture" };
+    const env = sandboxEnv({}, run, { home: "/account", env: { GH_TOKEN: "fixture", OPENAI_API_KEY: "model" } }, [], "/usr/bin");
+    expect(env).not.toHaveProperty("NPM_TOKEN");
+    expect(env).not.toHaveProperty("GH_TOKEN");
+    expect(env).toMatchObject({ OMEM_TOKEN: "turn", OPENAI_API_KEY: "model" });
+  });
   it("sets HOME and the account's variables, keeps the run's token and drops the owner's credentials", () => {
     expect(env.HOME).toBe("/srv/omem-data/accounts/ann/home");
     expect(env.CODEX_HOME).toBe("/srv/omem-data/accounts/ann/home/.codex");
