@@ -1,4 +1,4 @@
-import type { AgentProfile } from "../core/config.ts";
+import { listedModelsOf, type AgentProfile } from "../core/config.ts";
 
 /**
  * Agent CLIs spell model names inconsistently (GPT-Sol-6.1 vs gpt-6.1-sol).
@@ -8,6 +8,26 @@ import type { AgentProfile } from "../core/config.ts";
  */
 export function normalizeModel(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").replace(/-+/g, "-");
+}
+
+/** Review exclusions use literal fragments so a family name covers its versioned models.
+ * An unnamed or automatic backend default cannot be checked against an active exclusion. */
+export function reviewModelAllowed(model: string | null | undefined, excluded?: readonly string[]): boolean {
+  if (!excluded?.length) return true;
+  const name = model?.trim().toLowerCase();
+  return !!name && name !== "auto" && name !== "default" && !excluded.some(fragment => name.includes(fragment.toLowerCase()));
+}
+
+/** OpenAPI cannot pin a model; a keyed endpoint can also have a known underlying model name. */
+export function reviewProfileAllowed(profile: AgentProfile, excluded?: readonly string[]) {
+  if (!excluded?.length) return true;
+  if (profile.transport === "doubao" || !reviewModelAllowed(profile.model, excluded)) return false;
+  const served = profile.keyRef && profile.model ? listedModelsOf(profile.keyRef)?.endpoints?.[profile.model] : undefined;
+  return !served || reviewModelAllowed(served, excluded);
+}
+
+export function requireReviewModel(model: string | null | undefined, excluded?: readonly string[]) {
+  if (!reviewModelAllowed(model, excluded)) throw new Error(`编码评审的模型限制不允许使用 ${model || "未指定的默认模型"}`);
 }
 
 /** Very loose key for fuzzy matching: letters and digits only. */

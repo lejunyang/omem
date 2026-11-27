@@ -85,7 +85,8 @@ export type AgentRequest = {
   probe?: boolean;
   /** Selection to display with the backend that actually starts. */
   selection?: Execution;
-  strictSelection?: { model?: boolean; effort?: boolean };
+  codeReview?: boolean;
+  strictSelection?: { model?: boolean; effort?: boolean; excludedModels?: readonly string[] };
   /** Extra MCP servers from an agent spec (stdio command or HTTP url). */
   extraMcp?: Record<string, { command: string; args: string[]; env: Record<string, string> } | { url: string; headers: Record<string, string> }>;
   /** CLI transports: keep the agent's own session on disk and/or continue one. */

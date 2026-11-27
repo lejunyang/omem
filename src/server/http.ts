@@ -2331,13 +2331,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     // How recent delegations fell into the tiers, to judge the thresholds.
     const recent = all<{ tier: string | null; n: number }>(app.db, "select json_extract(output, '$.reviewPlan.tier') tier, count(*) n from (select output from runs where kind = 'code' and json_extract(input, '$.round') is null order by created_at desc limit 30) group by tier");
     const specs = listAgentSpecs(app).filter((s) => !checks.some((c) => c.name === s.name)).map((s) => ({ name: s.name, description: s.description }));
-    return { tiers: reviewTiers(app), rereviewAllEvery: app.config.review.rereviewAllEvery, rotation: app.config.review.rotation ?? [], crossFamily: app.config.review.crossFamily ?? "prefer", checks, specs, recent: Object.fromEntries(recent.filter((r) => r.tier).map((r) => [r.tier, r.n])) };
+    return { tiers: reviewTiers(app), rereviewAllEvery: app.config.review.rereviewAllEvery, rotation: app.config.review.rotation ?? [], excludedModels: app.config.review.excludedModels ?? [], crossFamily: app.config.review.crossFamily ?? "prefer", checks, specs, recent: Object.fromEntries(recent.filter((r) => r.tier).map((r) => [r.tier, r.n])) };
   });
   server.put("/api/review-settings", async (req) => {
     const { validateReviewSettings } = await import("../agents/review.ts");
     const settings = validateReviewSettings(app, req.body);
     const next = structuredClone(app.config);
-    next.review = { ...settings, lessons: app.config.review.lessons };
+    next.review = { ...settings, excludedModels: settings.excludedModels ?? app.config.review.excludedModels, lessons: app.config.review.lessons };
     saveConfig(next, app.home);
     Object.assign(app.config, next);
     audit(app, who(req), "settings.update", "settings", { changes: { assistant: ["review"] } });

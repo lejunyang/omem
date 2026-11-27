@@ -14,7 +14,7 @@ import {
 } from "./code-tasks.ts";
 import type { Execution } from "./execution.ts";
 import { reviewContext, taskCheckBrief, TASK_RULING, crossFamilyExecution } from "./review-chain.ts";
-import { checkBrief, checkLabel, independenceWarnings, isLook, namedReviewAI, lookBase, lookName, recordReview, reviewChecks, reviewFor, roundFindings, SEVERITY_LABEL, type LeadResult, type ReviewPlan } from "./review.ts";
+import { checkBrief, checkLabel, independenceWarnings, isLook, namedReviewAI, lookBase, lookName, recordReview, reviewChecks, reviewPickAllowed, reviewFor, roundFindings, SEVERITY_LABEL, type LeadResult, type ReviewPlan } from "./review.ts";
 import { runRole } from "./runner.ts";
 import { addRunEvent, createRun, flushRunText, getRun, runUser, setRunOutput, trackAbort, type Run } from "./runs.ts";
 import { readAgentSpec } from "./specs.ts";
@@ -396,8 +396,8 @@ const looking = new Map<string, Promise<void>>();
 function lookAI(app: App, rootId: string, check: string, first: { profile: string | null; model: string | null }) {
   const w = workState(app, rootId);
   const had = w.lookAI?.[check];
-  if (had) return had;
-  const list = (app.config.review.rotation ?? []).filter((x) => !(x.profile === first.profile && (x.model ?? null) === (first.model ?? null)));
+  if (had && reviewPickAllowed(app, had)) return had;
+  const list = (app.config.review.rotation ?? []).filter((x) => reviewPickAllowed(app, x) && !(x.profile === first.profile && (x.model ?? null) === (first.model ?? null)));
   if (!list.length) return null;
   const taken = Object.values(w.lookAI ?? {});
   const pick = list.find((x) => !taken.some((t) => t.profile === x.profile && t.model === x.model)) ?? list[taken.length % list.length];

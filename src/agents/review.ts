@@ -1,7 +1,8 @@
 import { bumpLessonRefs } from "./code-lessons.ts";
 import { z } from "zod";
 import type { App } from "../core/app.ts";
-import { defaultReviewTiers } from "../core/config.ts";
+import { reviewProfileAllowed } from "./models.ts";
+import { allProfiles, defaultReviewTiers, excludedReviewModelsSchema } from "../core/config.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, newId, now } from "../core/util.ts";
 import { leafMatches } from "../rules/conditions.ts";
@@ -128,7 +129,7 @@ export function namedReviewAI(input: { studyFindingId?: string; reviewExecutions
 /** The models review rounds rotate through (tiers with `rotateModels`). */
 export const rotationSchema = z.array(z.object({ profile: z.string().min(1), model: z.string().optional(), effort: z.string().optional() })).max(12).default([]);
 export const checkSettingSchema = z.object({ label: z.string().trim().min(1).max(12), blocks: z.enum(["blocker", "major", "minor"]), when: reviewCondition.nullable(), guide: z.string().trim().max(2000).default("") });
-export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema), rereviewAllEvery: z.number().int().min(1).max(10).default(2), rotation: rotationSchema, crossFamily: z.enum(["off", "prefer", "require"]).default("prefer") });
+export const reviewSettingsSchema = z.object({ tiers: z.array(tierSchema).min(1).max(12), checks: z.record(z.string(), checkSettingSchema), rereviewAllEvery: z.number().int().min(1).max(10).default(2), rotation: rotationSchema, excludedModels: excludedReviewModelsSchema, crossFamily: z.enum(["off", "prefer", "require"]).default("prefer") });
 
 /** Check names must exist; the last tier is the catch-all (no condition), so every change has one. */
 export function validateReviewSettings(app: App, input: unknown) {
@@ -179,13 +180,19 @@ export function checkLabel(infos: Map<string, CheckInfo>, name: string) {
   return isLook(name) ? `${base}（复看）` : base;
 }
 
+export function reviewPickAllowed(app: App, pick: { profile: string; model?: string }) {
+  if (!app.config.review.excludedModels?.length) return true;
+  const profile = allProfiles(app.config).find(p => p.id === pick.profile);
+  return !!profile && reviewProfileAllowed({ ...profile, model: pick.model || profile.model }, app.config.review.excludedModels);
+}
+
 /**
  * The AI a check uses in a round when its tier (or the owner, `roundReview.rotate`) rotates models:
  * round 1 keeps the check's own; from round 2 the checks walk `review.rotation`, each offset by its
  * place so the checks of one round also differ. Null keeps the check's own AI.
  */
 export function rotatedExecution(app: App, round: number, checkIndex: number, rotate: boolean | undefined) {
-  const list = app.config.review.rotation ?? [];
+  const list = (app.config.review.rotation ?? []).filter(p => reviewPickAllowed(app, p));
   if (!rotate || round < 2 || !list.length) return null;
   const pick = list[(round - 2 + checkIndex) % list.length];
   return { ...pick, source: "auto" as const, reason: `多轮评审换模型：第 ${round} 轮` };

@@ -6582,7 +6582,7 @@ def({
   handler: async (ctx, a) => {
     if (!ctx.peer) throw new HttpError(400, "review_task 只给设备的外部 Agent 用；这台机器上的评审项在自己的会话里拿到材料");
     const { peerReviewTask } = await import("./review-chain.ts");
-    return peerReviewTask(ctx.app, a.run_id, ctx.peer.caller, { part: a.part, offset: a.offset });
+    return peerReviewTask(ctx.app, a.run_id, ctx.peer.caller, { part: a.part, offset: a.offset, model: ctx.model });
   },
 });
 
@@ -6640,7 +6640,7 @@ def({
     const chain = await import("./review-chain.ts");
     if (ctx.peer && (!a.run_id || !a.check)) throw new HttpError(400, "设备的外部 Agent 提交评审要带 run_id 和 check");
     const check = ctx.peer ? a.check : (ctx.check ?? ctx.spec ?? ctx.role);
-    const r = ctx.peer ? chain.acceptPeerSubmission(ctx.app, a.run_id!, ctx.peer.caller, a.check) : chain.codeRunOf(ctx.app, ctx.runId);
+    const r = ctx.peer ? chain.acceptPeerSubmission(ctx.app, a.run_id!, ctx.peer.caller, a.check, ctx.model) : chain.codeRunOf(ctx.app, ctx.runId);
     const plan = (r?.output as { reviewPlan?: import("./review.ts").ReviewPlan } | undefined)?.reviewPlan;
     if (!r || !check || !(plan?.checks.includes(check) || plan?.looks?.includes(check))) throw new HttpError(400, "submit_review 只能在交办编码的评审项里使用");
     const { changePointSchema, findingSchema, recordReview } = await import("./review.ts");
@@ -6694,7 +6694,7 @@ def({
   handler: async (ctx, a) => {
     const { acceptPeerSubmission, codeRunOf } = await import("./review-chain.ts");
     if (ctx.peer && !a.run_id) throw new HttpError(400, "设备的外部 Agent 提交需求拆分要带 run_id");
-    const r = ctx.peer ? acceptPeerSubmission(ctx.app, a.run_id!, ctx.peer.caller) : codeRunOf(ctx.app, ctx.runId);
+    const r = ctx.peer ? acceptPeerSubmission(ctx.app, a.run_id!, ctx.peer.caller, undefined, ctx.model) : codeRunOf(ctx.app, ctx.runId);
     if (!r) throw new HttpError(400, "submit_change_points 只能在交办编码或分支评审的评审里使用");
     if (a.decisions) {
       const { attributeBranch } = await import("../designs/changes.ts");

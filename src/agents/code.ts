@@ -1,3 +1,4 @@
+import { requireReviewModel } from "./models.ts";
 import { receiveMemberGit } from "./member-git.ts";
 import { abortBranchSync, activeBranchSync, checkSyncBranch, hasBranchSyncRequests, openBranchSyncRound, queueBranchSync, roundSyncReport, runQueuedBranchSync, takeBranchSyncSteering, type BranchSync } from "./code-round-sync.ts";
 import { checkLessons, lessonsText } from "./code-lessons.ts";
@@ -169,6 +170,7 @@ export type BranchReviewRequest = {
 
 /** Queue a review of existing branches: a `code` run without the coding round (runCodeTask). */
 export function createBranchReview(app: App, req: BranchReviewRequest, parentId?: string | null, userId = OWNER) {
+  if (req.peerReviewer) requireReviewModel(req.peerReviewer.model, app.config.review.excludedModels);
   const ids = [...new Set(req.repos)];
   const scoped = workItem(app, req.itemId, ids);
   const home = homeSpace(app, req.space, scoped.itemId, ids);
@@ -375,7 +377,7 @@ export async function runCodeTask(ctx: RunContext) {
 
   const askForReview = async (prompt: string, timeoutMs: number) => {
     const { askModel } = await import("./oneshot.ts");
-    return askModel(app, prompt, { userId: owner, signal: ctx.signal, timeoutMs });
+    return askModel(app, prompt, { userId: owner, signal: ctx.signal, timeoutMs, codeReview: true });
   };
 
   // Triage before coding: review-lead guesses the tier from the task (shown with the progress, and

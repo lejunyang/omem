@@ -16,6 +16,7 @@ import {
   checkLabel, lookBase, coderAI, independenceWarnings,
 } from "./review.ts";
 import { loadRole, runRole, resolveRunProfile, type Actor } from "./runner.ts";
+import { requireReviewModel, reviewProfileAllowed } from "./models.ts";
 import { reviewerFor } from "./families.ts";
 import { backendAvailable } from "./availability.ts";
 import { excluded, downReason } from "./capacity.ts";
@@ -304,7 +305,7 @@ export function crossFamilyExecution(app: App, codeRunId: string, actor: Actor):
     const model = c.model || p.model;
     const effort = c.effort || (model === p.model ? p.effort : undefined);
     const resolved = { ...p, model, effort };
-    if (excluded(app, resolved) || downReason(app, resolved) || quotaAvoid(app, resolved)) return [];
+    if (!reviewProfileAllowed(resolved, app.config.review.excludedModels) || excluded(app, resolved) || downReason(app, resolved) || quotaAvoid(app, resolved)) return [];
     return [{ profile: p.id, model, effort }];
   });
   const { pick } = reviewerFor(coderAI(app, codeRunId), { profile: own.id, model: own.model }, others);
@@ -817,11 +818,12 @@ function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult, digest
 // ---- an outside Agent as the reviewer ------------------------------------------------------------
 
 /** The branch review a device's outside Agent reviews, checked against the caller. */
-function peerReview(app: App, codeRunId: string, caller: string) {
+function peerReview(app: App, codeRunId: string, caller: string, model?: string | null) {
   const run = getRun(app, codeRunId);
   const peer = run.kind === "code" ? (run.input as { peerReviewer?: PeerReviewer }).peerReviewer : undefined;
   if (!peer) throw new HttpError(400, `运行 ${codeRunId} 不是交给设备外部 Agent 的分支评审`);
   if (peer.caller !== caller) throw new HttpError(403, `这次评审交给的是设备 ${peer.caller}，不是 ${caller}`);
+  requireReviewModel(model, app.config.review.excludedModels);
   return { run, peer };
 }
 
@@ -831,8 +833,8 @@ const DIFF_PAGE = 40_000;
  * What the outside Agent reads to review: the same materials the checks here read, each check's
  * own guide (its role or profile), and how to hand results in. `diff` pages through the full diff.
  */
-export async function peerReviewTask(app: App, codeRunId: string, caller: string, opts: { part?: "brief" | "diff"; offset?: number } = {}) {
-  const { run } = peerReview(app, codeRunId, caller);
+export async function peerReviewTask(app: App, codeRunId: string, caller: string, opts: { part?: "brief" | "diff"; offset?: number; model?: string | null } = {}) {
+  const { run } = peerReview(app, codeRunId, caller, opts.model);
   const stage = (run.output as { reviewStage?: string }).reviewStage;
   if (!(run.output as Out).reviewPlan) {
     if (run.status === "queued" || run.status === "running") return `运行 ${run.id} 还在准备：检出分支、取改动、建索引。过一两分钟再取。`;
@@ -873,8 +875,8 @@ export async function peerReviewTask(app: App, codeRunId: string, caller: string
 }
 
 /** Whether the run takes this outside Agent's submissions now (throws why not). */
-export function acceptPeerSubmission(app: App, codeRunId: string, caller: string, check?: string) {
-  const { run } = peerReview(app, codeRunId, caller);
+export function acceptPeerSubmission(app: App, codeRunId: string, caller: string, check?: string, model?: string | null) {
+  const { run } = peerReview(app, codeRunId, caller, model);
   const out = run.output as Out & { reviewStage?: string };
   if (out.reviewStage !== "peer" || !out.reviewPlan) throw new HttpError(409, out.reviewPlan ? "这次评审已经在汇总或结束了，不再接收提交" : "评审还在准备，先用 review_task 看准备好了没有");
   if (check && !out.reviewPlan.checks.includes(check)) throw new HttpError(400, `这次评审没有评审项 ${check}；有：${out.reviewPlan.checks.join("、")}`);

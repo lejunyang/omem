@@ -24,7 +24,7 @@ type Tier = { id: string; name: string; when: Condition | null; guide: string; c
 type Pick = { profile: string; model?: string; effort?: string };
 type Backend = { id: string; name?: string; installed: boolean; transport: string; model?: string; effort?: string };
 type Check = { name: string; label: string; blocks: Blocks; when: Condition | null; guide: string; builtin: boolean; about: string; missing: boolean; ai: { profile: string; model?: string; effort?: string } | null };
-type Settings = { tiers: Tier[]; rereviewAllEvery: number; rotation?: Pick[]; crossFamily?: "off" | "prefer" | "require"; checks: Check[]; specs: { name: string; description: string }[]; recent: Record<string, number> };
+type Settings = { tiers: Tier[]; rereviewAllEvery: number; rotation?: Pick[]; excludedModels?: string[]; crossFamily?: "off" | "prefer" | "require"; checks: Check[]; specs: { name: string; description: string }[]; recent: Record<string, number> };
 
 const route = useRoute();
 const router = useRouter();
@@ -39,6 +39,7 @@ const rereviewAllEvery = ref(2);
 // The models another look takes (review.rotation): a task-driven delegation's second look, and the
 // rounds of a tier that turns rotation on. Its own page, not under a tier: second looks use it either way.
 const rotation = ref<Pick[]>([]);
+const excludedModels = ref("");
 const crossFamily = ref<"off" | "prefer" | "require">("prefer");
 const backends = ref<Backend[]>([]);
 const options = ref<{ fields: Record<string, string>; descriptions: Record<string, string>; ops: string[] }>({ fields: {}, descriptions: {}, ops: [] });
@@ -61,6 +62,7 @@ function reset(s: Settings) {
   tiers.value = JSON.parse(JSON.stringify(s.tiers));
   checks.value = JSON.parse(JSON.stringify(s.checks));
   rereviewAllEvery.value = s.rereviewAllEvery ?? 2;
+  excludedModels.value = (s.excludedModels ?? []).join("\n");
   crossFamily.value = s.crossFamily ?? "prefer";
   rotation.value = JSON.parse(JSON.stringify(s.rotation ?? []));
   dirty.value = false;
@@ -94,6 +96,7 @@ async function save() {
       tiers: tiers.value,
       rereviewAllEvery: rereviewAllEvery.value,
       crossFamily: crossFamily.value,
+      excludedModels: excludedModels.value.split("\n").map(line => line.trim()).filter(Boolean),
       rotation: rotation.value.filter((p) => p.profile),
       checks: Object.fromEntries(checks.value.map((c) => [c.name, { label: c.label, blocks: c.blocks, when: c.when, guide: c.guide ?? "" }])),
     };
@@ -318,6 +321,11 @@ const specOptions = computed(() => (saved.value?.specs ?? []).filter((s) => !che
           <div class="block-head"><h3>评审换模型</h3></div>
           <UiSegmented v-model="crossFamily" class="cross-family" :options="[{ value: 'off', label: '不管' }, { value: 'prefer', label: '尽量换成别家的模型' }, { value: 'require', label: '换不了就标出来' }]" aria-label="评审与编码的模型来源" @update:model-value="touch" />
           <HelpText>同一家的模型审自己写的代码，容易对同样的写法习惯视而不见。打开后，评审项默认用的模型和编码是同一家时，改用“评审换模型”列表或任务选型候选里第一个别家的；没有别家的可用时照常评审，并标出这一项不算独立评审。</HelpText>
+        </section>
+        <section class="block">
+          <label class="field"><span>编码评审排除的模型</span>
+            <textarea v-model="excludedModels" class="input" rows="2" placeholder="例如 opus，每行一个名称片段" @input="touch" /></label>
+          <small class="muted">按模型名匹配，忽略大小写。启用后，评审和备用模型都须有明确名称。清空并保存即可恢复。</small>
         </section>
         <section class="block">
           <div class="block-head"><h3>用在哪里</h3></div>

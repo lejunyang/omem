@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
-import { resolveModelOption } from "./models.ts";
+import { requireReviewModel, resolveModelOption } from "./models.ts";
 import { launchConfigEnv, requirePluginBackend } from "./catalog.ts";
 import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
@@ -57,11 +57,15 @@ function optionNames(option: SessionConfigOption): Map<string, string> {
   return out;
 }
 /** A model by its value first, then by the name shown for it. */
-function resolveModelChoice(typed: string, values: string[], names: Map<string, string>) {
+function resolveModelChoice(typed: string, values: string[], names: Map<string, string>, excluded?: readonly string[]) {
   const byValue = resolveModelOption(typed, values);
-  if (byValue.matched) return byValue;
-  const name = resolveModelOption(typed, [...names.keys()]);
-  return name.matched ? { value: names.get(name.value)!, matched: true } : byValue;
+  const name = byValue.matched ? null : resolveModelOption(typed, [...names.keys()]);
+  const chosen = name?.matched ? { value: names.get(name.value)!, matched: true } : byValue;
+  if (chosen.matched && excluded?.length) {
+    requireReviewModel(chosen.value, excluded);
+    for (const [label, id] of names) if (id === chosen.value) requireReviewModel(label, excluded);
+  }
+  return chosen;
 }
 
 /**
@@ -110,7 +114,7 @@ export type AcpOpenOptions = {
   /** Standing instructions, as the session's system prompt when the agent takes one. */
   system?: string;
   probe?: boolean;
-  strictSelection?: { model?: boolean; effort?: boolean };
+  strictSelection?: AgentRequest["strictSelection"];
   /** Max time to wait in the provider queue before failing with kind="queue". 0 = unlimited. */
   queueTimeoutMs?: number;
 };
@@ -585,7 +589,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       }
       if (!option && key === "model" && session.models?.availableModels?.length) {
         const ids = session.models.availableModels.map((m) => m.modelId);
-        const chosen = resolveModelChoice(value, ids, new Map(session.models.availableModels.flatMap(m => m.name ? [[m.name, m.modelId] as const] : [])));
+        const chosen = resolveModelChoice(value, ids, new Map(session.models.availableModels.flatMap(m => m.name ? [[m.name, m.modelId] as const] : [])), opts.strictSelection?.excludedModels);
         if (!chosen.matched) {
           cutDown("model", value, ids);
           if (opts.strictSelection?.model) throw new Error(`指定模型 ${value} 不可用，可选：${ids.join(", ")}`);
@@ -608,7 +612,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
         continue;
       }
       const values = optionValues(option);
-      const chosen = key === "model" ? resolveModelChoice(value, values, optionNames(option)) : { value, matched: values.includes(value) };
+      const chosen = key === "model" ? resolveModelChoice(value, values, optionNames(option), opts.strictSelection?.excludedModels) : { value, matched: values.includes(value) };
       if (!chosen.matched) {
         cutDown(key, value, values);
         if (opts.strictSelection?.[key]) throw new Error(`指定 ${key}=${value} 不可用，可选：${values.join(", ")}`);

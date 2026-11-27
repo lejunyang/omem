@@ -22,7 +22,7 @@ import { all, one, run } from "../core/db.ts";
 import { HttpError, json, now, truncate } from "../core/util.ts";
 import { spaceGuide } from "../wiki/store.ts";
 import { executionArgs, validateExecution, type Execution } from "./execution.ts";
-import { resolveRoleProfile } from "./models.ts";
+import { resolveRoleProfile, reviewProfileAllowed } from "./models.ts";
 import { runBackend } from "./dispatch.ts";
 import { backgroundTurn } from "./background-sessions.ts";
 import { backendAvailable } from "./availability.ts";
@@ -336,6 +336,8 @@ export type RoleRunInput = {
   lark?: LarkAccess;
   /** Running as a review check of a delegation: read-only tools plus submit_review, no writes or extra MCP. */
   reviewCheck?: boolean;
+  /** A pre-coding check shares the review model policy but hands in a different result. */
+  preCheck?: boolean;
   /** The check's name when it is not the role's or spec's own: a second look by another model (`<check>@复看`, code-overlap.ts). */
   checkName?: string;
   /** Hand-in tools this run gets on top of its role's (and after a review run is cut to read-only): a task-driven delegation's plan_tasks, verify_tasks… */
@@ -938,6 +940,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   let own: AgentProfile | undefined;
   let chosen: ChooseResult | null = null;
   // Checks, replays and comparisons run on what their caller set and are not choices of their own.
+  const codeReview = !!(input.reviewCheck || input.reviewLead || input.preCheck);
   const internal = !!(input.borrow || input.shadow || input.replay || input.reviewCheck || input.reviewLead || input.checkName || input.ownAI);
   const scene = input.choose ?? "tasks";
   const say = (text: string) => {
@@ -1024,11 +1027,15 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     for (let k = candidates.length - 1; k > 0; k--) if (lentByOthers(app, candidates[k])) candidates.splice(k, 1);
   }
   const chain = candidates.filter(p => {
+    if (codeReview && !reviewProfileAllowed(p, app.config.review.excludedModels)) {
+      say(`按编码评审的模型限制跳过 ${p.id} · ${p.model || "默认模型"}`);
+      return false;
+    }
     if (supports(p)) return true;
     say(`跳过后端 ${p.id}：本次运行需要 ${requirement}，该后端没有 omem 工具通道`);
     return false;
   });
-  if (!chain.length) throw new Error(`没有可交付这次任务的后端：需要 ${requirement}`);
+  if (!chain.length) throw new Error(`没有可交付这次任务的后端：需要 ${requirement}${codeReview && app.config.review.excludedModels?.length ? "，且模型须符合编码评审的限制" : ""}`);
   const primaryKept = primary === chain[0];
   const pinned = !!(execution || specified || login) && primaryKept;
   const base = prepare(chain[0]);
@@ -1152,6 +1159,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         const req = {
           runId: input.runId,
           selection: pinned && i === 0 ? execution : undefined,
+          codeReview,
           strictSelection: pinned && profile.id === primary.id ? { model: !!(execution?.model ?? personal.model), effort: !!(execution?.effort ?? personal.effort) } : undefined,
           cwd: prep.cwd,
           workspace,
@@ -1200,7 +1208,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
         };
         let result: AgentResult;
         try {
-          if (input.reuseSession && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp") {
+          if (input.reuseSession && !codeReview && !input.shadow && !input.persistSession && !req.resumeSessionId && prep.profile.transport === "acp") {
             result = await backgroundTurn(app, prep, req, `${task}${prep.awareness}`, input.runId, watch);
             credentialSucceeded(app, prep.profile);
           } else {

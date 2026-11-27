@@ -279,6 +279,8 @@ export const DEFAULT_REPLAY_PLAN: Record<ReplaySignal, (ReplayAxis | "random")[]
 const replayAxes = z.array(z.enum([...REPLAY_AXES, "random"])).max(14);
 const replayPlanSchema = z.object(Object.fromEntries(REPLAY_SIGNALS.map((s) => [s, replayAxes.default(DEFAULT_REPLAY_PLAN[s])])) as Record<ReplaySignal, z.ZodDefault<typeof replayAxes>>);
 
+export const excludedReviewModelsSchema = z.array(z.string().trim().min(1).max(128)).max(32).optional();
+
 /** Light = today's single reviewer; heavier tiers add independent checks for larger changes. */
 export function defaultReviewTiers() {
   return [
@@ -654,6 +656,7 @@ export const configSchema = z.object({
       lessons: z.object({ auto: z.boolean().default(true), max: z.number().int().min(1).max(100).default(30) }).default({ auto: true, max: 30 }).optional(),
       /** With a lead, rounds re-review only the checks the fixes touch; every this many rounds all run again. */
       rereviewAllEvery: z.number().int().min(1).max(10).default(2),
+      excludedModels: excludedReviewModelsSchema,
       /** Prefer a different maker than the coder; require only adds a warning when unavailable. */
       crossFamily: z.enum(["off", "prefer", "require"]).optional(),
       /** The models review rounds rotate through (tiers with `rotateModels`, or the owner's choice for a delegation). */

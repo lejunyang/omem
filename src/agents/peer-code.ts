@@ -1,3 +1,4 @@
+import { requireReviewModel } from "./models.ts";
 import { lessonsText } from "./code-lessons.ts";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -364,6 +365,7 @@ ${String(work.last.input.task ?? "")}` : "";
       if (!a.summary?.trim()) throw new HttpError(400, "finish 要写 summary：改了什么、怎么验证的、还有什么没做");
       const { queueStandaloneFix } = await import("./review-fix.ts");
       const peerReviewer = a.review === "here" ? undefined : { ...work.peer };
+      if (peerReviewer) requireReviewModel(peerReviewer.model, app.config.review.excludedModels);
       const checked = work.last.output.repos as { space: string; check?: { commit?: string } | null }[] | undefined;
       const lessonBases = work.last.output.verdict === "awaiting-peer-code" ? work.last.output.lessonBases : Object.fromEntries(worktrees.map(w => [w.space, checked?.find(r => r.space === w.space)?.check?.commit ?? git(workDirOf(w), ["rev-parse", "HEAD"]).stdout.trim()]));
       const next = queueStandaloneFix(app, root.id, work.last.id, a.summary.trim(), runUser(app, root.id), { peerFinished: true, peerReviewer, lessonBases });

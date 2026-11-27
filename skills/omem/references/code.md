@@ -73,6 +73,8 @@
 
 ### 按评审项指定 AI
 
+“换模型复审”中排除的模型也适用于指定的评审 AI、复看及故障切换。设备的外部 Agent 评审时用 `--model` 带上当前模型名。
+
 - `review_executions`：`{ <评审项名>: execution }`，键也可以是 `review-lead`（评审负责人）、`split`（需求拆分）。`delegate_code`、`review_branch`（含复审）在发起时带；`continue_code_run`（任一种用法）带上就从这一轮起换，之后的轮次沿用。`review_execution`（只管功能评审）照旧可用，同名时 `review_executions` 优先。点名的 AI 优先于轮换和跨模型的自动选择；没点名的按评审设置。设备的外部 Agent 发起的评审由它自己做，不能带。
 - 网页：分支评审结束后概览上有“复审”（填补充和作者回复）；复审的概览有“上次留下的问题”，原评审的每条问题上显示复审结论和评论的状态。`POST /api/runs/:id/rereview`、`GET /api/runs/:id/prior`、`PUT /api/runs/:id/findings/:fid/external`。
 

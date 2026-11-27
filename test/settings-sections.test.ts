@@ -92,8 +92,11 @@ it("separates review form access and delegation tier selection", async () => {
         const save = () => server.inject({ method: "PUT", url: "/api/review-settings", headers, payload });
         expect((await save()).statusCode).toBe(403);
         app.db.prepare("insert into member_capability_overrides(user_id,capability,scope_kind,scope_id,effect,created_at,created_by) values(?,'settings.assistant.edit','global','','allow','0','owner')").run(id);
+        app.config.review.excludedModels = ["example-model"];
         expect((await save()).statusCode).toBe(200);
-        expect((await get("/api/review-settings")).json().rereviewAllEvery).toBe(4);
+        expect((await get("/api/review-settings")).json()).toMatchObject({ rereviewAllEvery: 4, excludedModels: ["example-model"] });
+        await server.inject({ method: "PUT", url: "/api/review-settings", headers, payload: { ...payload, excludedModels: [] } });
+        expect((await get("/api/review-settings")).json().excludedModels).toEqual([]);
         const agents = (await get("/api/settings?section=assistant")).json().agents;
         expect(agents.length).toBeGreaterThan(0);
         for (const backend of agents)

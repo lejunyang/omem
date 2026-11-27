@@ -99,6 +99,7 @@ export async function runPreCheck(app: App, o: { run: Run; task: string; spaces:
   try {
     const res = await runRole(app, {
       role: "business-analyst",
+      preCheck: true,
       execution: namedReviewAI(o.run.input, "pre-check"),
       spaceId: o.run.spaceId!,
       spaces: o.spaces,

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { testApp } from "./helpers.ts";
 import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { reviewRound, crossFamilyExecution } from "../src/agents/review-chain.ts";
+import { runBackend } from "../src/agents/dispatch.ts";
 import { recordReview, reviewFor, coderAI, independenceWarnings, defaultReviewSettings } from "../src/agents/review.ts";
 import { addTask, taskList, thirdFixText } from "../src/agents/code-tasks.ts";
 import { run } from "../src/core/db.ts";
@@ -90,6 +91,36 @@ describe("cross-family review", () => {
     try {
       expect(await check(o)).toMatchObject({ profile_id: "other", model: "claude-test", independence: "other" });
       expect(getRun(o.app, o.id).ai).toEqual({ profile: "coding", model: "gpt-6.1-sol" });
+    } finally { o.app.db.close(); }
+  }, 90_000);
+
+  it("skips an excluded fallback after the reviewer crashes", async () => {
+    const o = setup("gpt-6.1-sol", "off");
+    o.app.config.review.excludedModels = ["CLAUDE"];
+    const profiles = o.app.config.agents.profiles;
+    profiles.find(p => p.id === "checking")!.env.FAKE_DIE = "1";
+    o.app.config.agents.fallback = [{ profile: "other" }, { profile: "third" }];
+    try {
+      expect(await check(o)).toMatchObject({ profile_id: "third", model: "gemini-test" });
+      expect(getRun(o.app, o.id).ai?.profile).toBe("coding");
+    } finally { o.app.db.close(); }
+  }, 90_000);
+
+  it("checks ACP's resolved model before prompting and leaves ordinary calls and a cleared list alone", async () => {
+    const o = setup();
+    const profile = o.app.config.agents.profiles.find(p => p.id === "other")!;
+    profile.model = "claude";
+    profile.env.FAKE_REVIEW_MODELS = "claude-opus-test,claude-sonnet-test";
+    profile.env.FAKE_MODE = "thread";
+    const request = { cwd: o.app.home, prompt: "检查模型选择", allowWrites: false };
+    const call = (codeReview: boolean) => runBackend(o.app, profile, { ...request, codeReview }, () => {});
+    try {
+      o.app.config.review.excludedModels = ["Opus"];
+      await expect(call(true)).rejects.toThrow(/编码评审.*claude-opus-test/);
+      await expect(call(false)).resolves.toBeDefined();
+      o.app.config.review.excludedModels = [];
+      await expect(call(true)).resolves.toBeDefined();
+      expect(readFileSync(o.log, "utf8").trim().split("\n")).toHaveLength(2);
     } finally { o.app.db.close(); }
   }, 90_000);
 

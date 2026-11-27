@@ -8,7 +8,7 @@ import { retireRecordedSession, sessionCleanup } from "./session-cleanup.ts";
 import { backendCapabilities } from "./capabilities.ts";
 import { doubaoAcpProfile, doubaoAcpSessionId, doubaoFeatures, doubaoRetry, runDoubaoCli } from "./doubao-cli.ts";
 import { probeFor } from "./probe.ts";
-import { resolveModelOption } from "./models.ts";
+import { requireReviewModel, resolveModelOption, reviewProfileAllowed } from "./models.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { networkEnvironment, withNetworkPolicy } from "./network-policy.ts";
@@ -48,6 +48,11 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
 }
 
 async function runOn(app: App, profile: AgentProfile, req: AgentRequest, emit: (e: AgentEvent) => void): Promise<AgentResult> {
+  const excluded = req.codeReview ? app.config.review.excludedModels : undefined;
+  if (excluded?.length) {
+    if (!reviewProfileAllowed(profile, excluded)) throw new Error(`编码评审的模型限制不允许使用 ${profile.id} · ${profile.model || "默认模型"}`);
+    req = { ...req, strictSelection: { ...req.strictSelection, model: true, excludedModels: excluded } };
+  }
   if (profile.transport === "acp") return runAcp(profile, { ...req, app, cleanup: await sessionCleanup(app, profile, req, emit) }, emit);
   if (profile.transport === "doubao-cli" && doubaoFeatures(profile).acp) {
     // A Doubao CLI that speaks ACP runs as an ACP agent. Its sessions stay under the Doubao CLI's cleanup
@@ -104,6 +109,7 @@ async function runDoubaoTurn(app: App, profile: AgentProfile, req: AgentRequest,
   // The CLI requires its exact offered spelling, including spaces and capitalization.
   // Resolve here so profile defaults, role overrides and automatic choices all use the probe.
   if (profile.model) profile = { ...profile, model: resolveModelOption(profile.model, probeFor(app, profile)?.models ?? []).value };
+  requireReviewModel(profile.model, req.strictSelection?.excludedModels);
   return runDoubaoCli(profile, { ...req, app, prompt: sessionPrompt({ resumed: !!req.resumeSessionId }, req, req.prompt, emit), system: undefined }, emit);
 }
 
