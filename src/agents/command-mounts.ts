@@ -20,8 +20,10 @@ function pythonPackages(file: string, module: string) {
     existsSync(join(root, "__main__.py")));
 }
 
+export const sandboxGate = (dir?: string): dir is string => !!dir?.endsWith("/bin/sandbox/bin/guarded");
+
 export function commandMounts(guarded: string | undefined, path: string | undefined) {
-  if (!guarded || !guarded.endsWith("/bin/sandbox/bin/guarded")) return [];
+  if (!sandboxGate(guarded)) return [];
   const binds = new Map<string, string>([["/tmp/.omem-programs/node", process.execPath]]);
   const packages = new Set<string>();
   for (const name of readdirSync(guarded)) {

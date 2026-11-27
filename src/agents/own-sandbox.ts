@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, posix } from "node:path";
 import type { Config } from "../core/config.ts";
-import { commandCredentialVariable, installRoot, type SandboxNetwork, type SandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
+import { stripCommandLogin, installRoot, type SandboxNetwork, type SandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 
 type Settings = Config["agents"]["ownSandbox"];
 export const under = (path: string, root: string) => path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
@@ -109,10 +109,9 @@ export function ownSandboxEnv(base: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv, s
   const out = { ...base };
   for (const key of Object.keys(out)) if (/^OMEM_/i.test(key)) delete out[key];
   Object.assign(out, run);
-  const gitHint = run.GIT_ASKPASS;
   const runKeys = ["OMEM_TOKEN", "OMEM_URL", "OMEM_ARTIFACTS", "OMEM_RUN_DIR", "OMEM_COMMAND_GATE", "OMEM_DESKTOP_TOOLS", "OMEM_BROWSER_PROFILES", "OMEM_BROWSER_PROXY"];
-  for (const key of Object.keys(out)) if (commandCredentialVariable(key) || secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
-  if (run.OMEM_COMMAND_GATE?.endsWith("/bin/sandbox/bin/guarded") && gitHint === posix.join(posix.dirname(run.OMEM_COMMAND_GATE), "git-askpass")) out.GIT_ASKPASS = gitHint;
+  for (const key of Object.keys(out)) if (secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
+  stripCommandLogin(out, run);
   out.TMPDIR = "/tmp";
   return out;
 }

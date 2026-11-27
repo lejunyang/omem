@@ -1,4 +1,4 @@
-import { commandMounts } from "./command-mounts.ts";
+import { commandMounts, sandboxGate } from "./command-mounts.ts";
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -223,6 +223,14 @@ const commandLogin = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVAT
 
 export const commandCredentialVariable = (key: string) => !backendLogin.test(key) && commandLogin.test(key);
 
+export { sandboxGate };
+
+export function stripCommandLogin(env: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv) {
+  for (const key of Object.keys(env)) if (commandCredentialVariable(key)) delete env[key];
+  const gate = run.OMEM_COMMAND_GATE;
+  if (sandboxGate(gate) && run.GIT_ASKPASS === join(dirname(gate), "git-askpass")) env.GIT_ASKPASS = run.GIT_ASKPASS;
+}
+
 /** Variables of the service that do not go into a user's sandbox: credentials, and paths into what is hidden. */
 const SECRET = /(?:^|_)(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|AUTH)(?:_|$)|^(?:ANTHROPIC|OPENAI|CLAUDE|CODEX|TRAE|TRAECLI|DOUBAO|GEMINI|GOOGLE|AWS|AZURE|GITHUB|GH|GITLAB|NPM|OMEM|SSH)_/i;
 
@@ -246,11 +254,7 @@ export function sandboxEnv(base: NodeJS.ProcessEnv, runEnv: Record<string, strin
   out.PATH = [nodeBin, ...path.split(":").filter((d) => d && d !== nodeBin)].join(":");
   out.HOME = acct.home;
   for (const [k, v] of Object.entries(acct.env)) out[k] = v;
-  const gate = runEnv.OMEM_COMMAND_GATE;
-  if (gate?.endsWith("/bin/sandbox/bin/guarded")) {
-    for (const key of Object.keys(out)) if (commandCredentialVariable(key)) delete out[key];
-    if (runEnv.GIT_ASKPASS === join(dirname(gate), "git-askpass")) out.GIT_ASKPASS = runEnv.GIT_ASKPASS;
-  }
+  if (sandboxGate(runEnv.OMEM_COMMAND_GATE)) stripCommandLogin(out, runEnv);
   return out;
 }
 
