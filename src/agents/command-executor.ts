@@ -3,16 +3,16 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { accessSync, constants, existsSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { audit } from "../auth/permissions.ts";
 import { activeUser, findUser, OWNER } from "../core/users.ts";
 import { COMMAND_TIMEOUT_SEC } from "../core/util.ts";
 import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
-import { accountHome, accountStatePaths } from "./accounts.ts";
+import { accountEntries, accountHome, accountStatePaths } from "./accounts.ts";
 import { credentialCommand } from "./credential-outcome.ts";
 import { credentialMethods, declaredPaths } from "./credential-registry.ts";
 import { launchRun } from "./egress-run.ts";
@@ -56,6 +56,23 @@ function program(name: string, writable: string[]) {
   throw new Error("宿主没有安装命令 " + name);
 }
 
+function kubeconfigPaths(app: App, user: string, scope: CommandSandbox, value: string) {
+  const owner = user === OWNER;
+  const identityHome = owner ? homedir() : accountHome(app, user);
+  const home = canonical(identityHome);
+  const paths = value.split(":").filter(Boolean).map(raw => under(raw, identityHome) ? home + raw.slice(identityHome.length) : raw);
+  if (!owner) accountStatePaths(app, user, paths.map(path => relative(home, path)));
+  const privatePaths = ["/dev", "/sys", "/proc", ...accountEntries(app).flatMap(entry => entry.account.owns.map(rel => join(home, rel)))];
+  if (owner) privatePaths.push(canonical(app.home), ...(scope.own?.hidden ?? []), ...(scope.own?.state ?? []), ...(scope.own?.stateFiles ?? []));
+  return paths.map(path => {
+    if (!isAbsolute(path) || canonical(path) !== path || privatePaths.some(root => under(path, root)))
+      throw new Error("KUBECONFIG 必须指向当前身份可授权的绝对文件路径");
+    const stat = statSync(path, { throwIfNoEntry: false });
+    if (stat && !stat.isFile()) throw new Error("KUBECONFIG 需要普通文件");
+    return { path, exists: !!stat };
+  });
+}
+
 function executorMounts(app: App, user: string, scope: CommandSandbox, call: Call, entry: ReturnType<typeof credentialCommand>, git: boolean, npm: boolean) {
   if (!isAbsolute(call.cwd)) throw new Error("工作目录必须是绝对路径");
   // cwd is interpreted INSIDE the new namespace. It never authorizes a host bind mount.
@@ -84,6 +101,13 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
     if (value !== undefined) env[key] = value;
   }
   const granted = new Set<string>();
+  if (call.command === "kubectl" && env.KUBECONFIG) {
+    const configs = kubeconfigPaths(app, user, scope, env.KUBECONFIG);
+    env.KUBECONFIG = configs.map(config => config.path).join(":");
+    for (const { path, exists } of configs) {
+      if (exists) { ro.push(path); granted.add(path); }
+    }
+  }
   if (entry) {
     if (user !== OWNER) accountStatePaths(app, user, entry.command.state ?? []);
     const declared = declaredPaths(app, { provides: { backends: [], commands: [entry.command] } });
@@ -114,7 +138,7 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
   if (git) env.GIT_TERMINAL_PROMPT = "0";
   // The root is empty outside the explicit mounts. A login's parent need not be masked
   // if the only visible directory inside it is the selected login itself.
-  const privatePaths = [...(scope.own?.masked ?? []), ...(scope.own?.state ?? []), ...(scope.own?.stateFiles ?? [])];
+  const privatePaths = [...(scope.own?.masked ?? account?.masked?.map(canonical) ?? []), ...(scope.own?.state ?? []), ...(scope.own?.stateFiles ?? [])];
   const masked = [...(scope.own?.hidden ?? []), ...privatePaths.filter(path =>
     !granted.has(path) && [...ro, ...rw].some(root => under(path, root)))];
   const links = [...(scope.workspace.links ?? [])];

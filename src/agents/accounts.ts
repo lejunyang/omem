@@ -1,6 +1,6 @@
 import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, normalize, sep } from "node:path";
+import { isAbsolute, join, normalize, sep } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
@@ -181,8 +181,12 @@ export function accountRun(app: App, userId: string, entry: AccountEntry, native
   const token = nativeToken && spec.tokenEnv ? accountToken(app, userId, entry.id) : null;
   const env = accountEnv(app, userId, entry);
   if (spec.tokenEnv && token) env[spec.tokenEnv] = token;
+  const home = canonical(base.home);
+  const kubeconfig = (env.KUBECONFIG ?? "").split(":").filter(isAbsolute)
+    .map(canonical).filter(path => path.startsWith(home + sep));
   return {
     ...base,
+    masked: [...base.masked!, ...kubeconfig],
     env,
     ro: [...base.ro, ...(spec.mounts ?? []).map((m) => expandPath(m))],
   };

@@ -1,6 +1,6 @@
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it, vi } from "vitest";
 import { startServer } from "../src/server/http.ts";
@@ -13,6 +13,8 @@ import { launchRun } from "../src/agents/egress-run.ts";
 import { egressSupport, sandboxSupport } from "../src/agents/sandbox.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { remoteGit } from "../src/agents/git-command.ts";
+import { accountEntry, accountRun, ensureAccountHome } from "../src/agents/accounts.ts";
+import { createUser, OWNER, personalSpaceId } from "../src/core/users.ts";
 import { testApp } from "./helpers.ts";
 
 it("识别 Git 远端操作及其全局选项", () => {
@@ -216,3 +218,80 @@ it.skipIf(!support.ok)("成员执行器仅恢复本账号的声明目录和登�
     app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true });
   }
 }, 45000);
+
+const kubeconfigs = [
+  { name: "默认目录", keys: ["standard"] },
+  { name: "自定义目录", keys: ["external"] },
+  { name: "多文件列表", keys: ["external", "standard"] },
+] as const;
+for (const user of [OWNER, "member"]) {
+  const denied = user === OWNER ? ["hidden", "state", "data"] as const : ["other", "link", "state", "data"] as const;
+  const cases = [...kubeconfigs.map(item => ({ ...item, allowed: true })), ...denied.map(key => ({ name: key, keys: [key], allowed: false }))];
+  it.skipIf(!support.ok).each(cases)(`kubectl 按 ${user} 的 KUBECONFIG 读取配置：$name`, async ({ name, keys, allowed }) => {
+    const app = testApp();
+    const root = mkdtempSync(join(tmpdir(), "kube-login-"));
+    const ownerHome = join(root, "owner"), cwd = join(root, "work"), bin = join(root, "bin");
+    const member = user !== OWNER;
+    if (member) createUser(app, { id: user, name: "示例成员", role: "member" });
+    const home = member ? ensureAccountHome(app, user) : ownerHome;
+    const external = join(member ? home : root, "external");
+    const paths = {
+      standard: join(home, ".kube", "project.yaml"), external: join(external, "other project.yaml"),
+      hidden: join(home, ".kube", "private.yaml"), state: join(home, ".codex", "session"),
+      data: join(app.home, "private.yaml"), other: join(ownerHome, "other.yaml"), link: join(home, "linked.yaml"),
+    };
+    for (const dir of [cwd, bin, ...Object.values(paths).map(dirname)]) mkdirSync(dir, { recursive: true });
+    for (const [key, path] of Object.entries(paths)) {
+      if (key === "link") symlinkSync(paths.other, path);
+      else writeFileSync(path, key + "\n");
+    }
+    writeFileSync(join(external, "sibling"), "private");
+    writeFileSync(join(bin, "kubectl"), `#!/bin/sh -e
+test ! -e "$1/sibling"
+IFS=:
+for file in $KUBECONFIG; do cat "$file"; done
+`, { mode: 0o755 });
+    const files = keys.map(key => paths[key]);
+    const config = files.join(":");
+    vi.stubEnv("HOME", ownerHome); vi.stubEnv("PATH", bin + ":" + process.env.PATH);
+    vi.stubEnv("OMEM_DESKTOP_TOOLS", "off");
+    vi.stubEnv("KUBECONFIG", !member && files.length === 1 ? config : paths.other);
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh", stateLayout: "codex" });
+    if (files.length > 1 || member) profile.env.KUBECONFIG = member ? paths.other : config;
+    const entry = accountEntry(app, "codex")!;
+    const account = member ? accountRun(app, user, { ...entry, account: { ...entry.account, env: { KUBECONFIG: config } } }) : undefined;
+    account?.ro.push(bin);
+    app.config.agents.ownSandbox.mode = "require";
+    if (name === "hidden") app.config.agents.ownSandbox.hidden = [dirname(paths.hidden)];
+    const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
+    const runProfile = { ...profile, ownAccount: account };
+    const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: personalSpaceId(user), userId: user, runId: null, profile: runProfile, cwd });
+    prep.isolation.box?.plan.ro.push(home, external, bin);
+    try {
+      const child = launch("/bin/sh", ["-ec", `
+test -z "$KUBECONFIG"
+dir=$1
+shift
+for file do test ! -s "$file"; done
+echo agent-checked
+KUBECONFIG=from-request exec kubectl "$dir"
+`, "sh", external, ...files], { cwd, ownSandbox: prep.isolation.box, sandbox: account, env: { ...profile.env, ...prep.mcp.env } });
+      child.stdin.end();
+      let stdout = "", stderr = "";
+      child.stdout.on("data", chunk => stdout += chunk);
+      child.stderr.on("data", chunk => stderr += chunk);
+      const [code] = await once(child, "close");
+      if (allowed) {
+        expect(code, stderr).toBe(0);
+        expect(stdout).toBe(["agent-checked", ...keys, ""].join("\n"));
+      } else {
+        expect(stdout, stderr).toBe("agent-checked\n");
+        expect(code, stderr).not.toBe(0);
+        expect(stderr).toMatch(/KUBECONFIG|账号状态目录/);
+      }
+    } finally {
+      revokeToolToken(prep.token); await server.close(); vi.unstubAllEnvs();
+      app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
