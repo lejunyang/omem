@@ -39,6 +39,7 @@ export const pullTables: Table[] = [
   // What the owner (or a member) kept, dropped or put off among proposals (items/choices.ts): the latest answer wins.
   { name: "owner_choices", key: ["user_id", "kind", "target"], newer: "updated_at" },
   { name: "conversations", key: ["id"], newer: "updated_at", local: ["agent_session", "agent_cwd"] },
+  { name: "long_tasks", key: ["id"], newer: "updated_at", local: ["state"] },
   { name: "runs", key: ["id"], newer: "coalesce(finished_at, started_at, created_at)", local: ["profile_id", "lane", "not_before"] },
   { name: "cards", key: ["id"], newer: "due_at" },
   { name: "learn_goals", key: ["id"], newer: "updated_at" },
@@ -183,6 +184,13 @@ export function rewriteRefs(text: string, prepared: Pick<Prepared, "ids" | "line
   });
 }
 
+/** Supervisor sessions, queued work and approval cards belong to the originating device. */
+export function pauseImportedLongTasks(db: DatabaseSync) {
+  run(db, "update items set status='snoozed' where id in (select item_id from long_tasks where status in ('draft','active')) and status='open'");
+  run(db, "update long_tasks set status='paused' where status in ('draft','active')");
+  run(db, "update long_tasks set state='{}' where state!='{}'");
+}
+
 /** Mutate only the private snapshot, never the peer or existing local evidence. */
 export function prepareData(local: DatabaseSync, dir: string, paths: Map<string, string>): Prepared {
   const original = openDb(join(dir, "omem.db"));
@@ -194,6 +202,7 @@ export function prepareData(local: DatabaseSync, dir: string, paths: Map<string,
   for (const t of all<{ name: string }>(remote, "select name from sqlite_master where type = 'trigger' and name glob '*_sync_*'")) remote.exec(`drop trigger ${t.name}`);
   const prepared: Prepared = { databasePath, sources: [], ids: new Map(), lines: new Map(), aliases: [], moves: [] };
   try {
+    pauseImportedLongTasks(remote);
     run(remote, "delete from situation_instances where status='active'");
     const lookup = local.prepare("select * from sources where space_id = ? and uri = ?");
     // A source the other side has moved to another space is not at its new place here. It is the one

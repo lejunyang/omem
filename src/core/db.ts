@@ -2514,6 +2514,19 @@ export const migrations: readonly string[] = [
      where user_id!='owner' and state='logged-in' and refresh_at=expires_at-600000;
    update credential_holds set state='logged-in', refresh_at=0, error='正在重试续签：先前续签或供给失败'
      where user_id!='owner' and state='expired' and error='续签或供给失败，请重新授权';`,
+  `create table long_tasks (
+     id text primary key, space_id text not null references spaces(id), user_id text not null,
+     thread_id text not null unique references conversations(id) on delete cascade,
+     item_id text not null unique references items(id) on delete cascade,
+     goal text not null, ai text not null, status text not null default 'draft',
+     brief text not null, confirmed_at text, supplements text not null default '[]',
+     budget text not null, notifications text not null, notes text not null default '[]',
+     state text not null default '{}', created_at text not null, updated_at text not null
+   );
+   create index long_tasks_space on long_tasks(space_id, updated_at desc);
+   create index long_tasks_user on long_tasks(user_id, updated_at desc);
+   create index long_tasks_open_items on long_tasks(item_id) where status in ('draft','active','paused');
+   create index long_tasks_updated on long_tasks(updated_at desc);`,
 ];
 
 export type Db = DatabaseSync;

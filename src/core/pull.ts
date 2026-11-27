@@ -13,7 +13,7 @@ import type { App } from "./app.ts";
 import { all, openDb, run, tx } from "./db.ts";
 import { commitLibrary, git } from "./git.ts";
 import { listSpaces } from "./spaces.ts";
-import { columns, prepareData, pullTables, rewriteLibrary, type Row } from "./pull-data.ts";
+import { columns, pauseImportedLongTasks, prepareData, pullTables, rewriteLibrary, type Row } from "./pull-data.ts";
 import { installRepositories, readManifest, relocate } from "./pull-repos.ts";
 import { sha256 } from "./util.ts";
 import { PULL_PARTS, type Fetched, type PullPart } from "./pull-transfer.ts";
@@ -168,6 +168,7 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
             if (changes.length) db.prepare(`update ${t} set ${changes.map(([c]) => `${c} = ?`).join(",")} where rowid = ?`).run(...changes.map(([, v]) => relocate(v as string, paths)), row._rowid);
           }
         localize(db, "main");
+        pauseImportedLongTasks(db);
         run(db, "update rules set enabled = 0");
         run(db, "update schedules set enabled = 0");
         run(db, "update digest_jobs set status = 'paused' where status = 'active'");

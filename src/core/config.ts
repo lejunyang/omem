@@ -387,6 +387,10 @@ export const ownSandboxSchema = z.object({
 }).strict();
 export const fullAccessMode = z.enum(["per-role", "sandboxed", "all"]);
 
+export const supervisorAiSchema = z.object({
+  profile: z.string().min(1), model: z.string().min(1).optional(), effort: z.string().min(1).optional(),
+});
+
 export const configSchema = z.object({
   /**
    * Listen address. All interfaces by default, so other devices can pair with this one;
@@ -1420,6 +1424,10 @@ export const configSchema = z.object({
       infer: z.boolean().default(true),
     })
     .default({ expiry: true, days: { todo: 14, decision: 7, watch: 7, waiting: 14, reminder: 1 }, infer: true }),
+  longTasks: z.object({
+    supervisor: supervisorAiSchema.optional(),
+    checkMinutes: z.number().int().positive().default(40),
+  }).prefault({}),
   /**
    * The owner's work state (docs/v2/work-state.md): the nightly `work-state` job hands the role of
    * that name `days` of facts (chats the owner spoke in, documents, coding, items, meetings, asks)
@@ -1635,7 +1643,7 @@ export function prepareConfigSave(config: Config, home: string) {
 
 export function allProfiles(config: Config): AgentProfile[] {
   const byId = new Map(builtinProfiles.map((p) => [p.id, p]));
-  const referenced = new Set([config.agents.default, ...Object.values(config.agents.roles),
+  const referenced = new Set([config.longTasks.supervisor?.profile, config.agents.default, ...Object.values(config.agents.roles),
     ...Object.values(config.agents.tiers).map(t => t.profile),
     ...Object.values(config.agents.roleModels).flatMap(models => Object.keys(models)),
     ...config.agents.fallback.map(p => p.profile), ...config.agents.routing.candidates.map(p => p.profile),

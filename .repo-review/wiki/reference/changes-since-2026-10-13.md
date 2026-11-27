@@ -5,6 +5,19 @@ kind: reference
 updated: 2026-11-27
 ---
 
+## 长任务的任务书、预算和查询接口（2026-11-27）
+
+长任务在所在空间创建一条关注事项和一个工作会话。`src/agents/long-tasks.ts` 保留目标原文、确认后的任务书和带时间的本人补充。报告和进度文字写入本轮运行，决定、理由和下一步追加到监工笔记，每轮在事项时间线上留一条记录。跨设备拉取保留这些记录，进行中的长任务在新设备上暂停。
+
+`src/server/long-tasks-http.ts` 提供四个接口。列表和详情沿用事项阅读权限，修改要求调用者是发起人且仍有空间写权。
+
+| 请求 | 输入与结果 |
+| --- | --- |
+| `GET /api/long-tasks` | 可传 `space`、`limit`、`offset`，返回 `tasks` 摘要列表。 |
+| `GET /api/long-tasks/:id` | 返回任务书、原话补充、预算、笔记、事项时间线，以及最近报告和宿主统计的进度、用量。 |
+| `POST /api/long-tasks` | `goal` 必填，可传 `space`、发起会话 `threadId`、`ai`、`budget`、`notifications`，返回新建的草案。 |
+| `PATCH /api/long-tasks/:id` | `action` 取 `pause`、`resume`、`end`、`budget`、`ai` 或 `supplement`。后三项分别传 `budget`、`ai` 或 `text`。预算字段按新总额更新，可只给一项。 |
+
 ## 卡片聚合复杂内容：清单、成对的值、收起的细节、图片；确认卡片带状态标签（2026-11-27）
 
 - 组件块加 `list`（一条一行，标题前彩色短标签，可带链接和一行说明）、`fields`（成对的名字和值）、`fold`（收起的细节）、`image`（http(s) 图片；飞书里发卡片前宿主下载再上传，不取本机和链路本地地址，失败时是链接）。飞书用卡片自己的元素画（Markdown 里的 `<text_tag>`、`grey-50` 底的分栏、折叠面板），网页由 `packages/plugin-sdk/blocks.ts` 画，展示块里的 Markdown 改用卡片字号，块间距统一为 12px。
