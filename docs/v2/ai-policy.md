@@ -1,6 +1,10 @@
 # AI 规则：先定能用哪些，再让模型排先后
 
-第 3 期（2026-11-27）已接入强组起草、影响预览和本人确认。各期进度见 [实现状态](status.md)。和 [ai-models.md](ai-models.md) 的“运行前选 AI”“换后端的顺序”、[agent-accounts.md](agent-accounts.md) 的成员账号一起读。
+四期服务端已接入（2026-11-27）。设置与 Agent 档案的网页编辑入口单独交付。各期进度见 [实现状态](status.md)。和 [ai-models.md](ai-models.md) 的“运行前选 AI”“换后端的顺序”、[agent-accounts.md](agent-accounts.md) 的成员账号一起读。
+
+设置客户端读取 `GET /api/ai/policy` 的 `classes`、`groups`、`policy` 和 `usage`，按类别显示运行类型、角色、规则来源与近七天各 AI 的次数。类别规则和组分别通过 `PUT /api/ai/policy`（规则对象）和 `PUT /api/ai/groups`（组数组）保存。档案编辑器使用档案的 `class`、`ai.use`、`ai.deny` 和 `ai.strict`，按同一规则提示角色默认值冲突。
+
+一句话提案提交至 `POST /api/ai/policy/propose`，传 `{text}` 后用返回的 `runId` 查看运行；`output.askId` 指向本人确认卡。保存总体偏好仍走 `PUT /api/settings`，响应中的 `guidanceWarning` 可配合提案入口显示。决策报告 `GET /api/ai/decision/report` 的 `routes` 按类别提供模型排序和默认先后的完成数、已知结果数和待定数。
 
 ## 1. 现在的问题
 

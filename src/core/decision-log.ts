@@ -3,7 +3,7 @@ import { all, one, run, tx } from "./db.ts";
 import { decide, decideMany, describeDecision, type DecisionOptions, type DecisionQuestion, type DecisionResult } from "./decision.ts";
 import { runClasses, type RunClass } from "../agents/run-classes.ts";
 import { completionRate, DECISION_SCENES, type DecisionScene, type DecisionReport, type RouteResults, type RouteClassReport } from "./decision-scenes.ts";
-import { json, newId, now } from "./util.ts";
+import { json, newId, now, untilAbort } from "./util.ts";
 
 export { DECISION_SCENES, type DecisionScene } from "./decision-scenes.ts";
 type Material = string | Record<string, unknown>;
@@ -49,11 +49,29 @@ type SceneContext = { ref?: string; sources?: string[] };
 type SceneQuestion = SceneContext & { question: DecisionQuestion; scene?: DecisionScene };
 type SceneAnswers<T> = { [K in keyof T]: T[K] extends { scene: DecisionScene } ? SceneResult : DecisionResult };
 
+type RouteDecision = {
+  model: string;
+  settle: (answer: DecisionResult | null, error?: unknown) => { taken: string; route: object };
+};
+
 export async function decideScene(app: App, scene: DecisionScene, material: Material, question: DecisionQuestion,
-  opts: DecisionOptions & SceneContext = {}): Promise<SceneResult | null> {
-  const { ref, sources, ...ask } = opts;
-  const r = await decide(app, material, question, ask);
-  return r ? recordDecision(app, scene, question, capMaterial(material), r, { ref, sources }) : null;
+  opts: DecisionOptions & SceneContext & { route?: RouteDecision } = {}): Promise<SceneResult | null> {
+  const { ref, sources, route, ...ask } = opts;
+  const request = () => decide(app, material, question, ask);
+  if (!route) {
+    const answer = await request();
+    return answer ? recordDecision(app, scene, question, capMaterial(material), answer, { ref, sources }) : null;
+  }
+  let answer: DecisionResult | null = null;
+  let error: unknown;
+  try {
+    answer = ask.signal ? await untilAbort(ask.signal, request) : await request();
+  } catch (e) {
+    error = e;
+  }
+  const result = route.settle(answer, error);
+  return recordDecision(app, scene, question, capMaterial(material),
+    answer ?? { choice: "", probabilities: {}, by: route.model, confidence: null }, { ref, sources }, result);
 }
 
 /** Ask together, then apply each question's own scene and record the decisions as a batch. */
@@ -76,12 +94,12 @@ export async function decideSceneMany<T extends Record<string, SceneQuestion>>(a
 }
 
 function recordDecision(app: App, scene: DecisionScene, question: DecisionQuestion, material: string, r: DecisionResult,
-  { ref, sources }: SceneContext): SceneResult {
+  { ref, sources }: SceneContext, routing?: { taken: string; route: object }): SceneResult {
   const threshold = sceneThreshold(app, scene);
-  const taken = takeDecision(scene, r, threshold);
+  const taken = routing?.taken ?? takeDecision(scene, r, threshold);
   const id = newId("d");
-  run(app.db, `insert into decisions(id,at,scene,"by",question,material,probabilities,choice,taken,threshold,ref,sources)
-    values(?,?,?,?,?,?,?,?,?,?,?,?)`, id, now(), scene, r.by, JSON.stringify(question), material, JSON.stringify(r.probabilities), r.choice, taken, threshold, ref ?? null, JSON.stringify(scene === "heartbeat" ? [...new Set(sources ?? [])] : []));
+  run(app.db, `insert into decisions(id,at,scene,"by",question,material,probabilities,choice,taken,threshold,ref,sources,route)
+    values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, now(), scene, r.by, JSON.stringify(question), material, JSON.stringify(r.probabilities), r.choice, taken, threshold, ref ?? null, JSON.stringify(scene === "heartbeat" ? [...new Set(sources ?? [])] : []), routing ? JSON.stringify(routing.route) : null);
   return { ...r, taken, lowered: taken !== r.choice, id, threshold };
 }
 
@@ -237,7 +255,7 @@ export async function replayDecisions(app: App, { scene, model, days = 30, limit
       if (!r) throw new Error("候选模型不可用");
       const order: string[] = d.route ? JSON.parse(d.route).defaultOrder : [];
       const take = (answer: Pick<DecisionResult, "choice" | "probabilities">) => rank
-        ? (rank(order, answer, threshold) ?? order)[0] : takeDecision(scene, answer, threshold);
+        ? (rank(order, answer, threshold, app.config.ai.decision.routeMinGap) ?? order)[0] : takeDecision(scene, answer, threshold);
       const taken = take(r);
       const old = take({ choice: d.choice, probabilities: JSON.parse(d.probabilities) });
       models.add(d.by);

@@ -1,4 +1,5 @@
-import { groupItems, policyScope, policyReason, scopedProfiles, pickOf, type PolicyScope } from "./ai-policy.ts";
+import { routeGroups } from "./route-groups.ts";
+import { profilesFor, groupItems, policyScope, policyReason, scopedProfiles, pickOf, type PolicyScope } from "./ai-policy.ts";
 import { runClasses, type RunClass } from "./run-classes.ts";
 import { modelDisplayName } from "../core/ai-keys.ts";
 import type { App } from "../core/app.ts";
@@ -147,15 +148,38 @@ export async function chooseAI(
     record({ outcome: "skipped", reason });
     return null;
   };
-  if (scope && (scope.use.length || scope.deny.length || scope.order === "fixed" || ["coding", "review"].includes(scope.classId))) {
+  const configuredGroups = app.config.agents.groups.filter(g => g.items.length);
+  if (scope && (scope.use.length || scope.deny.length || scope.order === "fixed" || configuredGroups.length || ["coding", "review"].includes(scope.classId))) {
     const candidates = [o.current, ...candidateProfiles(app, undefined, o.userId)];
     candidates.forEach(accept);
-    const order = scopedProfiles(app, scope, candidates, true).filter(accept);
+    const catalog = allProfiles(app.config);
+    const member = o.userId && isAiMember(app, o.userId) ? o.userId : undefined;
+    const usable = (p: AgentProfile) => accept(p) && (!member || memberAccountPlan(app, member, p).kind === "ready");
+    const choose = scope.order === "choose" && !["coding", "review"].includes(scope.classId)
+      && r.automatic && (scope.use.length > 0 || r.choose[o.scene] !== "off");
+    const eligible = (scope.use.length ? scope.groups : choose ? configuredGroups : []).flatMap(g => {
+      const entries = profilesFor(app, g.items, catalog).filter(x => x.available && usable(x.p));
+      return entries.length ? [{ id: g.id, name: g.name, items: entries.map(x => x.item), profiles: entries.map(x => x.p) }] : [];
+    });
+    const ranking = choose && eligible.length > 1 ? await routeGroups(app, {
+      classId: scope.classId, groups: eligible.slice(0, 3), task: o.task, conversation: o.scene === "conversation",
+      runId: o.runId, signal: o.signal, guidance: memberAi(app, member).guidance,
+    }) : undefined;
+    const ordered = [...(ranking?.order ?? []).flatMap(id => eligible.filter(g => g.id === id)),
+      ...eligible.filter(g => !ranking?.order.includes(g.id))].flatMap(g => g.profiles);
+    const rest = scopedProfiles(app, scope, candidates, true).filter(usable);
+    const seen = new Set<string>();
+    const order = [...ordered, ...rest].filter(p => {
+      const key = JSON.stringify(pickOf(p));
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     if (!order.length) return skip("没有符合范围的 AI");
-    const reason = scope.use.length ? "按组的先后" : "按范围内的默认先后";
+    const reason = ranking?.reason ?? (scope.use.length ? "按组的先后" : "按范围内的默认先后");
     const pick = pickOf(order[0]);
-    record({ outcome: "chosen", ai: pick, picked: label(pick), by: "设置", reason, order: order.map(p => label(pickOf(p))) });
-    return { pick: { ...pick, reason }, order, reason, by: "static" };
+    record({ outcome: "chosen", ai: pick, picked: label(pick), by: ranking?.by === "decision" ? "决策模型" : "设置", reason, order: order.map(p => label(pickOf(p))) });
+    return { pick: { ...pick, reason }, order, reason, by: ranking?.by ?? "static" };
   }
   if (!r.automatic) return skip("设置里关了“允许按任务自动选择 AI”");
   const mode = r.choose[o.scene];
@@ -278,7 +302,7 @@ export async function fallbackOrder(
   const scope = "scope" in o ? o.scope : policyScope(app, o.scene === "conversation" ? "ask" : undefined, o.who);
   o = { ...o, options: o.options.filter(p => !policyReason(scope, p)) };
   const keep = (reason: string) => ({ order: o.options, by: "static" as const, reason });
-  if (scope?.order === "fixed" || scope?.use.length) return keep("按组的先后");
+  if (scope && (scope.order === "fixed" || scope.use.length || scope.deny.length || app.config.agents.groups.some(g => g.items.length))) return keep("按组的先后");
   if (o.options.length < 2) return keep("只剩一个可换的");
   const guidance = memberAi(app, o.userId).guidance;
   const candidates = routingCandidates(app);

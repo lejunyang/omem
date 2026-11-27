@@ -912,6 +912,7 @@ export const configSchema = z.object({
         others: z.array(z.object({ provider: z.string().min(1), model: z.string().default("") })).max(8).optional(),
         pick: z.enum(["fixed", "random"]).optional(),
         fallback: z.enum(["general", "none"]).default("general"),
+        routeMinGap: z.number().min(0).max(1).optional(),
         thresholds: z.object({
           route: z.number().min(0.5).max(0.99).default(DECISION_SCENES.route.default),
           heartbeat: z.number().min(0.5).max(0.99).default(DECISION_SCENES.heartbeat.default),

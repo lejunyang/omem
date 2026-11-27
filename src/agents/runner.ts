@@ -1019,7 +1019,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const single = !!input.boardAccess || !!input.shadow || execution?.source === "flow" || ((execution || specified || login) && app.config.agents.routing.pinnedFallback === "never");
   const fallbacks = single ? [] : [...failoverProfiles(app, actor, primary, own, member, scope ?? null), ...tierProfiles.filter((p): p is AgentProfile => !!p && backendAvailable(p, app.home))];
   const list = distinctProfiles([primary, ...(single ? [] : chosen?.order ?? []), ...fallbacks]);
-  const options = scopedProfiles(app, scope, list, !single);
+  const allowed = scopedProfiles(app, scope, list, !single);
+  const options = chosen && !single ? distinctProfiles([...list.filter(p => !policyReason(scope, p)), ...allowed]) : allowed;
   // An explicit choice (including the chooser's first group) leads the allowed alternatives.
   const primaryIndex = options.findIndex(p => p.id === primary.id && p.model === primary.model && p.effort === primary.effort);
   if (primaryIndex >= 0 && (single || execution || chosen || specified)) options.unshift(...options.splice(primaryIndex, 1));

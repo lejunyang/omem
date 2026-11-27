@@ -52,7 +52,7 @@ function effectivePick(item: PickAI, base: AgentProfile | undefined): PickAI {
   };
 }
 
-function profilesFor(app: App, items: AiGroup["items"], profiles: AgentProfile[]) {
+export function profilesFor(app: App, items: AiGroup["items"], profiles: AgentProfile[]) {
   const time = new Date().toLocaleTimeString("en-GB", { timeZone: app.config.timezone, hour: "2-digit", minute: "2-digit", hour12: false });
   return items.flatMap(item => {
     const base = profiles.find(p => p.id === item.profile);
@@ -61,7 +61,7 @@ function profilesFor(app: App, items: AiGroup["items"], profiles: AgentProfile[]
     const p = { ...base, model, effort };
     const available = backendAvailable(p, app.home) && !excluded(app, p);
     const delayed = !inHours(item.hours, time) || !hasRoom(app, p) || !!quotaAvoid(app, p) || !!downReason(app, p);
-    return [{ p, available, rank: available ? Number(delayed) : 2 }];
+    return [{ p, item, available, rank: available ? Number(delayed) : 2 }];
   }).sort((a, b) => a.rank - b.rank);
 }
 export function groupPick(app: App, id: string, scope?: PolicyScope, includeUnavailable = false): PickAI | undefined {
