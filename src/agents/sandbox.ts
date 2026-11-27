@@ -152,17 +152,20 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
     return stat.isDirectory() ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path];
   });
   const n = plan.network;
+  const ca = n?.bundle ? ["SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"]
+    .flatMap(key => ["--setenv", key, "/tmp/omem-ca.pem"]) : [];
   const relay = n ? [process.execPath, fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)), String(n.callbackPort ?? 0)] : [];
   // A read-only host root still exposes live filesystem sockets. Networked runs start with
   // the runtime directories and explicit run mounts, leaving host service sockets outside.
   const root = n ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
   return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, ...masks,
     ...(n ? ["--unshare-net", "--tmpfs", "/run", ...(n.secrets && existsSync(n.secrets) ? ["--tmpfs", n.secrets] : []), "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
-    "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
+    ...ca, "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
 }
 
-export function egressRequested(config: import("../core/config.ts").Config, profile: object) {
+export function egressRequested(config: import("../core/config.ts").Config, profile: object, own = false) {
   const mode = config.security.egress.mode;
+  if (own) return mode === "all-sandboxed";
   return !!accountOf(profile) && mode !== "off" && (mode === "all-sandboxed" || config.agents.accountIsolation === "require");
 }
 

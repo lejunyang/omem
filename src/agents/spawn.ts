@@ -72,7 +72,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...opts.env, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-      args: bwrapArgs({ ...plan, cwd, command: resolved.file, args: [...resolved.prefix, ...args] }) };
+      args: bwrapArgs({ ...plan, network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }) };
   } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...opts.env, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base) : null;
   const child = spawn(boxed?.file ?? resolved.file, boxed?.args ?? [...resolved.prefix, ...args], {
     cwd: opts.cwd,

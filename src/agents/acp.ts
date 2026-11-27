@@ -202,9 +202,9 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
   // A key's model settings (Codex's context window in its CODEX_CONFIG) are the base the launch config adds to.
   const atLaunch = opts.probe ? {} : launchConfigEnv({ ...profile, env: { ...profile.env, ...keyedModelEnv(profile) } }, { model: profile.model, effort: levelKnown ? profile.effort : null });
   const env = { ...profile.env, ...keyEnv(profile), ...atLaunch, ...opts.mcp?.env, ...opts.env };
-  const child = await (await import("./egress-run.ts")).launchRun(profile, opts, sandbox => {
+  const child = await (await import("./egress-run.ts")).launchRun(profile, opts, (sandbox, ownSandbox) => {
     requirePluginBackend(profile);
-    return launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, ownSandbox: opts.ownSandbox, sandbox });
+    return launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, ownSandbox, sandbox });
   });
   const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });

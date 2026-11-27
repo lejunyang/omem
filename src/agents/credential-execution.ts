@@ -91,7 +91,7 @@ async function runWith(ctx: ToolContext & { runId: string }, entry: Entry, args:
     if (owner && app.config.agents.ownSandbox.mode !== "off" && !ownBox) return "unavailable";
     const op = { kind: "command" as const, executable: command.name, argv: args, cwd };
     const signal = AbortSignal.any([runSignal, method.signal, AbortSignal.timeout(COMMAND_TIMEOUT_SEC * 1000)]);
-    const child = await launchRun(profile, { app, runId, context: ctx, signal }, sandbox => {
+    const child = await launchRun(profile, { app, runId, context: ctx, signal, ownSandbox: ownBox }, (sandbox, ownSandbox) => {
       if (!eligible()) throw new Error("出借设置或运行已变化");
       const rule = decide(app, op, { ...operationWho(ctx), member: holder });
       if (rule.action !== "allow" && rule.action !== "log") throw new Error("持有人的命令规则需要另行放行");
@@ -100,7 +100,7 @@ async function runWith(ctx: ToolContext & { runId: string }, entry: Entry, args:
         if (event.audited) audit(app, ctx.userId ?? OWNER, event.audited, method.kind, detail);
         addRunEvent(app, runId, "status", { ...detail, text: event.text });
       }
-      return launch(command.name, args, { cwd, sandbox, ownSandbox: ownBox, baseEnv: commandEnv(owner, gatePaths(app.home).guarded), directOnly: true, stdin: "ignore" });
+      return launch(command.name, args, { cwd, sandbox, ownSandbox, baseEnv: commandEnv(owner, gatePaths(app.home).guarded), directOnly: true, stdin: "ignore" });
     });
     const { execution, output } = await collect(child, signal);
     return { execution, output, aborted: signal.aborted };

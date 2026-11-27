@@ -1,3 +1,5 @@
+import type { OwnSandbox } from "./own-sandbox.ts";
+import { OWNER } from "../core/users.ts";
 import { commandExists } from "./spawn.ts";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -54,18 +56,18 @@ function summarize(app: App, runId: string, hosts: HostUsage[]) {
 }
 
 export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: AgentProfile,
-  req: { app?: App; context?: ToolContext; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount) => T) {
+  req: { app?: App; ownSandbox?: OwnSandbox; context?: ToolContext; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount, ownSandbox?: OwnSandbox) => T) {
   const account = accountOf(profile);
   const app = req.app;
-  if (!app || !account || !egressRequested(app.config, profile)) return start(account);
+  if (!app || !egressRequested(app.config, profile, !!req.ownSandbox)) return start(account, req.ownSandbox);
   const support = egressSupport();
   if (!support.ok) {
     const reason = "出网隔离不可用：" + support.reason;
-    if (app.config.agents.accountIsolation === "require") throw new Error(reason);
+    if (req.ownSandbox || app.config.agents.accountIsolation === "require") throw new Error(reason);
     if (req.runId) addRunEvent(app, req.runId, "status", { text: reason });
     return start(account);
   }
-  const ctx = req.mcp ? toolContextForToken(app, req.mcp.token) : req.context ?? { app, userId: account.userId, spaceId: "", spaces: [], tools: new Set<string>(), actor: "agent" as const, runId: req.runId ?? null, agentProfile: profile.id };
+  const ctx = req.mcp ? toolContextForToken(app, req.mcp.token) : req.context ?? { app, userId: account?.userId ?? OWNER, spaceId: "", spaces: [], tools: new Set<string>(), actor: "agent" as const, runId: req.runId ?? null, agentProfile: profile.id };
   if (!ctx) throw new Error("本次运行的工具令牌已失效");
   const { inspect } = app.config.security.egress;
   const dir = await mkdtemp("/tmp/omem-net-");
@@ -107,9 +109,8 @@ export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: A
     }
     req.signal?.throwIfAborted();
     req.signal?.addEventListener("abort", close, { once: true });
-    const env = { ...account.env };
-    if (tls) for (const key of ["SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"]) env[key] = "/tmp/omem-ca.pem";
-    const child = start({ ...account, env, network: { socket, secrets: join(app.home, "secrets"), bundle: tls?.bundle, callbackPort: callback ? Number(new URL(callback.origin).port || 80) : undefined } });
+    const network = { socket, secrets: join(app.home, "secrets"), bundle: tls?.bundle, callbackPort: callback ? Number(new URL(callback.origin).port || 80) : undefined };
+    const child = start(account && { ...account, network }, req.ownSandbox && { ...req.ownSandbox, network });
     child.once("close", close);
     child.once("error", close);
     return child;

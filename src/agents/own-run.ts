@@ -12,7 +12,7 @@ import { expandPath } from "./accounts.ts";
 import { acpCatalog, accountOnlyCatalog } from "./catalog.ts";
 import { sourceOf } from "./capacity.ts";
 import { backendCapabilities } from "./capabilities.ts";
-import { accountOf, omemInstallDir, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
+import { accountOf, egressRequested, omemInstallDir, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 import { resolveCommand } from "./spawn.ts";
 import { doubaoExecutable } from "./doubao-cli.ts";
 import { cachePaths, defaultLoginPaths, canonical, normalizeSandbox, ownMounts, selectOwnSandbox, shortPath, under, type OwnSandbox } from "./own-sandbox.ts";
@@ -71,7 +71,10 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   }
   const runtime = [join(data, "bin"), join(data, "library", "_skills"), omemInstallDir(), dirname(dirname(process.execPath)),
     ...mounts.map(p => expandPath(p))].map(canonical);
-  const box = { home, data, masked, state: checked.writable, writable: config.writable, hidden: config.hidden, runtime,
+  const isolatedNetwork = !!profile && egressRequested(app.config, profile, true);
+  const dependencies = join(omemInstallDir(), "node_modules");
+  if (isolatedNetwork && existsSync(dependencies)) runtime.push(canonical(dependencies));
+  const box = { home, data, masked, isolatedNetwork, state: checked.writable, writable: config.writable, hidden: config.hidden, runtime,
     artifactDir: runId ? join(data, "artifacts", "inbox", runId) : undefined,
     runDir: runId ? join(canonical(app.runsDir), runId, "scratch") : undefined,
     readOnly, snapshot: runId ? join(canonical(app.runsDir), runId, "snap") : undefined,

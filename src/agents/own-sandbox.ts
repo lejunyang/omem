@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, posix } from "node:path";
 import type { Config } from "../core/config.ts";
-import { installRoot, type SandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
+import { installRoot, type SandboxNetwork, type SandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 
 type Settings = Config["agents"]["ownSandbox"];
 export const under = (path: string, root: string) => path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
@@ -46,7 +46,7 @@ export const cachePaths = [
 
 export type OwnMountConfig = {
   data: string; home: string; state: string[]; writable: string[]; hidden: string[];
-  masked?: string[]; runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
+  isolatedNetwork?: boolean; network?: SandboxNetwork; masked?: string[]; runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
 };
 type Program = { file: string; prefix: string[] };
 export type OwnSandbox = OwnMountConfig & { plan: ReturnType<typeof ownMounts> };
@@ -77,12 +77,17 @@ export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: Workspac
   const visible = (path: string) => !protectedPaths.some(h => under(path, h));
   const executable = program && canonical(program.file);
   const runtime = [...box.runtime, ...(program && executable ? [program.file, executable, installRoot(executable), ...program.prefix.filter(isAbsolute)] : [])];
-  ro.push(...runtime.filter(path => [box.data, "/tmp"].some(root => path !== root && under(path, root)) || rw.some(dir => under(path, dir))));
+  if (box.isolatedNetwork && runtime.some(path => [box.home, box.data, "/tmp"].some(dir => under(dir, path))))
+    throw new Error("后端运行目录过宽，不能挂入出网隔离沙箱");
+  ro.push(...(box.isolatedNetwork ? runtime.map(canonical) : runtime.filter(path => [box.data, "/tmp"].some(root => path !== root && under(path, root)) || rw.some(dir => under(path, dir)))));
   // /tmp itself is private tmpfs, including when it is the working directory.
   const bindable = (path: string) => path !== "/tmp" && visible(path);
   const readOnly = ro.filter(bindable);
   return { hide, masked: box.masked, ro: readOnly, rw: [...new Set(rw)].filter(p => bindable(p) && !readOnly.some(r => under(p, r))),
-    links: workspace?.links?.filter(link => visible(link.path) && visible(link.target)),
+    links: [
+      ...(workspace?.links ?? []).filter(link => visible(link.path) && visible(link.target)),
+      ...(box.isolatedNetwork && homedir() !== box.home ? [{ path: homedir(), target: box.home }] : []),
+    ],
     pointers: workspace?.pointers?.filter(pointer => visible(pointer.path)) };
 }
 
