@@ -5,6 +5,8 @@ import { accountOf } from "./sandbox.ts";
 import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
 import { keyEnv } from "../core/ai-keys.ts";
+import { backendProgram } from "./backend-names.ts";
+import { codexNoPluginPrefetch } from "./codex-launch.ts";
 
 const READ_TOOLS = ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "mcp__omem"];
 
@@ -29,7 +31,8 @@ function tomlString(s: string) {
 }
 
 export function codexArgs(profile: AgentProfile, req: AgentRequest) {
-  const args = [...profile.args, "exec", "--json", "--skip-git-repo-check", ...(req.fullAccess ? ["--dangerously-bypass-approvals-and-sandbox"] : ["--sandbox", req.allowWrites ? "workspace-write" : "read-only"])];
+  const startupArgs = backendProgram(profile) === "codex" ? codexNoPluginPrefetch : [];
+  const args = [...startupArgs, ...profile.args, "exec", "--json", "--skip-git-repo-check", ...(req.fullAccess ? ["--dangerously-bypass-approvals-and-sandbox"] : ["--sandbox", req.allowWrites ? "workspace-write" : "read-only"])];
   if (!req.persistSession && !req.resumeSessionId) args.push("--ephemeral");
   if (profile.model) args.push("-m", profile.model);
   if (profile.effort) args.push("-c", `model_reasoning_effort=${tomlString(profile.effort)}`);

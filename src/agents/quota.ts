@@ -6,6 +6,7 @@ import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { catalogEntry } from "./catalog.ts";
+import { codexNoPluginPrefetch } from "./codex-launch.ts";
 import { accountOf } from "./sandbox.ts";
 import { sourceOf } from "./capacity.ts";
 import { launch, resolveCommand, stop } from "./spawn.ts";
@@ -191,7 +192,7 @@ async function readCodex(p: AgentProfile, signal?: AbortSignal, timeoutMs = 20_0
   if (!cmd) throw new Error("找不到 codex 命令（app-server）");
   // A user's own account: the same command in their sandbox, in their account folder (CODEX_HOME there).
   const account = accountOf(p);
-  const child = launch(cmd.command, [...cmd.args, "app-server"], { cwd: account?.home ?? process.cwd(), env: p.env, sandbox: account });
+  const child = launch(cmd.command, [...cmd.args, "app-server", ...codexNoPluginPrefetch], { cwd: account?.home ?? process.cwd(), env: p.env, sandbox: account });
   const onAbort = () => stop(child);
   signal?.addEventListener("abort", onAbort, { once: true });
   if (signal?.aborted) onAbort();

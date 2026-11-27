@@ -7,6 +7,7 @@ import type { AgentProfile } from "../core/config.ts";
 import { archiveSession } from "./session-archive.ts";
 import { requireReviewModel, resolveModelOption } from "./models.ts";
 import { launchConfigEnv, requirePluginBackend } from "./catalog.ts";
+import { codexAcpEnv } from "./codex-launch.ts";
 import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { isQuotaMessage } from "./capacity.ts";
@@ -204,7 +205,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
   const env = { ...profile.env, ...keyEnv(profile), ...atLaunch, ...opts.mcp?.env, ...opts.env };
   const child = await (await import("./egress-run.ts")).launchRun(profile, opts, sandbox => {
     requirePluginBackend(profile);
-    return launch(profile.command, profile.args, { cwd: opts.cwd, env, workspace: opts.workspace, ownSandbox: opts.ownSandbox, sandbox });
+    return launch(profile.command, profile.args, { cwd: opts.cwd, env: codexAcpEnv(profile, env), workspace: opts.workspace, ownSandbox: opts.ownSandbox, sandbox });
   });
   const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
@@ -793,7 +794,7 @@ function explain(error: unknown, profile: AgentProfile) {
 async function withAcpConnection<T>(profile: AgentProfile, cwd: string, env: Record<string, string> | undefined, signal: AbortSignal | undefined, work: (connection: ClientSideConnection, caps: { sessionCapabilities?: { delete?: unknown; list?: unknown } } | undefined) => Promise<T>): Promise<T> {
   if (signal?.aborted) throw new Error("CANCELLED");
   requirePluginBackend(profile);
-  const child = launch(profile.command, profile.args, { cwd, env: { ...profile.env, ...keyEnv(profile), ...env }, sandbox: accountOf(profile) });
+  const child = launch(profile.command, profile.args, { cwd, env: codexAcpEnv(profile, { ...profile.env, ...keyEnv(profile), ...env }), sandbox: accountOf(profile) });
   const onAbort = () => stop(child);
   signal?.addEventListener("abort", onAbort, { once: true });
   let stderr = "";
