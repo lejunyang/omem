@@ -5,7 +5,7 @@ import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { cancelHostAsks, ROUND_ASKS } from "./asks.ts";
 import { isBranchReview, worktreesOf } from "./code.ts";
-import { isBranchWork } from "./code-branch.ts";
+import { canReborrowWorkspace, isBranchWork } from "./code-branch.ts";
 import { SEVERITY_LABEL, type FindingRow } from "./review.ts";
 import { createRun, getRun, runUser, type Run } from "./runs.ts";
 import type { Execution } from "./execution.ts";
@@ -467,7 +467,8 @@ export function queueStandaloneFix(app: App, rootId: string, expectedLastId: str
     if (rounds.some(r => r.output.appliedAt || r.output.discardedAt))
       throw new HttpError(409, "原交办已应用或丢弃，工作区已释放，不能续轮");
     const worktrees = worktreesOf(app, rootId);
-    if (!worktrees.length || worktrees.some(w => !existsSync(w.path)))
+    const missing = worktrees.filter(w => !existsSync(w.path));
+    if (!worktrees.length || (missing.length && (rounds.some(r => r.output.supersededBy) || missing.some(w => !canReborrowWorkspace(app, w)))))
       throw new HttpError(409, "原工作区缺失，不能续轮；请重新交办");
     const sessionId = rounds.map(r => r.output.coderSessionId).filter(Boolean).at(-1);
     const notes = pendingNotes(app, last.id);

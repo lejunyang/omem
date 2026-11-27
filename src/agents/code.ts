@@ -340,6 +340,11 @@ export async function runCodeTask(ctx: RunContext) {
       const naming = temporary && input.peerCoder ? "git" : nameable.has(repo.id) ? "tool" : undefined;
       const { wt, note } = branchWorktree(app, repo, rootRunId, path, plan, log, naming);
       worktrees.push(wt);
+      if (was && (was.slot !== wt.slot || was.path !== wt.path)) {
+        // A retry or review reads the root's checkout even if this round stops during setup.
+        known[known.indexOf(was)] = wt;
+        setRunOutput(app, rootRunId, { worktrees: known });
+      }
       branchNotes[repo.id] = note;
       if (!was) log(`${repo.id} 的工作分支 ${wt.branch}（${wt.newBranch ? `从${wt.cutFrom ? ` ${wt.cutFrom} 的` : ""} ${wt.base.slice(0, 8)} 切出` : `已有分支，从 ${wt.base.slice(0, 8)} 接着做`}），工作区 ${workDirOf(wt)}`);
       continue;

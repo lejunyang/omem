@@ -34,6 +34,13 @@ const same = (a: string, b: string) => {
 
 export const isBranchWork = (wts: WorktreeRef[]) => wts.some((w) => w.commits);
 
+/** A pooled checkout can be rebuilt from its local work branch after the lease ends. */
+export function canReborrowWorkspace(app: App, wt: WorktreeRef) {
+  if (!wt.commits || !wt.slot || wt.inPlace) return false;
+  const root = findSpace(app, wt.space)?.rootPath;
+  return !!root && !!tipOf(root, wt.branch);
+}
+
 /** Where `branch` is checked out among the repository's worktrees, other than `except`; null when nowhere. */
 export function checkedOutAt(root: string, branch: string, except?: string): string | null {
   const listed = git(root, ["worktree", "list", "--porcelain", "-z"]);
@@ -168,21 +175,25 @@ export function temporaryWorkBranch(wt: Pick<WorktreeRef, "branch" | "newBranch"
 }
 
 /**
- * A run that is not running or queued may lose its idle workspace to another run — except a
- * delegation an outside Agent codes (peer-code.ts): between rounds its uncommitted edits live in
- * the workspace, so it keeps it until confirmed or discarded.
+ * The lease can name any coding round. Protect the workspace while the delegation has coding or
+ * review work underway, and keep an outside coder's workspace until confirmation or discard.
  */
 const idle = (app: App) => (id: string) => {
+  if (one(app.db, "select 1 from study_directions where workspace_run_id=?", id)) return false;
+  let rootId = id;
   try {
     const run = getRun(app, id);
-    if (one(app.db, "select 1 from study_directions where workspace_run_id=?", id)) return false;
-    const root = run.input.continueFrom ? getRun(app, String(run.input.continueFrom)) : run;
+    rootId = String(run.input.continueFrom ?? run.id);
+    const root = rootId === id ? run : getRun(app, rootId);
     if (root.output.activeBranchSync) return false;
-    if ((root.input as { peerCoder?: unknown }).peerCoder && !root.output.appliedAt && !root.output.discardedAt) return false;
-    return !["queued", "running"].includes(run.status);
-  } catch {
-    return true;
+    if (root.input.peerCoder && !root.output.appliedAt && !root.output.discardedAt) return false;
+  } catch (error) {
+    if (!(error instanceof HttpError && error.status === 404)) throw error;
   }
+  const work = rounds(app, rootId);
+  if (work.some((r) => ["queued", "running"].includes(r.status))) return false;
+  return !one(app.db, `select 1 from runs where kind = 'review' and status in ('queued', 'running')
+    and json_extract(input, '$.codeRunId') in (select value from json_each(?)) limit 1`, JSON.stringify(work.map((r) => r.id)));
 };
 
 /**
@@ -196,12 +207,20 @@ export function branchWorktree(app: App, repo: Space, runId: string, path: strin
     : { space: repo.id, path, branch: wt.branch, base: wt.base, start: wt.base, targetBranch: wt.branch, commits: true, ...(wt.newBranch ? { newBranch: true } : {}), ...(wt.cutFrom ? { cutFrom: wt.cutFrom } : {}), ...(wt.diffBase ? { diffBase: wt.diffBase } : {}) };
   const fresh = !existsSync(ref.path);
   if (fresh) {
+    const tip = tipOf(root, ref.branch);
+    if ("space" in wt && !tip) {
+      const missing = ref.slot ? "工作区被收回或已移除" : "工作区已缺失";
+      throw new HttpError(409, `${repo.id} 的${missing}，分支 ${ref.branch} 也不存在，无法续轮`);
+    }
+    if (ref.slot) log(`${repo.id} 的工作区被收回或已移除，为分支 ${ref.branch} 重新准备工作区`);
+    ref.path = path;
     delete ref.slot;
+    delete ref.inPlace;
     const slot = leaseWorkspace(app, repo, runId, path, log, { idle: idle(app) });
     if (slot) ref.slot = slot.path;
     else {
       git(root, ["worktree", "prune"]);
-      const made = git(root, ["worktree", "add", "-q", "--detach", path, tipOf(root, ref.branch) ?? ref.base]);
+      const made = git(root, ["worktree", "add", "-q", "--detach", path, tip ?? ref.base]);
       if (!made.ok) throw new Error(`在 ${repo.id} 创建工作区失败：${made.stderr}`);
     }
   }
@@ -261,6 +280,10 @@ export type Settled = { committed: string | null; branch: string; renamed?: stri
  * checkout that has it), and the worktree is detached again.
  */
 export function settleRound(root: string, wt: WorktreeRef, message: string): Settled {
+  if (!existsSync(wt.path)) {
+    const missing = wt.slot ? "工作区被收回或已移除" : "工作区已缺失";
+    throw new Error(`${wt.space} 的${missing}，无法提交剩下的改动；请重试这一轮`);
+  }
   const dir = workDirOf(wt);
   git(dir, ["add", "-A"]);
   let committed: string | null = null;

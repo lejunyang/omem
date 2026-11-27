@@ -3,10 +3,12 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { codeFolders, codeRunsAt, discardCodeRun } from "../src/agents/code.ts";
+import { branchWorktree, settleRound } from "../src/agents/code-branch.ts";
+import { codeFolders, codeRunsAt, discardCodeRun, runCodeTask, worktreesOf } from "../src/agents/code.ts";
+import { queueStandaloneFix } from "../src/agents/review-fix.ts";
 import { ideUrl } from "../web/src/lib/ide.ts";
-import { createRun, setRunOutput } from "../src/agents/runs.ts";
-import { leaseWorkspace, listWorkspaces, managedSlot, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "../src/agents/workspaces.ts";
+import { createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
+import { leaseWorkspace, listWorkspaces, managedSlot, MAX_POOL, releaseWorkspace, setupCommandFor, setupDone, setupKey, workDirOf } from "../src/agents/workspaces.ts";
 import { run as sql } from "../src/core/db.ts";
 import { createSpace, getSpace, updateSpace } from "../src/core/spaces.ts";
 import { testApp } from "./helpers.ts";
@@ -27,6 +29,20 @@ createSpace(app, { id: "shop-web", name: "商城前端", kind: "repo", rootPath:
 const repo = () => getSpace(app, "shop-web");
 const head = sh(root, "rev-parse", "HEAD").trim();
 const noLog = () => {};
+const codeRun = (input: Record<string, unknown> = {}) => createRun(app, { kind: "code", spaceId: repo().id, title: "改按钮", input: { task: "改按钮", ...input } });
+const status = (id: string, state: "running" | "done") => sql(app.db, "update runs set status = ? where id = ?", state, id);
+const linkFor = (id: string) => join(app.runsDir, id, "work", repo().id);
+const borrowFor = (id: string) => {
+  const branch = `omem/${id}`;
+  sh(root, "branch", branch, head);
+  return branchWorktree(app, repo(), id, linkFor(id), { branch, base: head, newBranch: true }, noLog).wt;
+};
+const fillOtherSlots = () => Array.from({ length: MAX_POOL - 1 }, () => {
+  const { id } = codeRun();
+  const path = linkFor(id);
+  const slot = leaseWorkspace(app, repo(), id, path, noLog)!.path;
+  return () => releaseWorkspace(id, { path, slot });
+});
 
 describe("reusable workspaces", () => {
   it("makes omem's own slots as needed, keeps ignored files and drops the run's changes when given back", () => {
@@ -74,6 +90,104 @@ describe("reusable workspaces", () => {
     expect(logs.join("\n")).toContain("收回交办 h3");
     expect(existsSync(links[2])).toBe(false);
     for (const [i, l] of [...links, link].entries()) releaseWorkspace(i < 4 ? `h${i + 1}` : "h5", { path: l, slot: i < 4 ? held[i] : held[2] });
+  });
+
+  it.each([
+    { active: "queued coding round", running: false, review: null, heldByRound: false },
+    { active: "running coding round", running: true, review: null, heldByRound: false },
+    { active: "queued review of the root", running: false, review: "root", heldByRound: false },
+    { active: "running review of a later round", running: true, review: "round", heldByRound: true },
+  ])("protects a finished delegation's slot during a $active", ({ running, review, heldByRound }) => {
+    const first = codeRun();
+    const round = codeRun({ continueFrom: first.id });
+    const holder = heldByRound ? round.id : first.id;
+    const held = borrowFor(holder);
+    const free = fillOtherSlots();
+    const borrowers = [codeRun(), codeRun()];
+    try {
+      expect(held.slot).toBeTruthy();
+      status(first.id, "done");
+      if (review) status(round.id, "done");
+      const active = review
+        ? createRun(app, { kind: "review", spaceId: repo().id, title: "评审", input: { codeRunId: review === "root" ? first.id : round.id } })
+        : round;
+      if (running) status(active.id, "running");
+
+      const separate = borrowFor(borrowers[0].id);
+      expect(separate.slot).toBeUndefined();
+      expect(existsSync(held.path)).toBe(true);
+      expect(sh(held.path, "branch", "--show-current").trim()).toBe(held.branch);
+
+      status(active.id, "done");
+      expect(borrowFor(borrowers[1].id).slot).toBe(held.slot);
+      expect(existsSync(held.path)).toBe(false);
+    } finally {
+      for (const { id } of borrowers) {
+        if (lstatSync(linkFor(id), { throwIfNoEntry: false })?.isSymbolicLink()) releaseWorkspace(id, { path: linkFor(id), slot: held.slot });
+        else if (existsSync(linkFor(id))) sh(root, "worktree", "remove", "--force", linkFor(id));
+      }
+      releaseWorkspace(holder, held);
+      for (const release of free) release();
+    }
+  });
+
+  it.each([true, false])("can queue and start a reclaimed delegation again (free slot: %s)", async (freeSlot) => {
+    const first = codeRun({ repos: [repo().id] });
+    const held = borrowFor(first.id);
+    const free = fillOtherSlots();
+    const borrower = codeRun();
+    try {
+      expect(held.slot).toBeTruthy();
+      writeFileSync(join(held.path, "app.ts"), "export const a = 2;\n");
+      sh(held.path, "commit", "-qam", "第 1 轮");
+      const saved = sh(held.path, "rev-parse", "HEAD").trim();
+      sh(held.path, "checkout", "-q", "--detach");
+      setRunOutput(app, first.id, { worktrees: [held] });
+      status(first.id, "done");
+      expect(borrowFor(borrower.id).slot).toBe(held.slot);
+      expect(existsSync(held.path)).toBe(false);
+
+      sh(root, "branch", "-D", held.branch);
+      expect(() => queueStandaloneFix(app, first.id, first.id, "继续", "owner")).toThrow(/原工作区缺失/);
+      sh(root, "branch", held.branch, saved);
+      for (const state of ["appliedAt", "discardedAt"]) {
+        setRunOutput(app, first.id, { [state]: new Date().toISOString() });
+        expect(() => queueStandaloneFix(app, first.id, first.id, "继续", "owner")).toThrow(/已应用或丢弃/);
+        setRunOutput(app, first.id, { [state]: null });
+      }
+      const next = queueStandaloneFix(app, first.id, first.id, "同步分支", "owner", { syncOnly: true });
+      expect(next).toMatchObject({ status: "queued", input: { continueFrom: first.id } });
+      expect(existsSync(held.path)).toBe(false);
+      if (freeSlot) free[0]();
+      const expectedSlot = freeSlot ? managedSlot(app, repo().id, 2) : undefined;
+      status(next.id, "running");
+      const out = await runCodeTask({
+        app, run: getRun(app, next.id), signal: new AbortController().signal, event: noLog,
+        output: (data) => {
+          if ("worktrees" in data) expect(worktreesOf(app, first.id)[0].slot).toBe(expectedSlot);
+          setRunOutput(app, next.id, data);
+        },
+      });
+      expect(out).toMatchObject({ verdict: "synced" });
+      const [resumed] = worktreesOf(app, first.id);
+      expect(resumed).toMatchObject({ path: held.path, branch: held.branch });
+      expect(resumed.slot).toBe(expectedSlot);
+      expect(sh(resumed.path, "rev-parse", "HEAD").trim()).toBe(saved);
+      expect(sh(linkFor(borrower.id), "branch", "--show-current").trim()).toBe(`omem/${borrower.id}`);
+    } finally {
+      const [ours] = worktreesOf(app, first.id);
+      if (ours?.slot) releaseWorkspace(first.id, ours);
+      else if (existsSync(held.path)) sh(root, "worktree", "remove", "--force", held.path);
+      releaseWorkspace(borrower.id, { path: linkFor(borrower.id), slot: held.slot });
+      for (const release of free) release();
+    }
+  });
+
+  it("explains a missing leased workspace at the end of a round", () => {
+    const first = codeRun();
+    const held = borrowFor(first.id);
+    releaseWorkspace(first.id, held);
+    expect(() => settleRound(root, held, "第 1 轮")).toThrow(/工作区被收回/);
   });
 
   it("picks the setup command by the lockfile unless the space names one", () => {
