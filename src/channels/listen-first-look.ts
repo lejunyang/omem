@@ -23,7 +23,8 @@ import { briefText } from "./watch-trial.ts";
  * - escalate: what the probes and the first look found joins the batch as a message of its own, and the
  *   batch runs now (its own handling and reply mode, unchanged).
  *
- * Only one answers: while the first look works its batch is held back (HOLD_MS at most); a batch that
+ * Only one answers: while the first look works its batch is held back (HOLD_MS at most), and let go it
+ * still waits for the next look queued on its later messages (dueOf); a batch that
  * started on these messages anyway (a restart, a 关注 with a window shorter than the look) has them, and
  * the first look steps aside (core/handling.ts noteYield) instead of answering too. It also steps aside
  * when the chat was answered since these messages came in (a reply of omem's went out there, say a draft
@@ -35,15 +36,22 @@ const HOLD_MS = 5 * 60_000;
 
 const laneOf = (contextId: string, chatId: string) => `firstlook:listen:${contextId}:${chatId}`;
 
-/** First looks a 关注 started today: its `perDay` counts these too. */
+/**
+ * First looks a 关注 ran today: its `perDay` counts these too. One that stepped aside before looking (the
+ * batch already had the messages, the chat was answered meanwhile, the screening found nothing to look
+ * at) cost no fast model and does not count: in a busy group those were most of them.
+ */
 export function looksToday(app: App, contextId: string) {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  return one<{ n: number }>(app.db, "select count(*) n from runs where kind = 'first-look' and (lane like ? or lane in (select conversation_id from situation_instances where context_id = ?)) and created_at >= ?", `firstlook:listen:${contextId}:%`, contextId, start.toISOString())?.n ?? 0;
+  return one<{ n: number }>(app.db, "select count(*) n from runs where kind = 'first-look' and (lane like ? or lane in (select conversation_id from situation_instances where context_id = ?)) and created_at >= ? and json_extract(output, '$.skipped') is null", `firstlook:listen:${contextId}:%`, contextId, start.toISOString())?.n ?? 0;
 }
 
-/** A message routed to a 关注 with the fast path on: into the queued first look of its group, or a new one. */
-export function queueListenLook(app: App, c: ListenContext, chat: { id: string; name: string }, m: LookMessage): string | null {
+/**
+ * A message routed to a 关注 with the fast path on: into the queued first look of its group, or a new one.
+ * `addressed` (it @s the owner or the bot): past the day's `perDay` all the same, as its batch is.
+ */
+export function queueListenLook(app: App, c: ListenContext, chat: { id: string; name: string }, m: LookMessage, opts: { addressed?: boolean } = {}): string | null {
   if (!c.knobs.firstLook || !c.conversationId) return null;
   const lane = laneOf(c.id, chat.id);
   const waiting = queuedInLane(app, lane, "first-look");
@@ -51,7 +59,7 @@ export function queueListenLook(app: App, c: ListenContext, chat: { id: string; 
     const messages = [...((waiting.input.messages as LookMessage[] | undefined) ?? []), m].slice(-20);
     if (updateQueuedRun(app, waiting.id, { input: { ...waiting.input, messages } })) return waiting.id;
   }
-  if (looksToday(app, c.id) >= c.knobs.perDay) return null;
+  if (!opts.addressed && looksToday(app, c.id) >= c.knobs.perDay) return null;
   const input: FirstLookInput = {
     source: "listen",
     userId: OWNER,
@@ -66,7 +74,7 @@ export function queueListenLook(app: App, c: ListenContext, chat: { id: string; 
   return createRun(app, {
     kind: "first-look",
     spaceId: c.spaceId ?? "personal",
-    title: truncate(`先看一眼（关注「${c.name}」）：${m.text.replace(/\s+/g, " ")}`, 80),
+    title: truncate(`帮你回复（关注「${c.name}」）：${m.text.replace(/\s+/g, " ")}`, 80),
     input,
     lane,
     notBefore: new Date(Date.now() + LISTEN_MERGE_MS).toISOString(),
@@ -90,10 +98,10 @@ export async function prepareListen(ctx: RunContext, input: FirstLookInput): Pro
   const { app } = ctx;
   const l = input.listen!;
   const c = getContext(app, l.contextId);
-  if (!c || c.status !== "active" || !c.knobs.firstLook) return { done: { skipped: "关注已经停下，或关掉了先看一眼：交回这一批照常处理" } };
+  if (!c || c.status !== "active" || !c.knobs.firstLook) return { done: { skipped: "关注已经停下，或关掉了帮你回复：交回这一批照常处理" } };
   const rows = rowsOf(app, l.conversationId, input.messages);
   const taken = rows.filter((x) => x.row?.kind === "ask" && (x.row.status === "running" || x.row.status === "done"));
-  for (const x of taken) noteYield(app, { event: x.m.id, actor: "watch", to: "关注的这一批", reason: "这一批已经开始处理这条，先看一眼让开", runId: ctx.run.id });
+  for (const x of taken) noteYield(app, { event: x.m.id, actor: "watch", to: "关注的这一批", reason: "这一批已经开始处理这条，帮你回复让开", runId: ctx.run.id });
   const left = rows.filter((x) => !taken.includes(x));
   if (!left.length) return { done: { skipped: "这几条已经由关注的这一批在处理" } };
   const answered = answeredMeanwhile(app, input, left.map((x) => x.m), ctx.run.createdAt);
@@ -140,12 +148,35 @@ export function answeredMeanwhile(app: App, input: FirstLookInput, messages: Loo
 
 /** The batch has these: the first look says why it stepped aside. */
 export function yieldAnswered(app: App, runId: string, messages: LookMessage[], why: string) {
-  for (const m of messages) noteYield(app, { event: m.id, actor: "watch", to: "关注的这一批", reason: `${why}，先看一眼让开，由这一批接着判断`, runId });
+  for (const m of messages) noteYield(app, { event: m.id, actor: "watch", to: "关注的这一批", reason: `${why}，帮你回复让开，由这一批接着判断`, runId });
 }
 
-/** Held batches go back to when they were due. */
-export function release(app: App, held: Held) {
-  for (const h of held) updateQueuedRun(app, h.id, { notBefore: h.notBefore ?? now() });
+/** How long a batch stays back for a first look already queued on some of its messages, past that look's own start. */
+const LOOK_LEAD_MS = 15_000;
+
+/**
+ * When a batch held back for a first look may run: when it was due, unless another look of this 关注 is
+ * queued on some of its messages (they came while this one looked). That look goes first, a little
+ * past its own start, and holds the batch in its turn; else each burst's later messages went to the
+ * batch, the first look only ever got the first of them.
+ */
+function dueOf(app: App, input: FirstLookInput, batchId: string, was: string | null) {
+  const due = was ?? now();
+  const l = input.listen;
+  if (!l) return due;
+  const waiting = all<{ not_before: string | null; input: string }>(app.db, "select not_before, input from runs where kind = 'first-look' and status = 'queued' and lane like ?", `firstlook:listen:${l.contextId}:%`);
+  let lead = 0;
+  for (const w of waiting) {
+    const ids = ((JSON.parse(w.input) as { messages?: LookMessage[] }).messages ?? []).map((m) => m.id);
+    if (!ids.length || !one(app.db, `select 1 from messages where conversation_id = ? and run_id = ? and json_extract(meta, '$.externalId') in (${ids.map(() => "?").join(",")}) limit 1`, l.conversationId, batchId, ...ids)) continue;
+    lead = Math.max(lead, Math.max(Date.now(), Date.parse(w.not_before ?? "") || 0) + LOOK_LEAD_MS);
+  }
+  return lead > Date.parse(due) ? new Date(lead).toISOString() : due;
+}
+
+/** Held batches go back to when they were due (or wait for the next first look on them, dueOf). */
+export function release(app: App, held: Held, input: FirstLookInput) {
+  for (const h of held) updateQueuedRun(app, h.id, { notBefore: dueOf(app, input, h.id, h.notBefore) });
 }
 
 /** A batch that started on these messages meanwhile: its id, or null. */
@@ -155,7 +186,7 @@ export function batchTook(app: App, input: FirstLookInput, messages: LookMessage
 }
 
 export function yieldToBatch(app: App, runId: string, messages: LookMessage[], batchId: string) {
-  for (const m of messages) noteYield(app, { event: m.id, actor: "watch", to: `关注的这一批（${batchId}）`, reason: "先看一眼还没发，这一批已经开始处理这条，先看一眼让开", runId });
+  for (const m of messages) noteYield(app, { event: m.id, actor: "watch", to: `关注的这一批（${batchId}）`, reason: "帮你回复还没发，这一批已经开始处理这条，帮你回复让开", runId });
 }
 
 /** answered / owner / quiet: the messages are done with; they leave the batch, and the conversation says what came of them. */
@@ -171,14 +202,14 @@ export function settle(app: App, r: Run, input: FirstLookInput, messages: LookMe
     if (!rest.length) cancelRun(app, batchId);
     else {
       const was = held.find((h) => h.id === batchId);
-      updateQueuedRun(app, batchId, { input: { ...bi, messageIds: rest }, notBefore: was?.notBefore ?? now() });
+      updateQueuedRun(app, batchId, { input: { ...bi, messageIds: rest }, notBefore: dueOf(app, input, batchId, was?.notBefore ?? null) });
     }
   }
   for (const id of ids) sql(app.db, "update messages set run_id = ? where id = ?", r.id, id);
   const where = d.to === "none" ? "没有发出去" : `发到${DEST_TEXT[d.to]}`;
   const what = o.outcome === "owner" ? `把这几条交给本人定，${where}` : o.outcome === "quiet" ? "看过这几条，不用处理，没有发" : `已经答了这几条，${where}`;
-  addMessage(app, l.conversationId, "assistant", `（先看一眼${what}：${truncate(o.text || o.reason || "", 600)}）`, r.id, { replyTo: [...ids], firstLook: r.id });
-  if (o.outcome === "owner") for (const m of messages) noteHandling(app, { event: m.id, actor: "watch", decision: "handed", by: l.contextId, runId: r.id, reason: "先看一眼：要本人定" });
+  addMessage(app, l.conversationId, "assistant", `（帮你回复${what}：${truncate(o.text || o.reason || "", 600)}）`, r.id, { replyTo: [...ids], firstLook: r.id });
+  if (o.outcome === "owner") for (const m of messages) noteHandling(app, { event: m.id, actor: "watch", decision: "handed", by: l.contextId, runId: r.id, reason: "帮你回复：要本人定" });
 }
 
 /**
@@ -199,14 +230,14 @@ export async function escalate(app: App, r: Run, input: FirstLookInput, messages
   const o = "outcome" in material ? material.outcome : null;
   const results = "results" in material ? material.results : [];
   const text = [
-    requested ?? `先看一眼看了这 ${messages.length} 条（${messages.map((m) => `飞书消息 ${m.id}`).join("、")}），要接着查。`,
+    requested ?? `帮你回复看了这 ${messages.length} 条（${messages.map((m) => `飞书消息 ${m.id}`).join("、")}），要接着查。`,
     results.length ? `预查结果：\n${probesText(results, 2500)}` : "",
-    !o ? "" : o.by === "model" ? `已经知道的：${o.text || "（没写）"}${o.evidence ? `\n依据：${o.evidence}` : ""}\n还要查：${o.next || "（没写）"}${o.reason ? `\n为什么还要查：${o.reason}` : ""}` : `先看一眼没有结论：${o.reason ?? ""}`,
+    !o ? "" : o.by === "model" ? `已经知道的：${o.text || "（没写）"}${o.evidence ? `\n依据：${o.evidence}` : ""}\n还要查：${o.next || "（没写）"}${o.reason ? `\n为什么还要查：${o.reason}` : ""}` : `帮你回复没有结论：${o.reason ?? ""}`,
     d.to === "none" ? "第一条消息没有发出去。" : `第一条消息已经发到${DEST_TEXT[d.to]}${requested ? "；群里仍照这个关注的回复方式处理" : "，告诉了还在查什么；你的结论照这个关注的回复方式发"}。`,
   ].filter(Boolean).join("\n\n");
-  const res = await receive(app, { conversationId: l.conversationId, channel: LISTEN_CHANNEL, speaker: "先看一眼", text, meta: { firstLook: r.id, ...(requested ? { firstLookRequested: r.id } : {}), addressed: true, chatId: input.chat!.id }, mergeMs: 0, fixedWindow: true });
+  const res = await receive(app, { conversationId: l.conversationId, channel: LISTEN_CHANNEL, speaker: "帮你回复", text, meta: { firstLook: r.id, ...(requested ? { firstLookRequested: r.id } : {}), addressed: true, chatId: input.chat!.id }, mergeMs: 0, fixedWindow: true });
   if (res.runId) updateQueuedRun(app, res.runId, { notBefore: now() });
-  release(app, held.filter((h) => h.id !== res.runId));
+  release(app, held.filter((h) => h.id !== res.runId), input);
   return { runId: res.runId, detail: res.runId ? `交给关注的这一批，马上处理（${res.runId}）` : res.reply || "没有交出去" };
 }
 

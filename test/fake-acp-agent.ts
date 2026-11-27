@@ -802,11 +802,11 @@ ${JSON.stringify({ check, tools })}`);
       // FAKE_MODE=first-look (test/first-look.test.ts): the fast first look hands in what the message asks
       // for — “[answered]”, “[owner]”, else escalate; “[slow]” never answers (the budget runs out), “[none]”
       // ends without a hand-in, “[fail]” fails the turn. Any other task (a deep run, a 关注's batch) answers
-      // with what of the first look's work reached it.
-      if (process.env.FAKE_MODE === "first-look") {
+      // with what of the first look's work reached it. FAKE_MODE=mention answers 有人找你's fast look the same way.
+      if (process.env.FAKE_MODE === "first-look" || (process.env.FAKE_MODE === "mention" && prompt.includes("# 帮你回复："))) {
         if (process.env.FAKE_PROMPT_FILE) appendFileSync(process.env.FAKE_PROMPT_FILE, JSON.stringify(prompt) + "\n");
-        if (!prompt.includes("# 先看一眼：")) {
-          await say(`深查结论 ${JSON.stringify({ probe: /PROBE-OUT:\w+/.test(prompt), look: prompt.includes("快速结论"), material: prompt.includes("先看一眼已经做的") || prompt.includes("先看一眼看了这"), outputs: prompt.includes("前面的步骤拿到的") })}`);
+        if (!prompt.includes("# 帮你回复：")) {
+          await say(`深查结论 ${JSON.stringify({ probe: /PROBE-OUT:\w+/.test(prompt), look: prompt.includes("快速结论"), material: prompt.includes("帮你回复已经做的") || prompt.includes("帮你回复看了这"), outputs: prompt.includes("前面的步骤拿到的") })}`);
           return { stopReason: "end_turn" as const };
         }
         if (prompt.includes("[fail]")) throw RequestError.internalError({ details: "fake first look failed" });

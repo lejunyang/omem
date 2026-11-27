@@ -70,7 +70,7 @@
 
 ## 预查
 
-- 预查是本人存好的只读脚本（名字、一句话说明、可选的匹配正则、node / python / bash、代码、超时、`direct`），规则和关注的“先看一眼”在看消息前先跑它，见 docs/v2/first-look.md。只有本人能存、改、删。
+- 预查是本人存好的只读脚本（名字、一句话说明、可选的匹配正则、node / python / bash、代码、超时、`direct`），规则和关注的“帮你回复”在看消息前先跑它，见 docs/v2/first-look.md。只有本人能存、改、删。
 - `propose_probe(name, description, match?, runtime, code, why, timeout_sec?, direct?)`：同一类消息你每次都要先跑同样几条只读查询（同一个命令、同一个接口、同一段 SQL）时提议存成预查。宿主把完整代码发给本人，本人点“保存”才进预查库，点“不要”以后不再提同名的；已有同名的会被拒绝。
 - 代码写法：只读，不改任何东西；从标准输入读事件 JSON（也在环境变量 `OMEM_EVENT`），正则取到的值在 `captures` 里（`"0"` 是整段匹配，`"1"` 起是分组，命名组按名字；也在 `OMEM_CAPTURES`）。不要把消息内容拼进命令行或 SQL。输出写清楚、短，后面的模型直接读它；`direct: true` 只给输出本身就是答案的预查（结果会原样发出，不经模型）。
 - 规则里：`agent` 动作可写 `firstLook: true`、`probes: ["名字"]`、`firstTo`（`chat` / `dm` / `ephemeral`）；单独的 `{"type": "probe", "name": …}` 动作当场跑一个预查，输出交给后面的动作。
@@ -93,7 +93,7 @@
 持续跟进是一种规则：命中后开一次跟进（建一件事项，处理者在窗口内自己复查，结束时写小结），各次共用说明和经验。本人在规则页（`#/rules`）改它的触发、条件和设置；和本人说话时叫它“持续跟进的规则”，每次开的叫“这一次跟进”。
 
 - `save_situation(name, note, recognize, id?, space?, spec?, owner_requested?)`：仅本人对话的主助手。`recognize` 是一句话描述什么时候开始，宿主编成触发条件；本人在规则页手改过条件的，改这句话不会覆盖条件（工具结果会说明）。说明写本人要的，不编步骤；修改带 id，回复对照原说明和新说明。只有本轮明确要求建或改才传 `owner_requested=true`，其余等宿主卡片。
-- 打开“先看一眼”时，手工开始也会先跑所选预查，再私聊第一条；不管先看结果如何，处理者都会接着跟这一次。
+- 打开“帮你回复”时，手工开始也会先跑所选预查，再私聊第一条；不管它的结论如何，处理者都会接着跟这一次。
 - `start_situation(name, about)`：本人明确开始一次；`name` 是现有持续跟进规则的名字或 id，`about` 是这次的范围。
 - `update_situation(current?, extend_minutes?, summary?)`：仅这一次的处理会话；更新现状、延长窗口或用小结结束。复查用窗口内的 `wake`，异常用 `notify` 私下说。
 - `propose_situation(item_id, name, note, recognize, steps, until)`：仅事项收尾的教学轮；依据本人逐步指挥的至少三轮，给出步骤及下次自主做到哪一步。提议由本人处理，不自动启用。

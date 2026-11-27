@@ -214,7 +214,7 @@ const fileLabel = (t: Target, path: string) =>
     : path === `_agents/${t.id}.md` ? "档案文件" : path === `_roles/${t.id}.md` ? "角色说明文件" : path === `_roles/${t.id}.overlay.yaml` ? "挂载设置" : path;
 /** What a setting is called on a card (the full comparison keeps the key): the usual ones of rules and 关注. */
 const KEY_NAMES: Record<string, string> = { name: "名字", description: "说明", enabled: "开关", judge: "判断方式", conditions: "条件", note: "说明", "trigger.event": "触发", "trigger.cron": "定时", "trigger.once": "触发一次", "trigger.waitMinutes": "等几分钟", "trigger.unless": "例外" };
-const STEP_FIELDS: Record<string, string> = { type: "动作", task: "任务", spec: "交给", reply: "回复方式", to: "发到", name: "名字", ai: "用的 AI", "ai.profile": "用的 AI", "ai.model": "模型", probes: "预查", firstLook: "先看一眼", firstTo: "第一条发到", urgent: "加急", minutes: "等几分钟", question: "判断的问题", runAs: "以谁的身份", space: "空间", fullAccess: "完全权限" };
+const STEP_FIELDS: Record<string, string> = { type: "动作", task: "任务", spec: "交给", reply: "回复方式", to: "发到", name: "名字", ai: "用的 AI", "ai.profile": "用的 AI", "ai.model": "模型", probes: "预查", firstLook: "帮你回复", firstTo: "第一条发到", urgent: "加急", minutes: "等几分钟", question: "判断的问题", runAs: "以谁的身份", space: "空间", fullAccess: "完全权限" };
 function keyName(key: string) {
   const step = /^actions\.(\d+)\.([\w.-]+)$/.exec(key);
   if (step) return `第 ${step[1]} 步的${STEP_FIELDS[step[2]] ?? step[2]}`;

@@ -1149,7 +1149,7 @@ const fastRule = saveRule(app, {
   judge: "code",
   actions: [{ type: "agent", spec: "assistant", task: "看这张退款单金额对不对，说清哪一行、为什么", reply: "draft", ownTopic: true, mergeReply: "separate", firstLook: true, probes: ["refund-order"], firstTo: "ephemeral" }],
 } as never);
-const lookRun = createRun(app, { kind: "first-look", spaceId: "shop", title: "先看一眼：R1005 退了 312 元，比应退多了 60", input: { ruleId: fastRule.id, text: "R1005 退了 312 元，比应退多了 60，麻烦看下" } });
+const lookRun = createRun(app, { kind: "first-look", spaceId: "shop", title: "帮你回复：R1005 退了 312 元，比应退多了 60", input: { ruleId: fastRule.id, text: "R1005 退了 312 元，比应退多了 60，麻烦看下" } });
 setRunOutput(app, lookRun.id, { outcome: "answered", answer: "R1005 按新口径算没有多退：衬衫和袜子按实付比例分摊了 60 元满减，两行合计 312 元，和退款单一致。用户看到的“多了 60”是把满减算回了原价。", stages: {
   prefilter: "规则条件已经筛过：退款答疑群、消息带退款单号",
   probes: { ms: 860, results: [{ name: "refund-order", ok: true, ms: 840, runId: lookProbe }] },
@@ -1709,7 +1709,7 @@ const server = await startServer(app, { port: Number(process.env.DEMO_PORT ?? 0)
 const url = app.baseUrl;
 if (serveOnly) {
   const fl = await fastLane();
-  console.log(`快速通道：${url}/#/rules/probes；${url}/#/rules?id=${FAST_RULE}；先看一眼 ${url}/#/runs/${fl?.lookRun}；持续跟进 ${url}/#/rules?id=situation:${DRILL}&tab=rounds、事项 ${url}/#/items/${fl?.drillItem}`);
+  console.log(`快速通道：${url}/#/rules/probes；${url}/#/rules?id=${FAST_RULE}；帮你回复 ${url}/#/runs/${fl?.lookRun}；持续跟进 ${url}/#/rules?id=situation:${DRILL}&tab=rounds、事项 ${url}/#/items/${fl?.drillItem}`);
   console.log(`演示数据：${url}/#/code/${r.id}（Ctrl+C 结束）；九轮的长交办 ${url}/#/code/${longWork}；流程 ${url}/#/items/${flowItem.id}；插件拦下的 ${url}/#/work/${blockedItem.id}、等标记的 ${url}/#/work/${waitingItem.id}（标记文件 ${join(home, "plugin-data", "stagekit", "ready.txt")}）；分头在做的 ${url}/#/runs/${boardAsk.id}、${url}/#/work/${flowItem.id}；分享页 ${url}/#/share/${shareToken}；数据页 ${url}/#/insights；各种图表 ${url}/#/ui/uv_charts_demo`);
   console.log(`向量和重排的假云端接口：${fakeApiUrl}（模型名写 missing-model 会失败）`);
   console.log(`以别人的身份看（演示令牌）：小周（只读观察者）${url}/?token=${xiaozhouToken}；小林（成员，另设几项）${url}/?token=${xiaolinToken}；小吴（成员）${url}/?token=${xiaowuToken}；本人带令牌（云端工具要它）${url}/?token=${ownerToken}`);

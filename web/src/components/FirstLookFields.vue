@@ -49,9 +49,9 @@ const DEEP: Record<typeof props.where, string> = {
 
 <template>
   <div class="first-look" :class="{ off: !on }">
-    <UiCheckbox :model-value="on" switch size="sm" :disabled="disabled" @change="(v) => set({ firstLook: v })">先快速看一眼</UiCheckbox>
+    <UiCheckbox :model-value="on" switch size="sm" :disabled="disabled" @change="(v) => set({ firstLook: v })">帮你回复</UiCheckbox>
     <p class="hint">
-      {{ on ? "" : "打开后，" }}有消息来先跑选的预查，再让便宜的快模型在 {{ options?.budgetSec ?? 90 }} 秒内看一眼，给出“答完了 / 要接着查 / 要你定”；{{ DEEP[where] }}。<template v-if="where === 'rule'">每条规则每天最多先看 {{ options?.rulePerDay ?? 30 }} 次，超过和没有消息的触发照原来的路径走。</template>
+      {{ on ? "" : "打开后，" }}有消息来先跑选的预查，再让便宜的快模型在 {{ options?.budgetSec ?? 90 }} 秒内看一眼，给出“答完了 / 要接着查 / 要你定”；{{ DEEP[where] }}。<template v-if="where === 'rule'">每条规则每天最多用 {{ options?.rulePerDay ?? 30 }} 次，超过和没有消息的触发照原来的路径走。</template>
     </p>
     <template v-if="on">
       <div class="line">
@@ -59,7 +59,7 @@ const DEEP: Record<typeof props.where, string> = {
         <UiSelect :model-value="modelValue.probes ?? []" multiple size="sm" width="280px" :disabled="disabled" :options="probeOptions" :search-at="8" placeholder="不跑预查" aria-label="先跑哪些预查" @update:model-value="(v) => set({ probes: (v as string[]).slice(0, 8) })" />
         <router-link to="/rules/probes" class="small">管理预查库</router-link>
       </div>
-      <p v-if="!probeOptions.length && options" class="hint">预查库还是空的：预查是你存好的只读脚本，在<router-link to="/rules/probes">规则 → 预查</router-link>里写。不跑预查也能先看一眼。</p>
+      <p v-if="!probeOptions.length && options" class="hint">预查库还是空的：预查是你存好的只读脚本，在<router-link to="/rules/probes">规则 → 预查</router-link>里写。不跑预查也能用。</p>
       <div class="line">
         <span class="small label">第一条发到哪</span>
         <UiSegmented class="dest" :model-value="modelValue.firstTo ?? ''" size="sm" :options="destOptions" aria-label="第一条发到哪" @update:model-value="(v) => !disabled && set({ firstTo: (v || undefined) as FirstTo | undefined })" />

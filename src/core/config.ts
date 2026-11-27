@@ -1213,6 +1213,10 @@ export const configSchema = z.object({
    * reminder, or handle — the main assistant (or an Agent 档案) reads up and tells the owner, the short
    * reminder going out when it fails or runs past `timeoutMinutes`. `guidance`: the owner's words for
    * the triage. `perDay`: triages and handlings a day, past which the short reminder goes out.
+   * `firstLook` (帮你回复, docs/v2/first-look.md): before a handling, the fast first look (role first-look,
+   * the cheap tier) tries to answer within its budget. An answer reaches the owner as the reminder with the
+   * reply drafted under it, a question for the owner as a reminder, nothing to say as nothing; only what it
+   * cannot answer goes on to the handling, with what it found. It counts as the handling it may replace.
    * `reply.<channel>`: whether the handler may answer the asker there — off, a draft the owner sends
    * with one click, or auto (only when the triage also found it can move on alone). On Feishu a private
    * chat is answered in a group of the owner, them and the bot (`p2pVia: group`) or as the owner, signed
@@ -1229,6 +1233,7 @@ export const configSchema = z.object({
       guidance: z.string().max(4000).default(""),
       noDecision: z.enum(["general", "notify", "handle"]).default("general"),
       perDay: z.object({ triage: z.number().int().min(0).max(1000).default(80), handle: z.number().int().min(0).max(10000).default(1000) }).default({ triage: 80, handle: 1000 }),
+      firstLook: z.boolean().default(false),
       reply: z
         .object({
           lark: z
@@ -1249,7 +1254,7 @@ export const configSchema = z.object({
         })
         .default({ lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } }),
     })
-    .default({ enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 1000 }, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } }),
+    .default({ enabled: true, p2p: true, delayMinutes: 3, skipWhen: { read: true, reacted: true, replied: true }, timeoutMinutes: 10, guidance: "", noDecision: "general", perDay: { triage: 80, handle: 1000 }, firstLook: false, reply: { lark: { group: "off", p2p: "off", p2pVia: "group", signedVia: "lark-cli" } } }),
   /**
    * When omem may push to chat channels. Defaults:
    * - quiet hours: nothing outside urgent/overdue 22:00–09:00 local;
