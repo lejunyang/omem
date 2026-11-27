@@ -20,7 +20,7 @@ import { canonical, gitLoginPaths, standardCommandLogins, under, type OwnSandbox
 import { currentRules } from "./operation-policy.ts";
 import { addRunEvent } from "./runs.ts";
 import { withPinnedBinds } from "./bwrap-spawn.ts";
-import { bwrapArgs, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
+import { bwrapArgs, egressRelayPath, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 import { remoteGit } from "./git-command.ts";
 import { stop } from "./spawn.ts";
 import { onToolTokenRevoked, toolContextForToken, type ToolContext } from "./tools.ts";
@@ -145,7 +145,7 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
       const child = await launchRun(scope.profile, { app, ownSandbox: scope.own, runId, context: ctx, signal }, (account, own) => {
         signal.throwIfAborted();
         const network = own?.network ?? account?.network;
-        if (network) ro.push(realpathSync(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)));
+        if (network) ro.push(realpathSync(egressRelayPath));
         const { args: argv } = bwrapArgs({ ...scope.workspace, links, minimalRoot: true, network, privateDirs: [home], hide: [canonical(app.home), "/tmp/.omem-executor-tmp"],
           masked, ro, rw, cwd: call.cwd, command: file, args: call.args });
         return withPinnedBinds(argv, undefined, (args, fds) => spawn(support.bwrap!, args,

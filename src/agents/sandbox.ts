@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
  * `sandboxSupport` checks once. Everywhere else members keep borrowing the owner's backends.
  */
 
+export const egressRelayPath = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url));
+
 export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; reason?: string };
 
 /** What a run for one user's own account carries on its profile (accounts.ts sets it in prepareRun). */
@@ -192,7 +194,7 @@ export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
   const n = plan.network;
   const ca = n?.bundle ? ["SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"]
     .flatMap(key => ["--setenv", key, "/tmp/omem-ca.pem"]) : [];
-  const relay = n ? [process.execPath, fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)), String(n.callbackPort ?? 0)] : [];
+  const relay = n ? [process.execPath, egressRelayPath, String(n.callbackPort ?? 0)] : [];
   // A read-only host root still exposes live filesystem sockets. Networked runs start with
   // the runtime directories and explicit run mounts, leaving host service sockets outside.
   const root = n || plan.minimalRoot ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
