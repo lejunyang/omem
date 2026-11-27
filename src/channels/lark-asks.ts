@@ -1,18 +1,17 @@
 import { askUrgency } from "../agents/ask-urgency.ts";
 import { briefParts } from "../agents/brief.ts";
 import { addAskSink, addViewSink, answerAsk, getAsk, isImmediateAsk, markAskSent, uiLink, type Ask } from "../agents/asks.ts";
-import { viewCardBlocks, viewColor, viewSummary, viewTarget } from "./lark-ui.ts";
-import { fieldsText, normalizeAnswers, type UiField } from "../agents/ui-blocks.ts";
+import { cardImages, viewCardBlocks, viewColor, viewSummary, viewTarget } from "./lark-ui.ts";
+import { fieldsText, normalizeAnswers, type Tone, type UiField } from "../agents/ui-blocks.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { deliveryPlan, inQuietHours } from "../core/notify.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { larkOpenIdOf, nameForOthers, OWNER, userName } from "../core/users.ts";
 import { resolveCitationsSync } from "./common.ts";
-import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, decidedBlocks, decidedColor, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, resultSummary, sendEphemeral, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type Target } from "./lark-send.ts";
+import { bindInteraction, buildCard, buttonRows, cardMentions, cardText, closeInteraction, decidedBlocks, decidedColor, getInteraction, larkOwnerOpenId, larkPrivateChat, recordInteraction, resultSummary, sendEphemeral, sendLark, textWidth, updateLarkCard, type CardBlock, type CardField, type CardSpec, type Target } from "./lark-send.ts";
 import { botOfChannel } from "../core/bot-context.ts";
 import { getTask } from "../agents/code-tasks.ts";
-import { stageCardLabels } from "../flows/stage-card.ts";
 
 /**
  * Asks in Feishu: a card in the conversation's chat or topic (or the person's private chat with
@@ -88,13 +87,8 @@ function briefBlocks(app: App, text: string, head = "", rest?: { title: string; 
 
 /** A decision needs its question up front; the investigation stays in the run and a closed fold. */
 function questionBlocks(app: App, ask: Ask): CardBlock[] {
-  if (ask.stageCard) {
-    const { sections, flowUrl } = ask.stageCard;
-    const link = /^https?:/.test(flowUrl) ? [{ markdown: `[事项流程页](${flowUrl})` }] : [];
-    return [...link, ...sections.map(({ label, text }): CardBlock => label === "依据" && sections.reduce((size, section) => size + section.text.length, 0) > OPEN
-      ? { fold: { title: label, markdown: resolveCitationsSync(app, text) } }
-      : { markdown: resolveCitationsSync(app, `**${label}**\n${text}`) })];
-  }
+  // A host card with its own layout (a flow stage, a design): its body instead of the question's text.
+  if (ask.ui?.body !== undefined) return ask.ui.body.trim() ? [{ markdown: resolveCitationsSync(app, ask.ui.body) }] : [];
   const row = one<{ context: string | null }>(app.db, "select context from asks where id = ?", ask.id);
   const ctx = JSON.parse(row?.context ?? "{}") as { handler?: string; workId?: string; seq?: number };
   if (ctx.handler !== "code-task" || !ctx.workId || !ctx.seq) return ask.question ? briefBlocks(app, ask.question) : [];
@@ -109,10 +103,25 @@ function questionBlocks(app: App, ask: Ask): CardBlock[] {
 }
 
 /**
- * `mention`: the person who has to answer, in the posting bot's ids; @-ed at the top of a card posted
- * in a group (only while it waits for them).
+ * The card's header: a host card's own head (what it is about, what it belongs to, its state as a tag,
+ * the header coloured by that state), or the kind of question as the title.
  */
-export function askCard(app: App, ask: Ask, opts: { mention?: string | null; note?: string; title?: string } = {}): Record<string, unknown> {
+function header(ask: Ask, title?: string): Pick<CardSpec, "title" | "subtitle" | "color" | "tag" | "summary"> {
+  const h = ask.ui?.head;
+  if (!h) return ask.kind === "suggestion" ? {} : { title: title ?? TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" };
+  return {
+    title: h.title || title || TITLE[ask.kind] || "需要你",
+    ...(h.subtitle ? { subtitle: truncate(h.subtitle, 80) } : {}),
+    ...(h.tag ? { tag: h.tag } : { color: ask.kind === "approval" ? "orange" : "blue" }),
+    summary: truncate([h.tag?.text, h.title, h.subtitle].filter(Boolean).join(" · "), 60),
+  };
+}
+
+/**
+ * `mention`: the person who has to answer, in the posting bot's ids; @-ed at the top of a card posted
+ * in a group (only while it waits for them). `images`: the uploaded images of its view (`cardImages`).
+ */
+export function askCard(app: App, ask: Ask, opts: { mention?: string | null; note?: string; title?: string; images?: Map<string, string> } = {}): Record<string, unknown> {
   if (ask.status !== "pending") return answeredCard(app, ask);
   const blocks: CardBlock[] = ask.handler === "credential-confirm" ? [{ markdown: cardText(ask.question) }] : questionBlocks(app, ask);
   // The asking turn's answer, when it only said again what the card says (foldIntoAsk): kept, folded.
@@ -123,9 +132,11 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null; not
     // An interactive page is used on the web: the card only links to the question's page.
     const link = uiLink(app, ask.id);
     const web = /^https?:/.test(link);
-    blocks.push(...viewCardBlocks(app, ask.ui.view, { linked: web }));
+    blocks.push(...viewCardBlocks(app, ask.ui.view, { linked: web, images: opts.images }));
     if (web && ask.ui.view.some((c) => c.type === "page")) blocks.push({ buttons: [{ text: "打开交互页", url: link, style: "primary" }] });
   }
+  // Pages to open are a line of links, kept apart from the buttons that answer.
+  if (ask.ui?.links?.length) blocks.push({ element: { tag: "markdown", content: ask.ui.links.map((l) => `[${cardText(l.text)} →](${l.url})`).join("　　"), text_size: "notation" } });
   const at = ask.kind === "suggestion" ? "" : cardMentions([opts.mention]);
   if (at) {
     const first = blocks[0];
@@ -145,17 +156,17 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null; not
       if (ask.allowText) fields.push({ type: "input", name: "text", label: "补充说明（可不填）", multiline: true });
       blocks.push({ form: { name: "ask", fields, submit: ask.ui.submitLabel || "提交" } });
       if (web) blocks.push({ buttons: [{ text: "在网页上填写", url: link }] });
-      const card = buildCard({ title: TITLE.question, color: "blue", blocks });
+      const card = buildCard({ ...header(ask, opts.title), blocks });
       if (JSON.stringify(card).length <= CARD_FORM_MAX) return card;
       blocks.length = base;
     }
     // Too much for a card: just the link. Without a web address the fields are listed to answer in text.
     if (web) blocks.push({ buttons: [{ text: "打开填写", url: link, style: "primary" }] }, { note: "也可以直接回复文字。" });
     else blocks.push({ markdown: `要填的：\n${cardText(truncate(fieldsText(ask.ui.fields), 3000))}` }, { note: "在 omem 网页上填写，或直接回复文字（设置 → 设备 填网页地址后这里会有链接）。" });
-    return buildCard({ title: TITLE.question, color: "blue", blocks });
+    return buildCard({ ...header(ask, opts.title), blocks });
   }
   const stage = ask.stageCard;
-  const card = buildCard({ ...(stage ? { title: stage.title, subtitle: stage.itemTitle, color: "orange" } : ask.kind === "suggestion" ? {} : { title: opts.title ?? TITLE[ask.kind], color: ask.kind === "approval" ? "orange" : "blue" }), blocks });
+  const card = buildCard({ ...header(ask, opts.title), blocks });
   const elements = (card.body as { elements: unknown[] }).elements;
   const choices = ask.kind === "approval" ? [row([button("批准", "approve", "primary", ask.allowText, "approve"), button("拒绝", "reject", "danger", ask.allowText, "reject")])] : optionRows(ask);
   if (withText(ask)) {
@@ -172,10 +183,6 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null; not
       ],
     });
   } else elements.push(...choices);
-  if (stage && /^https?:/.test(stage.discussUrl)) {
-    const discussion = buildCard({ blocks: [{ buttons: [{ text: stageCardLabels.discuss, url: stage.discussUrl }] }] });
-    elements.push(...(discussion.body as { elements: unknown[] }).elements);
-  }
   return card;
 }
 
@@ -187,25 +194,33 @@ export function askCard(app: App, ask: Ask, opts: { mention?: string | null; not
 function answeredCard(app: App, ask: Ask): Record<string, unknown> {
   const immediate = isImmediateAsk(ask) && ask.status === "answered";
   const approval = ask.kind === "approval";
-  const question = ask.question ? [{ markdown: resolveCitationsSync(app, truncate(ask.question, approval ? 800 : 1500)) }] : [];
+  const head = ask.ui?.head;
+  // A host card keeps its head with the outcome as the tag; what it asked closes into a fold.
+  const question: CardBlock[] = !ask.question ? []
+    : head ? [{ fold: { title: "当时的内容", markdown: resolveCitationsSync(app, truncate(ask.question, 3000)) } }]
+    : [{ markdown: resolveCitationsSync(app, truncate(ask.question, approval ? 800 : 1500)) }];
+  const titled = (title: string, tag: { text: string; tone: Tone }): Pick<CardSpec, "title" | "subtitle" | "tag"> =>
+    head ? { title: head.title || title, ...(head.subtitle ? { subtitle: truncate(head.subtitle, 80) } : {}), tag } : ask.kind === "suggestion" ? {} : { title };
   // Someone omem does not know shows as a bare Feishu id: leave the name out then.
   const name = ask.answeredBy ? userName(app, ask.answeredBy) : null;
   const when = { by: name && !/^o[un]_/.test(name) ? name : null, at: ask.answeredAt, timeZone: app.config.timezone };
   // Lapsed without an answer (agents/ask-expiry.ts): why, and no buttons.
-  if (ask.status === "cancelled" && ask.lapsed) return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: `${TITLE[ask.kind]} · 已失效` }), blocks: [...question, ...decidedBlocks({ verdict: `已失效：${ask.lapsed}`, at: ask.answeredAt, timeZone: app.config.timezone })] });
+  if (ask.status === "cancelled" && ask.lapsed) return buildCard({ color: "grey", ...titled(`${TITLE[ask.kind]} · 已失效`, { text: "已失效", tone: "neutral" }), blocks: [...question, ...decidedBlocks({ verdict: `已失效：${ask.lapsed}`, at: ask.answeredAt, timeZone: app.config.timezone })] });
   if (ask.status === "cancelled") {
     // Closed with a note on how (the assistant passed on the owner's answer): say so, not just "lapsed".
     const d = ask.result ? { verdict: "已在别处处理", result: resolveCitationsSync(app, ask.result), plain: true } : { verdict: "已失效（在对话或网页上接着处理了）" };
-    return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: `${TITLE[ask.kind]} · ${ask.result ? "已在别处处理" : "已失效"}` }), blocks: [...question, ...decidedBlocks(d)] });
+    const state = ask.result ? "已在别处处理" : "已失效";
+    return buildCard({ color: "grey", ...titled(`${TITLE[ask.kind]} · ${state}`, { text: state, tone: "neutral" }), blocks: [...question, ...decidedBlocks(d)] });
   }
   if (approval) {
     const d = { ...when, verdict: ask.approved ? "批准" : "拒绝", words: ask.answer, result: ask.approved ? ask.result : null };
-    return buildCard({ title: ask.approved ? (d.result ? (resultSummary(d.result).ok ? "已批准并执行" : "已批准，执行失败") : "已批准") : "已拒绝", color: decidedColor(d, !!ask.approved), blocks: [...question, ...decidedBlocks(d)] });
+    const title = ask.approved ? (d.result ? (resultSummary(d.result).ok ? "已批准并执行" : "已批准，执行失败") : "已批准") : "已拒绝";
+    return buildCard({ ...titled(title, { text: ask.approved ? "已批准" : "已拒绝", tone: ask.approved ? "success" : "danger" }), color: decidedColor(d, !!ask.approved), blocks: [...question, ...decidedBlocks(d)] });
   }
-  if (immediate) return buildCard({ color: "grey", title: "已处理", blocks: [...question, ...decidedBlocks({ ...when, verdict: ask.result ?? "已处理" })] });
+  if (immediate) return buildCard({ color: "grey", ...titled("已处理", { text: "已处理", tone: "neutral" }), blocks: [...question, ...decidedBlocks({ ...when, verdict: ask.result ?? "已处理" })] });
   const blocks: CardBlock[] = [...question, ...decidedBlocks({ ...when, verdict: ask.value ? "已填写" : `已选：${ask.answer ?? ""}`, result: ask.result ? resolveCitationsSync(app, ask.result) : null, plain: true })];
   if (ask.value && ask.answer) blocks.splice(question.length + 1, 0, { markdown: cardText(truncate(ask.answer, 3000)) });
-  return buildCard({ color: "grey", ...(ask.kind === "suggestion" ? {} : { title: ask.kind === "question" ? "已回答" : TITLE[ask.kind] }), blocks });
+  return buildCard({ color: "grey", ...titled(ask.kind === "question" ? "已回答" : TITLE[ask.kind], { text: ask.value ? "已填写" : "已回答", tone: "neutral" }), blocks });
 }
 
 /** Where an ask goes in Feishu, or null when this channel is not the one to show it. */
@@ -248,12 +263,12 @@ function larkUserIdOf(app: App, userId: string) {
 }
 
 /** A view shown under a reply (`show`), as a card of its own after the reply. */
-export function viewCard(app: App, view: { id: string; title: string; components: Parameters<typeof viewCardBlocks>[1] }) {
+export function viewCard(app: App, view: { id: string; title: string; components: Parameters<typeof viewCardBlocks>[1] }, images?: Map<string, string>) {
   const link = uiLink(app, view.id);
   const web = /^https?:/.test(link);
   const page = view.components.some((c) => c.type === "page");
   const summary = viewSummary(view.title, view.components);
-  return buildCard({ ...(view.title ? { title: view.title } : {}), color: viewColor(view.components), ...(summary ? { summary } : {}), blocks: [...viewCardBlocks(app, view.components, { linked: web }), ...(web ? [{ buttons: [page ? { text: "打开交互页", url: link, style: "primary" as const } : { text: "在网页上查看", url: link }] }] : [])] });
+  return buildCard({ ...(view.title ? { title: view.title } : {}), color: viewColor(view.components), ...(summary ? { summary } : {}), blocks: [...viewCardBlocks(app, view.components, { linked: web, images }), ...(web ? [{ buttons: [page ? { text: "打开交互页", url: link, style: "primary" as const } : { text: "在网页上查看", url: link }] }] : [])] });
 }
 
 /** Who may answer, in the posting bot's ids (the owner's open_id there; others by their main-bot id or user_id). */
@@ -341,7 +356,8 @@ export async function postNotificationAsk(app: App, askId: string, target: Targe
 async function postAsk(app: App, ask: Ask, to: NonNullable<ReturnType<typeof targetFor>>, ephemeralTo?: string, title?: string) {
   const who = ephemeralTo ?? answererId(app, ask, to.bot);
   const id = recordInteraction(app, { messageId: null, chatId: to.chatId, conversationId: ask.conversationId, runId: ask.runId, purpose: "ask", allowed: who ? [who] : [], payload: { askId: ask.id, ...(ephemeralTo ? { ephemeral: true } : {}) }, bot: to.bot });
-  const card = bindCard(askCard(app, ask, { mention: ephemeralTo || title ? null : groupMention(app, to.chatId, who), title }), id);
+  const images = ask.ui?.view?.length ? await cardImages(ask.ui.view, to.bot) : undefined;
+  const card = bindCard(askCard(app, ask, { mention: ephemeralTo || title ? null : groupMention(app, to.chatId, who), title, images }), id);
   try {
     const sent = ephemeralTo ? await sendEphemeral(to.chatId!, ephemeralTo, card, to.bot) : await sendLark(to.target, { card });
     bindInteraction(app, id, sent.messageId);
@@ -383,7 +399,7 @@ export function registerLarkAsks(app: App, ownerOpenId: () => string | undefined
   addViewSink(async (app, view) => {
     const to = viewTarget(app, view.conversationId);
     if (!to) return false;
-    await sendLark(to, { card: viewCard(app, view) });
+    await sendLark(to, { card: viewCard(app, view, await cardImages(view.components, to.bot)) });
     return true;
   });
   addAskSink({

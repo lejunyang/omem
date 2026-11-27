@@ -15,6 +15,7 @@ import { appendToSource, upsertSource } from "../src/sources/store.ts";
 import { listFlows, saveFlow } from "../src/flows/definitions.ts";
 import { advance, flowReminders, flowStageCards, flowView, reportStage, startFlow, ownerAction } from "../src/flows/engine.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
+import { stageCardUi } from "../src/flows/stage-card.ts";
 import { itemFollowLane, queueReconcile, reconcileReminder } from "../src/flows/reconcile.ts";
 import { recordFlowPush } from "../src/flows/delivery.ts";
 import * as runner from "../src/agents/runner.ts";
@@ -359,9 +360,10 @@ it.each(["文字", "接着做", "在原阶段卡接着做"])("对账仅在需要
   const lark = JSON.stringify(askCard(app, ask));
   for (const section of web.sections) expect(lark).toContain(section.label);
   for (const option of web.options) expect(lark).toContain(option.label);
-  for (const value of [web.title, web.itemTitle, web.textAction!, "在对话里讨论", "\"name\":\"text\"", decision]) expect(lark).toContain(value);
+  // The stage is the title, its state a tag beside it (src/flows/stage-card.ts stageCardUi).
+  for (const value of ["「verify」", "\"text_tag_list\"", "卡住了", web.itemTitle, web.textAction!, "在对话里讨论", "\"name\":\"text\"", decision]) expect(lark).toContain(value);
   const withMoreEvidence = { ...ask.stageCard!, sections: web.sections.map(section => section.label === "依据" ? { ...section, text: `${section.text}\n${"已核对记录。".repeat(250)}` } : section) };
-  const folded = JSON.stringify(askCard(app, { ...ask, stageCard: withMoreEvidence }));
+  const folded = JSON.stringify(askCard(app, { ...ask, stageCard: withMoreEvidence, ui: stageCardUi(withMoreEvidence) }));
   expect(folded).toContain("collapsible_panel");
   expect(folded).toContain(decision);
   const instruction = "不作承诺，只把草稿和回归结果补齐";

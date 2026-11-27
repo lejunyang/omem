@@ -10,7 +10,7 @@ import { listTasks, taskLabel, type CodeTask } from "../agents/code-tasks.ts";
 import type { PreCheck } from "../agents/pre-check.ts";
 import { createRun, getRun, requeueRun, runUser, setRunOutput, type Run } from "../agents/runs.ts";
 import { getThread } from "../agents/threads.ts";
-import type { UiField } from "../agents/ui-blocks.ts";
+import type { AskUi, UiField } from "../agents/ui-blocks.ts";
 import { designLine, designMarkdown } from "./render.ts";
 import {
   createDesign, decideDesign, designCounts, designFeedback, designForWork, designSettings, findDesign, getDesign, onDesignDecided, setDesignStatus, setDesignWork,
@@ -224,12 +224,28 @@ function askOwner(app: App, root: Run, d: Design, chain: CodeChain | null, note:
         { id: "text", type: "textarea", label: "意见（提意见、换个思路时写）", required: false },
       ]
     : null;
+  // The card and the web page show the decisions as a list with their kind as a tag; the question above stays the text version.
+  const full = webLink(app, `#/design/${d.id}`);
+  const display: AskUi = {
+    head: { title: "方案写好了", subtitle: root.title, tag: questions.length ? { text: `${questions.length} 项要你定`, tone: "warning" } : { text: "等你确认", tone: "info" } },
+    body: [note, `第 ${d.revision} 版 · ${designLine(d)}`].filter(Boolean).join("\n\n"),
+    view: [
+      { type: "list", items: d.body.decisions.slice(0, 30).map((x) => ({
+        title: `${x.id} ${truncate(x.title, 190)}`,
+        tag: KIND_LABELS[x.kind],
+        tone: x.kind === "add" ? "success" : x.kind === "remove" ? "danger" : x.kind === "change" ? "info" : "neutral",
+        ...(x.question && !x.question.answer ? { text: `**要你定**：${truncate(x.question.text, 900)}` } : {}),
+      })) },
+      { type: "markdown", text: `通过后开始编码；提意见会按你说的改一版再给你看；换个思路会重新写。${questions.length ? "要你定的问题在下面选，也可以在方案页上写别的回答。" : ""}` },
+    ],
+    ...(/^https?:/.test(full) ? { links: [{ text: "看方案全文", url: full }] } : {}),
+  };
   return createAsk(app, {
     runId: root.id,
     conversationId: chain ? reportConversation(app, chain) : null,
     userId: runUser(app, root.id),
     question,
-    ...(fields ? { ui: { fields, submitLabel: "提交" } } : { options: ACTIONS.map((a) => ({ label: a.label })), allowText: true }),
+    ...(fields ? { ui: { ...display, fields, submitLabel: "提交" } } : { ui: display, options: ACTIONS.map((a) => ({ label: a.label })), allowText: true }),
     context: { handler: "design-confirm", designId: d.id, rootId: root.id },
   });
 }

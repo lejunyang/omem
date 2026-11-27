@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { answerAsk, describeAnswer, getAsk, listAsks, showSuggestions } from "../src/agents/asks.ts";
 import { readFileSync } from "node:fs";
-import { changeText, checkView, metricTone, metricTrend, normalizeAnswers, viewText, type UiField, type ViewComponent } from "../src/agents/ui-blocks.ts";
-import { ACCENT, chartSpec, SEQ, SERIES } from "../src/channels/lark-ui.ts";
+import { changeText, checkView, metricTone, metricTrend, normalizeAnswers, viewSchema, viewText, type UiField, type ViewComponent } from "../src/agents/ui-blocks.ts";
+import { ACCENT, cardImages, chartSpec, SEQ, SERIES } from "../src/channels/lark-ui.ts";
+import { buildCard } from "../src/channels/lark-send.ts";
+import { stageCardUi } from "../src/flows/stage-card.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { createThread, threadMessages } from "../src/agents/threads.ts";
 import { run } from "../src/core/db.ts";
@@ -251,6 +253,61 @@ describe("component blocks", () => {
     expect(hbar).toMatchObject({ type: "bar", direction: "horizontal", xField: "v", yField: "x", bar: { style: { cornerRadius: [0, 2, 2, 0] } } });
     expect(hbar.markLine[0]).toMatchObject({ x: 100 });
     expect(area).toMatchObject({ type: "area", stack: true, seriesField: "s" });
+  });
+
+  it("lists, fields, folds and images: checked, drawn with the card's own elements and read as text", () => {
+    const app = testApp();
+    const view = viewSchema.parse([
+      { type: "fields", items: [{ label: "分支", value: "feat/line-refund" }, { label: "轮次", value: "第 3 轮" }] },
+      { type: "list", title: "检查结果", items: [{ title: "灰度开关默认关闭", tag: "通过", tone: "success" }, { title: "对账没覆盖按行退款", tag: "要注意", tone: "warning", text: "先改对账脚本" }, { title: "验收录屏", url: "https://example.com/v.mp4" }] },
+      { type: "fold", title: "完整检查记录", text: "1. 接口兼容：通过" },
+      { type: "image", url: "https://example.com/shot.png", caption: "预发页面" },
+    ]) as ViewComponent[];
+    // Only web addresses: an agent's text never becomes another kind of link.
+    expect(() => viewSchema.parse([{ type: "image", url: "javascript:alert(1)" }])).toThrow();
+    expect(() => viewSchema.parse([{ type: "list", items: [{ title: "x", url: "file:///etc/passwd" }] }])).toThrow();
+    const els = (viewCard(app, { id: "uv3", title: "上线前检查", components: view }).body as { elements: Record<string, any>[] }).elements;
+    const json = JSON.stringify(els);
+    expect(els[0]).toMatchObject({ tag: "column_set", background_style: "grey-50" });
+    expect(json).toContain("<text_tag color='orange'>要注意</text_tag> **对账没覆盖按行退款**");
+    expect(json).toContain("<font color='grey'>先改对账脚本</font>");
+    expect(json).toContain("**[验收录屏](https://example.com/v.mp4)**");
+    expect(els.find((e) => e.tag === "collapsible_panel")).toMatchObject({ expanded: false });
+    // Not uploaded (no img_key): the picture is a link, never a broken image.
+    expect(json).not.toContain("\"tag\":\"img\"");
+    expect(json).toContain("[预发页面](https://example.com/shot.png)");
+    const text = viewText(view);
+    expect(text).toContain("分支：feat/line-refund");
+    expect(text).toContain("- [要注意] 对账没覆盖按行退款：先改对账脚本");
+    expect(text).toContain("**完整检查记录**");
+  });
+
+  it("a card with a state tag keeps a plain header, the tag carries the colour", () => {
+    const card = buildCard({ title: "「验证」", subtitle: "项目 A 缺陷", tag: { text: "卡住了", tone: "danger" }, blocks: [{ markdown: "x" }] });
+    expect(card.header).toMatchObject({ template: "default", text_tag_list: [{ tag: "text_tag", text: { content: "卡住了" }, color: "red" }] });
+    expect(buildCard({ title: "需要你回答", blocks: [] }).header).toMatchObject({ template: "blue" });
+  });
+
+  it("a flow stage's card: the stage as title, its state a tag, what is asked set off, long evidence folded", () => {
+    const ui = stageCardUi({ title: "「验证」卡住了", itemTitle: "项目 A 缺陷", flowUrl: "https://omem.example.test/#/items/i1/flow", discussUrl: "https://omem.example.test/#/ask", textAction: "按这句话处理",
+      sections: [{ label: "现在", text: "提交接口超时" }, { label: "卡点", text: "需要本人决定范围" }, { label: "依据", text: "记录。".repeat(200) }] });
+    expect(ui.head).toEqual({ title: "「验证」", subtitle: "项目 A 缺陷", tag: { text: "卡住了", tone: "danger" } });
+    expect(ui.body).toBe("");
+    expect(ui.view!.map((c) => c.type)).toEqual(["markdown", "callout", "fold"]);
+    expect(ui.links!.map((l) => l.text)).toEqual(["事项流程页", "在对话里讨论"]);
+  });
+
+  it("never fetches this machine's own addresses for a card's picture", async () => {
+    const fetched: string[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (u: URL) => { fetched.push(String(u)); return new Response("x", { headers: { "content-type": "text/plain" } }); }) as typeof fetch;
+    try {
+      const keys = await cardImages([{ type: "image", url: "http://127.0.0.1:4317/api/me" }, { type: "image", url: "http://localhost/x.png" }, { type: "image", url: "http://[::1]/x.png" }, { type: "image", url: "https://example.com/x.png" }]);
+      expect(keys.size).toBe(0);
+      expect(fetched).toEqual(["https://example.com/x.png"]);
+    } finally {
+      globalThis.fetch = real;
+    }
   });
 
   it("views read as text where they cannot be drawn", () => {

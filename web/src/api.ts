@@ -13,7 +13,7 @@ export class ApiError extends Error {
 
 import { promptDialog } from "./lib/dialog";
 import { browserPage, createLive, type LiveSource } from "./lib/live";
-import type { UiField, ViewComponent } from "@omem-ai/plugin-sdk/blocks";
+import type { Tone, UiField, ViewComponent } from "@omem-ai/plugin-sdk/blocks";
 export type { Report as InsightsReport, Metric as InsightMetric, RecordRef as InsightRecord, Breakdown as InsightBreakdown, BreakdownRecord as InsightBreakdownRecord } from "../../src/insights/types";
 export type { UiField, ViewComponent };
 
@@ -185,7 +185,17 @@ export type Ask = {
   shownAt: string | null;
   createdAt: string;
   /** A form and what to look at (docs/v2/interactive-ui.md). */
-  ui?: { fields?: UiField[]; view?: ViewComponent[]; submitLabel?: string } | null;
+  ui?: {
+    fields?: UiField[];
+    view?: ViewComponent[];
+    submitLabel?: string;
+    /** The host's own cards (a flow stage, a design): title, what it belongs to, state as a tag. */
+    head?: { title?: string; subtitle?: string; tag?: { text: string; tone: Tone } };
+    /** Shown in place of the question when set (the question stays the text version). */
+    body?: string;
+    /** Pages to open, as buttons under the content. */
+    links?: { text: string; url: string }[];
+  } | null;
   value?: Record<string, unknown> | null;
   /** Asked for someone else by their assistant (`ask_user` with `to`). */
   askedBy?: string | null;

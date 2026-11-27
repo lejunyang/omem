@@ -19,6 +19,13 @@ const emit = defineEmits<{ answered: [Ask] }>();
 const text = ref("");
 const busy = ref(false);
 const title = computed(() => ({ question: "需要你回答", approval: "需要你批准", suggestion: "" })[props.ask.kind]);
+/** A host card's own head (a flow stage, a design) and body; the question is then only its text version. */
+const head = computed(() => props.ask.ui?.head ?? null);
+const hasBody = computed(() => props.ask.ui?.body !== undefined);
+const BADGE = { info: "accent", success: "ok", warning: "warn", danger: "danger", neutral: "" } as const;
+/** omem's own pages open in place; other addresses in a new tab. */
+const inApp = (url: string) => url.startsWith(`${location.origin}${location.pathname}#`) || url.startsWith(`${location.origin}/#`);
+const hrefOf = (url: string) => (inApp(url) ? url.slice(url.indexOf("#")) : url);
 const fields = computed(() => props.ask.ui?.fields ?? []);
 const values = reactive<Record<string, unknown>>(initialValues(props.ask.ui?.fields ?? []));
 const error = ref("");
@@ -49,10 +56,18 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
 </script>
 
 <template>
-  <div class="ask" :class="[ask.kind, { compact }]" role="group" :aria-label="title || '下一步'">
-    <div v-if="title && !full" class="ask-title small">{{ title }}</div>
+  <div class="ask" :class="[ask.kind, { compact }, head?.tag ? `tone-${head.tag.tone}` : '']" role="group" :aria-label="head?.title || title || '下一步'">
+    <div v-if="head" class="ask-head">
+      <div class="ask-head-row">
+        <span class="ask-head-title">{{ head.title || title }}</span>
+        <span v-if="head.tag" class="badge" :class="BADGE[head.tag.tone]">{{ head.tag.text }}</span>
+      </div>
+      <div v-if="head.subtitle" class="muted small ask-head-sub">{{ head.subtitle }}</div>
+    </div>
+    <div v-else-if="title && !full" class="ask-title small">{{ title }}</div>
     <div v-if="ask.askedBy" class="muted small">{{ ask.askedByName || ask.askedBy }} 的助手替 ta 问你，回答会交给 ta</div>
-    <template v-if="ask.question">
+    <Markdown v-if="hasBody && ask.ui?.body" :source="ask.ui.body" compact />
+    <template v-else-if="!hasBody && ask.question">
       <Markdown :class="{ 'ask-lead': !!parts.body }" :source="parts.lead" compact />
       <div v-if="parts.body" class="ask-body" :class="{ clipped: long && !expanded }">
         <Markdown class="ask-q" :source="parts.body" compact />
@@ -60,6 +75,9 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
       <button v-if="long" type="button" class="btn ghost sm more" @click="expanded = !expanded">{{ expanded ? "收起" : "展开全部" }}</button>
     </template>
     <UiView v-if="ask.ui?.view?.length" class="ask-view" :components="ask.ui.view" :ask-id="ask.id" :can-submit="!fields.length && ask.status === 'pending'" :draft="(ask as { draft?: unknown }).draft" @answered="emit('answered', ask)" />
+    <div v-if="ask.ui?.links?.length" class="ask-links">
+      <a v-for="l in ask.ui.links" :key="l.url" :href="hrefOf(l.url)" :target="inApp(l.url) ? undefined : '_blank'" :rel="inApp(l.url) ? undefined : 'noopener'">{{ l.text }}<span aria-hidden="true">{{ inApp(l.url) ? " →" : " ↗" }}</span></a>
+    </div>
     <form v-if="fields.length" class="ask-form" @submit.prevent="answer({ value: { ...values } })">
       <UiFields :fields="fields" :values="values" :id-prefix="`ask-${ask.id}`" />
       <textarea v-if="ask.allowText" v-model="text" class="textarea" rows="2" placeholder="补充说明（可不填）" aria-label="补充说明" />
@@ -92,7 +110,7 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
   background: var(--panel);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   /* Whatever the question holds (a long link, a wide table, a code line) stays inside the card. */
   box-sizing: border-box;
   max-width: min(760px, 100%);
@@ -125,6 +143,18 @@ async function answer(body: { choice?: number; approved?: boolean; value?: Recor
 .ask.approval {
   border-left-color: var(--warn);
 }
+/* A host card's state colours its edge, the same tone as its tag. */
+.ask.tone-success { border-left-color: var(--ok); }
+.ask.tone-warning { border-left-color: var(--warn); }
+.ask.tone-danger { border-left-color: var(--danger); }
+.ask.tone-neutral { border-left-color: var(--line-strong); }
+.ask-head { display: grid; gap: 2px; margin-bottom: -2px; }
+.ask-links { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; }
+.ask-links a { color: var(--accent); text-decoration: none; }
+.ask-links a:hover { text-decoration: underline; }
+.ask-head-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ask-head-title { font: 600 15px/1.4 var(--serif); }
+.ask-head-sub { overflow-wrap: anywhere; }
 .ask.compact {
   border: none;
   padding: 4px 0 0;

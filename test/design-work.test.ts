@@ -86,6 +86,10 @@ describe("a delegation that writes a design first", () => {
       expect(card.question).toContain("D1 [修改] 退款金额在 refund.ts 里算（要你定）");
       expect(card.question).toContain(`#/design/${d.id}`);
       expect(card.ui?.fields?.map((f) => f.id)).toEqual(["action", "D1", "text"]);
+      // The card and the web show it laid out: the state as a tag, the decisions as a tagged list.
+      expect(card.ui?.head?.tag).toEqual({ text: "1 项要你定", tone: "warning" });
+      expect(card.ui?.view?.[0]).toMatchObject({ type: "list", items: [{ tag: "修改", text: expect.stringContaining("要你定") }] });
+      expect(card.ui?.head?.subtitle).toBeTruthy();
       expect(codeWork(app, r1.id)!.stage).toMatchObject({ key: "design", group: "owner" });
       expect(getRun(app, ask.id).output.codeChain).toMatchObject({ awaitingUser: false });
 

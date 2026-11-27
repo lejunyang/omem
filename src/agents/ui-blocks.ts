@@ -69,6 +69,35 @@ const card = z.object({
 });
 const compare = z.object({ type: z.literal("compare"), title: z.string().max(120).optional(), items: z.array(card).min(2).max(6) });
 const timeline = z.object({ type: z.literal("timeline"), items: z.array(z.object({ time: text(40), title: text(120), text: z.string().max(1000).optional() })).min(1).max(50) });
+const tone = z.enum(["info", "success", "warning", "danger", "neutral"]);
+const webUrl = z.string().max(2000).regex(/^https?:\/\//i, "只能是 http(s) 地址");
+const list = z.object({
+  type: z.literal("list"),
+  title: z.string().max(120).optional(),
+  items: z.array(z.object({
+    title: text(200),
+    text: z.string().max(1000).optional().describe("标题下的一两句 Markdown"),
+    tag: z.string().trim().max(12).optional().describe("标题前的短标签，如 新增、要你定、通过、P1"),
+    tone: tone.optional().describe("标签的颜色：info 说明、success 通过 / 完成、warning 要注意 / 要你定、danger 失败 / 严重、neutral 中性（默认）"),
+    url: webUrl.optional().describe("点标题打开的地址（文档、文件、运行页）"),
+  })).min(1).max(30),
+}).describe("一条一行的清单：决定、发现、文件和产物、方向、待办；每条可带彩色标签和链接");
+const fields = z.object({
+  type: z.literal("fields"),
+  items: z.array(z.object({ label: text(30), value: text(200) })).min(1).max(12),
+}).describe("名字和值成对排开：状态、负责人、分支、轮次、截止时间");
+const fold = z.object({
+  type: z.literal("fold"),
+  title: text(80),
+  text: text(6000).describe("Markdown"),
+  open: z.boolean().optional().describe("默认收起"),
+}).describe("收起的细节：依据、完整记录、长日志，先看结论的人不用读");
+const image = z.object({
+  type: z.literal("image"),
+  url: webUrl.describe("图片的 http(s) 地址（截图、示意图）；飞书里由宿主上传后显示"),
+  alt: z.string().max(120).optional(),
+  caption: z.string().max(200).optional().describe("图下的一句说明"),
+});
 
 const page = z.object({
   type: z.literal("page"),
@@ -78,7 +107,7 @@ const page = z.object({
   title: z.string().max(80).optional().describe("（宿主填）"),
 });
 
-export const viewComponent = z.discriminatedUnion("type", [markdown, heading, callout, metric, table, chart, compare, timeline, page]);
+export const viewComponent = z.discriminatedUnion("type", [markdown, heading, callout, metric, table, chart, compare, timeline, list, fields, fold, image, page]);
 export type ViewComponent = z.infer<typeof viewComponent>;
 export const viewSchema = z.array(viewComponent).min(1).max(40);
 
@@ -123,7 +152,21 @@ export type UiField = z.infer<typeof fieldSchema> & { group?: string };
 export const fieldsSchema = z.array(fieldSchema).min(1).max(30);
 
 /** What a question carries besides its text: a form, and what to look at while answering. */
-export type AskUi = { fields?: UiField[]; view?: ViewComponent[]; submitLabel?: string };
+export type AskUi = {
+  fields?: UiField[];
+  view?: ViewComponent[];
+  submitLabel?: string;
+  /** The host's own cards: what the card is about, what it belongs to, and its state as a coloured tag. */
+  head?: CardHead;
+  /** Shown by the card and the web in place of the question (which stays the text for agents, notifications and plain-text channels). */
+  body?: string;
+  /** Pages to open, as buttons under the content (the full design, the item's flow). */
+  links?: { text: string; url: string }[];
+};
+export type Tone = "info" | "success" | "warning" | "danger" | "neutral";
+export type CardHead = { title?: string; subtitle?: string; tag?: { text: string; tone: Tone } };
+/** Whether a question's `ui` has anything to keep. */
+export const hasUi = (ui: AskUi | null | undefined) => !!ui && !!(ui.fields?.length || ui.view?.length || ui.head || ui.body || ui.links?.length);
 
 /** Check a question's fields once, when the agent hands them in. */
 export function checkFields(fields: UiField[]) {
@@ -381,6 +424,18 @@ export function viewText(view: ViewComponent[]): string {
         break;
       case "timeline":
         out.push(c.items.map((i) => `- ${i.time} ${i.title}${i.text ? `：${i.text}` : ""}`).join("\n"));
+        break;
+      case "list":
+        out.push([c.title ? `**${c.title}**` : "", ...c.items.map((i) => `- ${i.tag ? `[${i.tag}] ` : ""}${i.url ? `[${i.title}](${i.url})` : i.title}${i.text ? `：${i.text.replace(/\n+/g, " ")}` : ""}`)].filter(Boolean).join("\n"));
+        break;
+      case "fields":
+        out.push(c.items.map((f) => `${f.label}：${f.value}`).join("\n"));
+        break;
+      case "fold":
+        out.push(`**${c.title}**\n${c.text}`);
+        break;
+      case "image":
+        out.push(`[图片${c.caption ? `：${c.caption}` : c.alt ? `：${c.alt}` : ""}](${c.url})`);
         break;
       case "page":
         out.push(`交互页“${c.title || c.id}”：在网页上打开才能操作`);

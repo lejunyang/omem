@@ -16,7 +16,7 @@ defineEmits<{ answered: [] }>();
 const appContext = getCurrentInstance()?.appContext;
 const mounted = new Set<HTMLElement>();
 function markdown(el: HTMLElement, source: string) {
-  const vnode = h(Markdown, { source, space: props.space });
+  const vnode = h(Markdown, { source, space: props.space, compact: true });
   if (appContext) vnode.appContext = appContext;
   render(vnode, el);
   mounted.add(el);
@@ -34,7 +34,7 @@ const draw = (el: unknown, c: ViewComponent) => {
   <section class="ui-view" :aria-label="title || '展示'">
     <h3 v-if="title" class="ui-title">{{ title }}</h3>
     <template v-for="(c, i) in components" :key="i">
-      <Markdown v-if="c.type === 'markdown'" :source="c.text" :space="space" />
+      <Markdown v-if="c.type === 'markdown'" :source="c.text" :space="space" compact />
       <UiPage v-else-if="c.type === 'page'" :page-id="c.id" :version="c.version" :height="c.height" :ask-id="askId" :can-submit="canSubmit" :draft="draft" @answered="$emit('answered')" />
       <div v-else :ref="(el) => draw(el, c)" />
     </template>
@@ -44,7 +44,7 @@ const draw = (el: unknown, c: ViewComponent) => {
 <style scoped>
 .ui-view {
   display: grid;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
   max-width: 760px;
   border: 1px solid var(--line);

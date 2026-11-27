@@ -6,6 +6,7 @@ import { HttpError, json, newId, now, truncate } from "../core/util.ts";
 import { currentBot } from "../core/bot-context.ts";
 import type { SentPurpose } from "./lark-feedback.ts";
 import { larkCardMarkdown } from "./lark-markdown.ts";
+import type { Tone } from "../agents/ui-blocks.ts";
 
 /**
  * Everything the Feishu bot can say: plain or Markdown text, replies (in a
@@ -100,6 +101,8 @@ export type CardSpec = {
   subtitle?: string;
   /** Header colour: blue wathet turquoise green yellow orange red carmine violet purple indigo grey */
   color?: string;
+  /** The card's state as a tag on the right of its title (需要你处理, 卡住了, 已通过), coloured by tone. */
+  tag?: { text: string; tone: Tone };
   blocks: CardBlock[];
   wide?: boolean;
   /** What the chat list and notifications show for the card (the title when not given). */
@@ -258,10 +261,13 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
     else if ("image" in b) elements.push({ tag: "img", img_key: b.image, alt: plain(b.alt ?? "") });
     else if ("element" in b) elements.push(b.element);
     else if ("fields" in b)
+      // Pairs on the same light grey surface as metric tiles and callouts (docs/v2/lark-cards.md).
       elements.push({
         tag: "column_set",
         flex_mode: "bisect",
-        columns: b.fields.map((f) => ({ tag: "column", width: "weighted", weight: 1, elements: [{ tag: "markdown", content: `<font color='grey'>${f.label}</font>\n**${f.value}**` }] })),
+        background_style: "grey-50",
+        horizontal_spacing: "12px",
+        columns: b.fields.map((f) => ({ tag: "column", width: "weighted", weight: 1, padding: "8px 12px 8px 12px", elements: [{ tag: "markdown", content: `<font color='grey'>${f.label}</font>\n**${f.value}**` }] })),
       });
     else if ("buttons" in b) elements.push(...buttonRows(b.buttons.map((btn) => ({ text: btn.text, button: button(btn, n++) }))));
     else if ("form" in b) {
@@ -289,10 +295,20 @@ export function buildCard(spec: CardSpec): Record<string, unknown> {
   return {
     schema: "2.0",
     config: { update_multi: true, width_mode: spec.wide ? "fill" : "default", ...(spec.summary ? { summary: { content: spec.summary } } : {}) },
-    ...(spec.title ? { header: { title: plain(spec.title), ...(spec.subtitle ? { subtitle: plain(spec.subtitle) } : {}), template: spec.color ?? "blue" } } : {}),
+    ...(spec.title ? { header: {
+      title: plain(spec.title),
+      ...(spec.subtitle ? { subtitle: plain(spec.subtitle) } : {}),
+      ...(spec.tag ? { text_tag_list: [{ tag: "text_tag", text: plain(spec.tag.text.slice(0, 12)), color: TAG_COLOR[spec.tag.tone] }] } : {}),
+      // With a state tag the header stays plain and the tag carries the colour (Feishu's card guidelines:
+      // private chats use plain headers, so not every card is highlighted).
+      template: spec.color ?? (spec.tag ? "default" : "blue"),
+    } } : {}),
     body: { elements },
   };
 }
+
+/** Feishu's tag colours by tone. */
+export const TAG_COLOR: Record<Tone, string> = { info: "blue", success: "green", warning: "orange", danger: "red", neutral: "neutral" };
 
 // ---- a decided card ---------------------------------------------------------------
 

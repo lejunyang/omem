@@ -22,6 +22,10 @@ export const GENERIC_KINDS = ["ask", "view"];
 export type Card = { id: string; title: string; summary?: string; pros?: string[]; cons?: string[] };
 /** `good`: which way is good news (up by default); `trend` is read off the change's sign when not given; `spark` is its recent course. */
 export type Metric = Omit<MetricItem, "link" | "hint">;
+/** How a callout, a list entry's tag or a card's status reads: a conclusion, done, needs attention, failed, neutral. */
+export type Tone = "info" | "success" | "warning" | "danger" | "neutral";
+/** One entry of a `list`: what it is, a line under it, a short coloured tag (新增, 要你定, 通过) and where it opens. */
+export type ListItem = { title: string; text?: string; tag?: string; tone?: Tone; url?: string };
 export type ViewComponent =
   | { type: "markdown"; text: string }
   | { type: "heading"; text: string }
@@ -31,6 +35,14 @@ export type ViewComponent =
   | { type: "callout"; tone: "info" | "success" | "warning" | "danger" | "neutral"; title?: string; text: string }
   | { type: "compare"; title?: string; items: Card[] }
   | { type: "timeline"; items: { time: string; title: string; text?: string }[] }
+  /** Entries one under another (decisions, findings, files, directions), each with an optional tag and link. */
+  | { type: "list"; title?: string; items: ListItem[] }
+  /** Name and value pairs, two to a row (state, owner, branch, round). */
+  | { type: "fields"; items: { label: string; value: string }[] }
+  /** Detail behind a title, closed unless `open`. */
+  | { type: "fold"; title: string; text: string; open?: boolean }
+  /** A picture by its https address; `caption` under it. */
+  | { type: "image"; url: string; alt?: string; caption?: string }
   /** An interactive page (`ui_page`): drawn by omem's own pages only; elsewhere a line that says where to open it. */
   | { type: "page"; id: string; version?: number; height?: number; title?: string };
 type ShowIf = { field: string; equals?: string | number | boolean; in?: string[] };
@@ -108,7 +120,33 @@ const CSS = `
 .ob .ob-check:last-child { border-bottom: 0; }
 .ob .ob-rank { list-style: none; margin: 0; padding: 0; }
 .ob .ob-rank .ob-check { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-@media (max-width: 520px) { .ob .ob-timeline li { grid-template-columns: minmax(0, 1fr); } }
+.ob .ob-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.ob .ob-list li { display: grid; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.ob .ob-list li:first-child { padding-top: 2px; }
+.ob .ob-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+.ob .ob-li-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ob .ob-li-head .badge { flex: none; height: 19px; font-size: 12px; transform: translateY(-1px); }
+.ob .ob-li-title { font-size: 14px; font-weight: 600; line-height: 1.55; min-width: 0; overflow-wrap: anywhere; }
+.ob .ob-li-title a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.ob .ob-li-title a:hover { text-decoration-color: currentColor; }
+.ob .ob-li-title a::after { content: " ↗"; color: var(--muted); font-weight: 400; }
+.ob .ob-list li > .ob-md, .ob .ob-list li > .ob-md .prose { color: var(--ink-2); font-size: 13px; line-height: 1.65; }
+.ob .ob-list li > .ob-md .prose > :first-child { margin-top: 0; }
+.ob .ob-list li > .ob-md .prose > :last-child { margin-bottom: 0; }
+.ob .ob-group { display: grid; gap: 4px; min-width: 0; }
+.ob .ob-caption { font-size: 13px; font-weight: 650; color: var(--ink-2); }
+.ob .ob-kv { display: grid; grid-template-columns: repeat(var(--kv, 2), minmax(0, 1fr)); gap: 10px 16px; margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--sunken); }
+.ob .ob-kv > div { display: grid; gap: 1px; min-width: 0; }
+.ob .ob-kv dt { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ob .ob-kv dd { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.ob .ob-fold { border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; }
+.ob .ob-fold > summary { padding: 8px 0; color: var(--ink-2); font-size: 13px; font-weight: 600; list-style-position: inside; }
+.ob .ob-fold[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.ob .ob-fold > .ob-md { padding-bottom: 10px; }
+
+.ob .ob-figure { margin: 0; display: grid; gap: 6px; justify-items: start; }
+.ob .ob-figure img { max-width: 100%; max-height: 480px; border-radius: 8px; border: 1px solid var(--line); }
+@media (max-width: 520px) { .ob .ob-timeline li { grid-template-columns: minmax(0, 1fr); } .ob .ob-kv { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 `;
 
 function ensureStyle(doc: Document) {
@@ -194,7 +232,34 @@ function component(doc: Document, c: ViewComponent, opts: RenderOptions, owner: 
       return h(doc, "p", { class: "ob-muted" }, `交互页“${c.title || c.id}”：在 omem 的问答页里打开`);
     case "timeline":
       return h(doc, "ol", { class: "ob-timeline" }, ...c.items.map((i) => h(doc, "li", {}, h(doc, "time", {}, i.time), h(doc, "div", {}, h(doc, "div", { class: "ob-label" }, i.title), i.text ? h(doc, "p", { class: "ob-muted ob-text" }, i.text) : null))));
+    case "list":
+      return list(doc, c, opts);
+    case "fields":
+      return h(doc, "dl", { class: "ob-kv", style: `--kv: ${c.items.length <= 4 ? c.items.length : c.items.length % 3 === 0 ? 3 : 4}` }, ...c.items.map((f) => h(doc, "div", {}, h(doc, "dt", {}, f.label), h(doc, "dd", {}, f.value))));
+    case "fold": {
+      const body = text(doc, c.text, opts);
+      return h(doc, "details", { class: "ob-fold", open: !!c.open }, h(doc, "summary", {}, c.title), body);
+    }
+    case "image":
+      return h(doc, "figure", { class: "ob-figure" },
+        safeUrl(c.url) ? h(doc, "img", { src: c.url, alt: c.alt ?? c.caption ?? "", loading: "lazy", referrerpolicy: "no-referrer" }) : h(doc, "p", { class: "ob-muted" }, "（图片地址不可用）"),
+        c.caption ? h(doc, "figcaption", { class: "ob-muted" }, c.caption) : null);
   }
+}
+
+/** Only web addresses open from a block: an agent's text never becomes a `javascript:` link. */
+const safeUrl = (url: string | undefined) => !!url && /^https?:\/\//i.test(url);
+/** Badge colours of omem's tokens by tone (web/src/styles.css `.badge`). */
+const BADGE: Record<Tone, string> = { info: "accent", success: "ok", warning: "warn", danger: "danger", neutral: "" };
+
+/** Entries on hairlines: the title (a link when it opens somewhere) with its tag, a line under it. */
+function list(doc: Document, c: Extract<ViewComponent, { type: "list" }>, opts: RenderOptions) {
+  const rows = c.items.map((i) => {
+    const title = safeUrl(i.url) ? h(doc, "a", { href: i.url!, target: "_blank", rel: "noopener" }, i.title) : h(doc, "span", {}, i.title);
+    const tag = i.tag ? h(doc, "span", { class: `badge ${BADGE[i.tone ?? "neutral"]}` }, i.tag) : null;
+    return h(doc, "li", {}, h(doc, "div", { class: "ob-li-head" }, tag, h(doc, "span", { class: "ob-li-title" }, title)), i.text ? text(doc, i.text, opts) : null);
+  });
+  return h(doc, "div", { class: "ob-group" }, c.title ? h(doc, "div", { class: "ob-caption" }, c.title) : null, h(doc, "ul", { class: "ob-list" }, ...rows));
 }
 
 function text(doc: Document, source: string, opts: RenderOptions) {

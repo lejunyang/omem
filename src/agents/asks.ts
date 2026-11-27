@@ -2,8 +2,9 @@ import type { App } from "../core/app.ts";
 import { all, one, run, tx } from "../core/db.ts";
 import { HttpError, newId, now, truncate, webLink } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
-import { fieldsText, normalizeAnswers, summarizeAnswers, viewText, type AskUi, type ViewComponent } from "./ui-blocks.ts";
+import { fieldsText, hasUi, normalizeAnswers, summarizeAnswers, viewText, type AskUi, type ViewComponent } from "./ui-blocks.ts";
 import { noteChoices } from "../items/choices.ts";
+import { stageCardUi } from "../flows/stage-card.ts";
 
 /** Marks a line of a tool's result that is for the agent (how to go on), not for the owner reading the approval's outcome. */
 export const AGENT_NOTE = "（给 Agent）";
@@ -118,7 +119,8 @@ export function toAsk(r: Row, requester?: string): Ask {
     answeredAt: r.answered_at,
     answeredBy: r.answered_by,
     handler: context.handler ?? null,
-    ui: r.ui ? (JSON.parse(r.ui) as AskUi) : null,
+    // A flow stage's card is laid out from its stored sections (src/flows/stage-card.ts).
+    ui: context.stageCard ? { ...stageCardUi(context.stageCard), ...(r.ui ? (JSON.parse(r.ui) as AskUi) : {}) } : r.ui ? (JSON.parse(r.ui) as AskUi) : null,
     value: r.value ? (JSON.parse(r.value) as Record<string, unknown>) : null,
     askedBy: context.askedBy ?? null,
     toName: context.toName ?? null,
@@ -189,7 +191,7 @@ export function createAsk(
     input.tool ?? null,
     input.args ? JSON.stringify(input.args) : null,
     input.context ? JSON.stringify(input.context) : null,
-    input.ui && (input.ui.fields?.length || input.ui.view?.length) ? JSON.stringify(input.ui) : null,
+    hasUi(input.ui) ? JSON.stringify(input.ui) : null,
     now(),
   );
   const ask = getAsk(app, id);
@@ -254,16 +256,19 @@ export function larkAppLink(app: App, path: string) {
   return `https://applink.feishu.cn/client/web_app/open?appId=${encodeURIComponent(appId)}&mode=sidebar&lk_target_url=${encodeURIComponent(`${base}${path}`)}`;
 }
 
+/** What a question shows besides its text, as text; a host card with its own `body` only restates the question in its view. */
+const shownView = (ask: Ask) => (ask.ui?.view?.length && ask.ui.body === undefined ? `\n${viewText(ask.ui.view)}\n` : "");
+
 /** An ask as plain text, for chats without buttons; `app` adds the link to its form. */
 export function askText(ask: Ask, app?: App) {
   if (ask.ui?.fields?.length) {
-    const view = ask.ui.view?.length ? `\n${viewText(ask.ui.view)}\n` : "";
+    const view = shownView(ask);
     return `需要你回答：${ask.question}${view}\n要填的：\n${fieldsText(ask.ui.fields)}\n${app ? `在网页上填写：${uiLink(app, ask.id)}\n` : ""}也可以直接回复文字。`.trim();
   }
   const opts = ask.kind === "approval" ? ["批准", "拒绝"] : ask.options.map((o) => o.label);
   const head = ask.kind === "approval" ? "需要你批准：" : ask.kind === "question" ? "需要你回答：" : ask.question ? "" : "下一步可以：";
   const how = ask.kind === "approval" ? "回复“批准”或“拒绝 + 理由”。" : opts.length ? `回复编号选择${ask.handler ? (ask.allowText ? "，要补充就以选项开头接着写（如“" + opts[0] + "，另外……”）" : "") : ask.allowText ? "，或直接写你的回答" : ""}。` : "直接回复即可。";
-  const view = ask.ui?.view?.length ? `\n${viewText(ask.ui.view)}\n` : "";
+  const view = shownView(ask);
   return `${head}${ask.question}${view}\n${ask.kind === "approval" ? "" : opts.map((o, i) => `${i + 1}. ${o}`).join("\n")}\n${how}`.replace(/\n{3,}/g, "\n\n").trim();
 }
 

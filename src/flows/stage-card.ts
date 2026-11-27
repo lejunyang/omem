@@ -2,6 +2,7 @@ import type { App } from "../core/app.ts";
 import { webLink } from "../core/util.ts";
 import type { Ask } from "../agents/asks.ts";
 import type { Item } from "../items/store.ts";
+import type { AskUi, Tone, ViewComponent } from "../agents/ui-blocks.ts";
 
 export type StageCard = {
   title: string;
@@ -27,6 +28,35 @@ export function stageCard(app: App, item: Item, stage: { id: string; name: strin
       [kind === "blocked" ? "建议的做法" : "这一段做什么", parts.plan], ["接下来", parts.next], ["依据", parts.evidence]]
       .flatMap(([label, text]) => text?.trim() ? [{ label: label!, text }] : []),
     textAction: parts.textAction ?? stageCardLabels.text };
+}
+
+/** The section that says what is asked of the person, by the stage's state: set off as a callout. */
+const ASKED = new Set(["这一段要做什么", "卡点", "为什么问你", "要你定的事"]);
+const STATUS_TONE: Record<string, Tone> = { 卡住了: "danger", 到你了: "warning", 等你确认开始: "info", 等你确认做完: "success" };
+/** Supporting evidence is folded once the card is long or the evidence itself is. */
+const LONG = 1200;
+
+/**
+ * A stage card as the host's card layout (shared by Feishu and the web): the stage as the title, the
+ * item under it, the state as a tag; what is asked set off, the evidence folded, the item's flow as a
+ * button. Read off the stored card, so cards asked before this layout look the same.
+ */
+export function stageCardUi(card: StageCard): AskUi {
+  const m = /^「(.+)」(.+)$/.exec(card.title);
+  const status = m?.[2] ?? "需要你";
+  const tone = STATUS_TONE[status] ?? "warning";
+  const total = card.sections.reduce((n, s) => n + s.text.length, 0);
+  const view: ViewComponent[] = card.sections.map(({ label, text }): ViewComponent =>
+    ASKED.has(label) ? { type: "callout", tone: label === "为什么问你" || label === "这一段要做什么" ? "info" : "warning", title: label, text: text.slice(0, 2000) }
+    : label === "依据" && (total > LONG || text.length > 400) ? { type: "fold", title: label, text: text.slice(0, 6000) }
+    // A hard line break: the label right above its text in Feishu and on the web alike.
+    : { type: "markdown", text: `**${label}**  \n${text}`.slice(0, 6000) });
+  return {
+    head: { title: m ? `「${m[1]}」` : card.title, subtitle: card.itemTitle, tag: { text: status, tone } },
+    body: "",
+    ...(view.length ? { view } : {}),
+    links: [{ text: "事项流程页", url: card.flowUrl }, { text: stageCardLabels.discuss, url: card.discussUrl }].filter((l) => /^https?:/.test(l.url)),
+  };
 }
 
 export function stageCardText(card: StageCard) {

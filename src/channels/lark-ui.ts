@@ -1,9 +1,9 @@
 import type { App } from "../core/app.ts";
 import { truncate } from "../core/util.ts";
-import { changeText, metricTone, viewText, type ViewComponent } from "../agents/ui-blocks.ts";
+import { changeText, metricTone, viewText, type Tone, type ViewComponent } from "../agents/ui-blocks.ts";
 import { resolveCitationsSync } from "./common.ts";
 import { botOfChannel } from "../core/bot-context.ts";
-import { cardText, type CardBlock, type Target } from "./lark-send.ts";
+import { cardText, larkClientFor, type CardBlock, type Target } from "./lark-send.ts";
 import { one } from "../core/db.ts";
 
 /**
@@ -247,11 +247,74 @@ function compare(c: Extract<ViewComponent, { type: "compare" }>): CardBlock[] {
   return out;
 }
 
+/** Feishu's `text_tag` colours inside card Markdown, by tone. */
+const TAG: Record<Tone, string> = { info: "blue", success: "green", warning: "orange", danger: "red", neutral: "neutral" };
+const tagMd = (text: string, tone: Tone = "neutral") => `<text_tag color='${TAG[tone]}'>${cardText(text.slice(0, 12))}</text_tag>`;
+
+/**
+ * Entries one under another: the tag, then the title in bold (a link when it opens somewhere), the
+ * line under it in grey. Short entries share one Markdown element; entries with a line each take one,
+ * on hairlines, so they read as separate items on a phone.
+ */
+function list(app: App, c: Extract<ViewComponent, { type: "list" }>): CardBlock[] {
+  const line = (i: (typeof c.items)[number]) => {
+    const title = `**${i.url ? `[${cardText(i.title)}](${i.url})` : cardText(i.title)}**`;
+    return `${i.tag ? `${tagMd(i.tag, i.tone)} ` : ""}${title}`;
+  };
+  const out: CardBlock[] = c.title ? [caption(c.title)] : [];
+  if (!c.items.some((i) => i.text)) return [...out, { element: md(c.items.map(line).join("\n")) }];
+  c.items.forEach((i, n) => {
+    const text = i.text ? `\n${grey(resolveCitationsSync(app, truncate(i.text, 1000)))}` : "";
+    out.push({ element: md(`${line(i)}${text}`, n ? { margin: "4px 0px 0px 0px" } : {}) });
+  });
+  return out;
+}
+
+/**
+ * Never fetched for a card: this machine itself (whose API trusts local requests) and link-local
+ * addresses. Other hosts, intranet ones included, are fetched like a browser would.
+ */
+const LOCAL_HOST = /^(localhost|.*\.localhost|0\.0\.0\.0|127\.\d+\.\d+\.\d+|\[?::1?\]?|169\.254\.\d+\.\d+|\[?fe80:.*)$/i;
+const IMAGE_MAX = 10 * 1024 * 1024;
+
+/** The `img_key` of each image a view shows, uploaded with the bot that will post the card; failures are left out. */
+export async function cardImages(view: ViewComponent[], bot?: string | null): Promise<Map<string, string>> {
+  const keys = new Map<string, string>();
+  for (const c of view) {
+    if (c.type !== "image" || keys.has(c.url)) continue;
+    const key = await uploadImageUrl(c.url, bot).catch(() => null);
+    if (key) keys.set(c.url, key);
+  }
+  return keys;
+}
+
+async function uploadImageUrl(url: string, bot?: string | null): Promise<string | null> {
+  const u = new URL(url);
+  if (!/^https?:$/.test(u.protocol) || LOCAL_HOST.test(u.hostname)) return null;
+  const res = await fetch(u, { redirect: "error", signal: AbortSignal.timeout(15_000) });
+  if (!res.ok || !/^image\//.test(res.headers.get("content-type") ?? "") || Number(res.headers.get("content-length") ?? 0) > IMAGE_MAX) return null;
+  const image = Buffer.from(await res.arrayBuffer());
+  if (image.length > IMAGE_MAX) return null;
+  const d = await larkClientFor(bot).im.image.create({ data: { image_type: "message", image } });
+  return (d?.image_key ?? d?.data?.image_key ?? null) as string | null;
+}
+
+/**
+ * Images are uploaded before the card is built (`cardImages`), since a card shows only `img_key`s;
+ * one that could not be uploaded is a link.
+ */
+function image(c: Extract<ViewComponent, { type: "image" }>, keys?: Map<string, string>): CardBlock[] {
+  const key = keys?.get(c.url);
+  if (!key) return [{ markdown: `[${cardText(c.caption ?? c.alt ?? "看图片")}](${c.url})` }];
+  return [{ image: key, alt: c.alt ?? c.caption }, ...(c.caption ? [{ note: cardText(c.caption) }] : [])];
+}
+
 /**
  * A view's components as card blocks. A card cannot run an interactive page: with a link to open
  * (`linked`, the caller adds the button) the page is left out, otherwise it is named in a line.
+ * `images`: the `img_key` of each image's address (`cardImages`).
  */
-export function viewCardBlocks(app: App, view: ViewComponent[], opts: { linked?: boolean } = {}): CardBlock[] {
+export function viewCardBlocks(app: App, view: ViewComponent[], opts: { linked?: boolean; images?: Map<string, string> } = {}): CardBlock[] {
   const out: CardBlock[] = [];
   let tables = 0, charts = 0;
   for (const c of view) {
@@ -273,6 +336,10 @@ export function viewCardBlocks(app: App, view: ViewComponent[], opts: { linked?:
     else if (c.type === "heading") out.push({ element: md(`**${cardText(c.text)}**`, { text_size: "heading", margin: "8px 0px 0px 0px" }) });
     else if (c.type === "timeline")
       out.push({ markdown: c.items.map((i) => `${grey(cardText(i.time))}　**${cardText(i.title)}**${i.text ? `\n${cardText(i.text)}` : ""}`).join("\n") });
+    else if (c.type === "list") out.push(...list(app, c));
+    else if (c.type === "fields") out.push({ fields: c.items.map((f) => ({ label: cardText(f.label), value: cardText(f.value) })) });
+    else if (c.type === "fold") out.push({ fold: { title: cardText(c.title), markdown: resolveCitationsSync(app, truncate(c.text, 6000)), open: c.open } });
+    else if (c.type === "image") out.push(...image(c, opts.images));
     else out.push({ markdown: resolveCitationsSync(app, truncate(viewText([c]), 3000)) });
   }
   return out;
