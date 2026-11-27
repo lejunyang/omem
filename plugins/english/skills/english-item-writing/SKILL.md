@@ -41,3 +41,9 @@ description: 出英语练习题（选择、填空、听写、翻译）的质量�
 `level` 按这题对本人的难度标（CEFR）：A1 日常基础词句，A2 简单场景，B1 能应付大多数日常和工作场景，B2 较复杂的句式和地道搭配，C1 以上细微差别和书面语。标得准，画像才准。
 
 `explanation` 写一句提交后给本人看的解释：为什么是这个答案、容易错在哪。
+
+## 材料题
+
+中文原件优先做 `translate`（`direction: zh-en`）。保留说话意图，换掉人名、敏感数字和具体业务细节。参考译文写对方在这个关系和语气下真的会说的话。《差旅报销制度》里“确定日期再订票”可以改成“行程定了我再订票”，译作 “I’ll book the tickets once the dates are set.” 点评点明搭配或语气，例如用 “once the dates are set” 表示时间确定后，用 “confirm the time” 容易让人以为在核对具体几点。
+
+英文原件优先挑能迁移到别的场合的搭配，换语境做单空填空或选择。例如材料写 “Leave room for questions after the talk.”，可以改成 “Does the workshop schedule leave ___ for a short break?”（答案 room）。释义选择题也另造例句，不把原句拿来加粗一个词。每道材料题填它自己的 material（真实引用、标题、匿名中文简述），expression 写中文意思和地道英文，points 第一项用稳定的 word: 或 phrase: 标出这个表达。题目、提示和选项只放练习所需的改写。

@@ -505,7 +505,7 @@ export function seedBuiltinSkills(app: App, packageRoot: string) {
     if (!existsSync(join(mine, "SKILL.md"))) {
       cpSync(join(dir, name), mine, { recursive: true, force: false });
       added.push(name);
-    } else if (builtinChanged(join(dir, name), mine) && untouchedBuiltin(app, name)) {
+    } else if (canUpdateSeededSkill(app, name, join(dir, name), c => /^omem: (add|update) built-in skills /.test(c))) {
       cpSync(join(dir, name), mine, { recursive: true, force: true });
       updated.push(name);
     }
@@ -528,11 +528,12 @@ function builtinChanged(pkg: string, mine: string) {
  * content at the latest commit omem made of it (seeding or an earlier update). A copy the owner or
  * an agent edited (or one from before the library kept history) stays theirs and is never replaced.
  */
-function untouchedBuiltin(app: App, name: string) {
+export function canUpdateSeededSkill(app: App, name: string, pkg: string, seededBy: (message: string) => boolean) {
   const mine = join(skillsDir(app), name);
+  if (!builtinChanged(pkg, mine)) return false;
   return filesUnder(mine).every((f) => {
     const rel = `_skills/${name}/${f.replace(/\\/g, "/")}`;
-    const seeded = fileHistory(app.libraryDir, rel).find((c) => /^omem: (add|update) built-in skills /.test(c.message));
+    const seeded = fileHistory(app.libraryDir, rel).find(c => seededBy(c.message));
     return !!seeded && fileAt(app.libraryDir, seeded.hash, rel) === readFileSync(join(mine, f), "utf8");
   });
 }

@@ -19,7 +19,7 @@ import { saveConfig } from "../core/config.ts";
 import { commitLibrary } from "../core/git.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
-import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
+import { agentSpecSchema, canUpdateSeededSkill, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
 import { CORE_TOOLS, TOOL_GROUPS, expandTools } from "../agents/tool-help.ts";
 import { registerTool, saveSourceFor, toolList, unregisterTools, watchesFor, type ToolContext } from "../agents/tools.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
@@ -606,19 +606,25 @@ setPluginSpecSource({
   raw: specRaw,
 });
 
-/** Skills ship with the plugin and are copied into the library once, like the built-in ones. */
+/** Seed missing skills and refresh untouched copies of bundled skills. */
 function seedSkills(app: App, p: LoadedPlugin) {
   const added: string[] = [];
+  const updated: string[] = [];
+  const origin = `skills of plugin ${p.manifest.id}: `;
   for (const name of p.manifest.skills) {
     const src = join(p.dir, "skills", name, "SKILL.md");
     const dest = join(app.libraryDir, "_skills", name);
-    if (!existsSync(src) || existsSync(join(dest, "SKILL.md"))) continue;
+    if (!existsSync(src)) continue;
+    const exists = existsSync(join(dest, "SKILL.md"));
+    if (exists && (p.source !== "builtin" || !canUpdateSeededSkill(app, name, dirname(src),
+      msg => ["omem: add " + origin, "omem: update " + origin].some(prefix => msg.startsWith(prefix) && msg.slice(prefix.length).split(", ").includes(name))))) continue;
     mkdirSync(dest, { recursive: true });
     // The files themselves, never what a link in the plugin points at (anything on this machine).
     cpSync(dirname(src), dest, { recursive: true, filter: (from) => !lstatSync(from).isSymbolicLink() });
-    added.push(name);
+    (exists ? updated : added).push(name);
   }
-  if (added.length) commitLibrary(app.libraryDir, `omem: add skills of plugin ${p.manifest.id}: ${added.join(", ")}`);
+  if (added.length) commitLibrary(app.libraryDir, `omem: add ${origin}${added.join(", ")}`, added.map(name => `_skills/${name}`));
+  if (updated.length) commitLibrary(app.libraryDir, `omem: update ${origin}${updated.join(", ")}`, updated.map(name => `_skills/${name}`));
 }
 
 /**

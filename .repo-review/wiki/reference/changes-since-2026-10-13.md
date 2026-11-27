@@ -5,6 +5,11 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 英语陪练用材料出题与今日学习（2026-11-28）
+
+- 从 `plugins/english/server.ts` 看题目、口语简报、评价及每日课程，从 `materials.ts` 看引用核对与去重。表达跟着画像里的知识点复习，语音模型收到匿名简述。
+- `src/plugins/settings.ts` 和 `src/agents/runner.ts` 限定材料读取范围。规则 `plugins/english/rules/daily-lesson.yaml` 初次导入停用；启用后每天准备课程并用宿主通知发链接。页面数据约定在 `docs/v2/plugins.md` 的“材料出处和今日学习”。
+
 ## Codex 启动流量（2026-11-28）
 
 - omem 启动的 Codex 关闭 `plugin_discovery_prefetch`。ACP 用 `CODEX_PATH` 给原本选中的 Codex 传启动参数，CLI 后备和额度查询直接传同一开关。仍可按需浏览和使用插件。

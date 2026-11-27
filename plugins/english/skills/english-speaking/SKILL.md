@@ -34,3 +34,9 @@ review 原样显示给学习者，用中文写，英文例句保留英文：
 ## points 怎么记
 
 和出题用同一套写法（`word:<词原形>`、`phrase:<短语>`、`grammar:<语法点>`，小写英文）。说错的、用中文求助的记 `correct: false`，`error_tag` 用出题时的错误类型（tense、article、preposition、word-choice……）；用对了且值得记的记 `correct: true`。它们会进学习画像，薄弱的会出现在之后的题里。反复说错的单词或短语，也可以用 `create_card` 加成复习卡。
+
+## 材料口语场景
+
+从读过的几行里提炼双方角色、要商量的一件事和说完应达成的结果。例如让学习者向同事解释评审结论，最后约好下一步。scene 写角色和任务，goal 写可迁移的说法，material 附核对过的原件引用和标题。summary 是给语音模型的匿名背景，用一两句概括，去掉人名、私密细节和敏感数字。
+
+评价只依据实际对话。把用到或卡住的材料表达按已有 word: / phrase: 记入 points，并填 expression 的 zh、en。制作复习卡时，背面附材料的标题与引用。

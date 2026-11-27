@@ -9,18 +9,19 @@ import { savePluginSettings } from "../src/plugins/settings.ts";
 import { createUser } from "../src/core/users.ts";
 import { createSpace, findSpace, updateSpace } from "../src/core/spaces.ts";
 import { createSession, sessionView, submitBlock } from "../src/plugins/blocks.ts";
-import { describePlugin, getPlugin, loadPlugins, setPluginIcon } from "../src/plugins/registry.ts";
+import { describePlugin, getPlugin, loadPlugins, setPluginEnabled, setPluginIcon } from "../src/plugins/registry.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { webLink } from "../src/core/util.ts";
 import { levelOf, nextRating, normalize, pickFromBank, snapshot, wordAccuracy, type BankEntry } from "../plugins/english/learner.ts";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { commitLibrary, ensureLibraryRepo } from "../src/core/git.ts";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 async function englishApp() {
   const app = testApp();
-  await loadPlugins(app);
+  await loadPlugins(app, undefined, manifest => manifest.id === "english");
   return app;
 }
 
@@ -61,6 +62,20 @@ describe("plugins", () => {
     expect(findAgentSpec(app, "english-tutor")).toMatchObject({ description: "我的英语陪练", plugin: "english" });
     deleteAgentSpec(app, "english-tutor");
     expect(findAgentSpec(app, "english-tutor")!.description).not.toBe("我的英语陪练");
+  });
+
+  it("refreshes seeded tutor skills on upgrade and preserves an edited copy", async () => {
+    const app = await englishApp();
+    ensureLibraryRepo(app.libraryDir);
+    const skill = (name: string) => join(app.libraryDir, "_skills", name, "SKILL.md");
+    writeFileSync(skill("english-item-writing"), "old writing guide\n");
+    writeFileSync(skill("english-speaking"), "old speaking guide\n");
+    commitLibrary(app.libraryDir, "omem: add skills of plugin english: english-item-writing, english-speaking");
+    writeFileSync(skill("english-speaking"), "my speaking guide\n");
+    await setPluginEnabled(app, "english", false);
+    await setPluginEnabled(app, "english", true);
+    expect(readFileSync(skill("english-item-writing"), "utf8")).toContain("材料题");
+    expect(readFileSync(skill("english-speaking"), "utf8")).toBe("my speaking guide\n");
   });
 
   it("a quiz goes to the page without its answers; a submission is graded, recorded and reaches the tutor", async () => {
