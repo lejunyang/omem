@@ -14,33 +14,28 @@ export const expression = z.object({
 export type Expression = z.infer<typeof expression>;
 export type LearnedExpression = Expression & { material: Material };
 
+export type MaterialUse = Material & { sourceId: string; lastUsedAt: string };
+export const recentMaterials = (store: PluginStore) => store.get<MaterialUse[]>("history", "materials") ?? [];
+
 const citation = /^src:([\w-]+)#L([1-9]\d*)-L([1-9]\d*)$/;
-export function checkMaterials(ctx: PluginContext, entries: { material?: Material }[], warnings: string[]) {
+export function useMaterials(ctx: PluginContext, entries: { material?: Material }[], warnings: string[], at: string) {
   const cited = entries.flatMap(entry => entry.material ? [{ entry, match: citation.exec(entry.material.ref) }] : []);
   if (!cited.length) return;
   const ids = [...new Set(cited.flatMap(c => c.match ? [c.match[1]] : []))];
   const sources = ctx.materialSources(ids);
+  const used = new Map<string, MaterialUse>();
   let dropped = 0;
   for (const { entry, match } of cited) {
     const source = match && sources.get(match[1]);
     if (match && source && Number(match[2]) <= Number(match[3]) && Number(match[3]) <= source.lines) {
       entry.material = { ...entry.material!, title: source.title };
+      const sourceId = match[1];
+      used.set(sourceId, { ...entry.material, sourceId, lastUsedAt: at });
     } else {
       delete entry.material;
       dropped++;
     }
   }
   if (dropped) warnings.push(`已去掉 ${dropped} 处无效或不在材料空间内的出处。`);
-}
-
-export type MaterialUse = Material & { sourceId: string; lastUsedAt: string };
-export const recentMaterials = (store: PluginStore) => store.get<MaterialUse[]>("history", "materials") ?? [];
-export function rememberMaterials(store: PluginStore, entries: { material?: Material }[], at: string) {
-  const used = new Map<string, MaterialUse>();
-  for (const { material } of entries) {
-    if (!material) continue;
-    const sourceId = material.ref.slice(4, material.ref.indexOf("#"));
-    used.set(sourceId, { ...material, sourceId, lastUsedAt: at });
-  }
-  if (used.size) store.put("history", "materials", [...used.values(), ...recentMaterials(store).filter(r => !used.has(r.sourceId))].slice(0, 60));
+  if (used.size) ctx.store.put("history", "materials", [...used.values(), ...recentMaterials(ctx.store).filter(r => !used.has(r.sourceId))].slice(0, 60));
 }

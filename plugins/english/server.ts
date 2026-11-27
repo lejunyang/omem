@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { PluginApi, PluginContext } from "../../src/plugins/types.ts";
-import { material, expression, checkMaterials, rememberMaterials } from "./materials.ts";
+import { material, expression, useMaterials } from "./materials.ts";
 import { applyAttempt, applyPoint, applySpeaking, LEVELS, normalize, PASS, pickFromBank, SKILLS, snapshot, snapshotText, wordAccuracy, type Attempt, type BankEntry, type SpeakingAssessment, type SpeakingRecord } from "./learner.ts";
 
 /**
@@ -175,7 +175,6 @@ export default function register(api: PluginApi) {
       "在练习页上交给本人一组英语题（1–20 题，通常 6–12 题），本人做完一次提交。题型：choice（中选英、英选中、听音选意，可带 audio）、cloze（句子填空）、dictation（听写，audio 是原句）、translate（句子翻译，由你评分）。每题标 skill、level、points。交出后这一轮只说一句开场白，不要在文字里重复题目。",
     schema: quiz,
     prepare: (q, ctx, warnings) => {
-      checkMaterials(ctx, q.items, warnings);
       const used = new Set<string>();
       const items = q.items.map((it, i) => {
         checkItem(it, i);
@@ -184,7 +183,7 @@ export default function register(api: PluginApi) {
         used.add(id);
         return { ...it, id, points: it.points.map((p) => p.trim().toLowerCase()).filter(Boolean) };
       });
-      rememberMaterials(ctx.store, items, new Date().toISOString());
+      useMaterials(ctx, items, warnings, new Date().toISOString());
       return { ...q, items };
     },
     publicView: (q) => ({
@@ -217,8 +216,7 @@ export default function register(api: PluginApi) {
       "在练习页上放一次英语口语练习：本人和语音模型按场景对话（语音模型扮演场景里的另一个人，卡住时可以用中文问），结束后对话记录作为下一条消息回来，你用 english_speaking_grade 评价。本人想练口语、或你觉得该练说的时候用；交出后这一轮只说一句开场白。",
     schema: speakingBlock,
     prepare: (b, ctx, warnings) => {
-      checkMaterials(ctx, [b], warnings);
-      rememberMaterials(ctx.store, [b], new Date().toISOString());
+      useMaterials(ctx, [b], warnings, new Date().toISOString());
       return b;
     },
     grade: gradeSpeaking,
@@ -320,8 +318,7 @@ export default function register(api: PluginApi) {
       a.items.forEach((it, i) => checkItem(it, i));
       const at = new Date().toISOString();
       const warnings: string[] = [];
-      checkMaterials(ctx, a.items, warnings);
-      rememberMaterials(ctx.store, a.items, at);
+      useMaterials(ctx, a.items, warnings, at);
       for (const it of a.items) {
         ctx.store.put("bank", null, { item: bankItem(it), scene: a.scene.trim(), addedAt: at } satisfies BankEntry);
       }
@@ -339,9 +336,8 @@ export default function register(api: PluginApi) {
       const at = new Date().toISOString();
       const warnings: string[] = [];
       a.quiz.items.forEach(checkItem);
-      const entries = [...a.expressions, ...a.quiz.items, a.speaking];
-      checkMaterials(ctx, entries, warnings);
       ctx.store.transaction(() => {
+        useMaterials(ctx, [...a.expressions, ...a.quiz.items, a.speaking], warnings, at);
         const previous = ctx.store.get<Lesson>("lessons", date);
         previous?.quiz.items.forEach((_, i) => ctx.store.delete("bank", `${date}:${i + 1}`));
         // Keep ordinary bank questions. Older lesson questions remain playable from their dated lesson.
@@ -354,7 +350,6 @@ export default function register(api: PluginApi) {
           item: bankItem(it), scene: a.theme, lessonDate: date, addedAt: at,
         } satisfies BankEntry));
         ctx.store.put("lessons", date, { ...a, date, updatedAt: at } satisfies Lesson);
-        rememberMaterials(ctx.store, entries, at);
       });
       return `已保存 ${date} 今日学习「${a.theme}」，${a.quiz.items.length} 题。用 notify 通知本人一次，link 填 ${lessonLink(date)}` + warnings.join("");
     },
