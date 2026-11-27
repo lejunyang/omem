@@ -44,6 +44,7 @@ import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpace
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, activeUser, identityOwner, findUser, requireMembershipSpace, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
 import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema, reviseStudyFindingSchema, queueStudyFixesSchema } from "../studies/schema.ts";
+import { attachText, deleteArtifacts, evidenceTextSchema } from "./artifacts.ts";
 import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
 import { featuresOf, larkDomainFeature } from "../auth/features.ts";
@@ -53,7 +54,7 @@ import { larkActor } from "../channels/lark-cli.ts";
 import { commandPath } from "../channels/lark-cli-tools.ts";
 import { actingAs } from "../rules/run-as.ts";
 import { needConnection } from "../auth/connect-wait.ts";
-import { hiddenSourceIds, readableSourceIds, hitFilter, isRestricted, requireReadable, visibleHits } from "../auth/visibility.ts";
+import { hiddenSourceIds, readableSourceIds, hitFilter, isRestricted, requireReadable, sourceReadable, visibleHits } from "../auth/visibility.ts";
 import { HttpError, newId, now, sameSecret, slugify, truncate, localStamp } from "../core/util.ts";
 import { checkBrief } from "./brief.ts";
 import { createCard } from "../learn/cards.ts";
@@ -108,6 +109,8 @@ import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows,
 import type { SearchOptions } from "../search/search.ts";
 
 export type ToolContext = {
+  /** The request came from a sandbox with no access to this host's files. */
+  via?: "cloud-http";
   /** Host-only identity of the ACP prompt currently using this token and the command wrappers. */
   commandTurn?: string;
   /** Account whose HOME the local process sees. Defaults to the machine login. */
@@ -302,6 +305,35 @@ function renderMemorySource(ctx: ToolContext, id: string): string {
   if (!r) throw new HttpError(404, `记忆不存在：${id}`);
   const refs = r.source_refs ? (JSON.parse(r.source_refs) as string[]) : [];
   return `记忆 ${r.id} · ${r.space_id}:${r.kind}${r.subject ? ` · ${r.subject}` : ""} · ${r.status} · ${r.created_at.slice(0, 10)}\n来源：${refs.join("、") || "（无）"}\n引用格式：[文字](mem:${r.id})\n\n${r.content}`;
+}
+
+async function larkMessageSource(ctx: ToolContext, messageId: string, requested?: string) {
+  const target = requested ? space(ctx, requested) : null;
+  const scope = ctx.spaces && JSON.stringify(ctx.spaces);
+  const rows = all<{ id: string; line: number }>(ctx.app.db, `
+    with copies as (
+      select source_id, line from lark_message_lines where message_id=?
+      union all select m.source_id, m.line from lark_messages m where m.message_id=? and m.source_id is not null and m.line is not null
+        and not exists(select 1 from lark_message_lines l where l.source_id=m.source_id and l.message_id=m.message_id)
+    )
+    select s.id, c.line from copies c join sources s on s.id=c.source_id
+    where s.kind='chat' and s.deleted_at is null and c.line > 0
+      and (? is null or s.space_id=?) and (? is null or s.space_id in (select value from json_each(?)))
+    order by s.space_id=? desc, s.updated_at desc, s.id limit 32`, messageId, messageId, target, target, scope, scope, ctx.spaceId);
+  for (const row of rows) if (await sourceReadable(ctx.app, ctx.userId ?? OWNER, row.id)) return row;
+  throw new HttpError(404, "没找到这条飞书消息的可读聊天原件。确认消息已采集，或用 search 搜已采集的聊天正文。");
+}
+
+const studyIds: Record<string, string> = { t: "试验", d: "方向", f: "发现" };
+const studyIdLabel = (ref: string) => studyIds[/^s([tdf])[a-z0-9]{9}[0-9a-f]{10}$/.exec(ref)?.[1] ?? ""];
+
+function evidencePath(value: string) {
+  return !/[:\r\n]/.test(value.replace(/^[A-Za-z]:[\\/]/, "")) &&
+    (/^(?:[.~]?[\\/]|\$OMEM_ARTIFACTS\b|[A-Za-z]:[\\/])/.test(value) || /^[^\s]+[\\/][^\s]+$/.test(value) || /^[^\s]+\.[a-z0-9]{1,8}$/i.test(value));
+}
+const cloudPathHint = "这是你那边沙箱里的文件，宿主读不到。把要交的正文放进对应交结果工具的 evidence_text 参数。";
+function checkEvidencePaths(ctx: ToolContext, refs: string[]) {
+  if (ctx.via === "cloud-http" && refs.some(evidencePath)) throw new HttpError(400, cloudPathHint);
 }
 
 function resolveSource(ctx: ToolContext, ref: string, spaceId?: string | null) {
@@ -587,18 +619,30 @@ def({
 
 def({
   name: "read_source",
-  description: "读取一个来源的内容：原件 id/路径（可按 from/to 读指定行），或 msg:<消息id>（本人/助理说过的话）、mem:<记忆id>。引用记忆或对话来源时先读它核对。",
+  description: "读取一个来源的内容：原件 id/路径（可按 from/to 读指定行），也可用 msg:<消息id> 读取会话原话或已采集的飞书消息，或用 mem:<记忆id> 读记忆。",
   schema: z.object({
-    source: z.string(),
+    source: z.string({ error: "source 必填，填 search 返回的原件 id 或 msg:<消息 id>" }),
     from: z.number().int().min(1).optional(),
     to: z.number().int().min(1).optional(),
     space: z.string().optional(),
   }),
   handler: async (ctx, a) => {
-    const id = resolveSource(ctx, a.source, a.space);
-    if (!id.startsWith("__")) await requireReadable(ctx.app, ctx.userId ?? OWNER, id);
-    const from = a.from ?? 1;
-    const to = Math.min(a.to ?? from + 399, from + 399);
+    const messageId = /^msg:(om_[\w-]+)$/.exec(a.source)?.[1];
+    if (/^om_[\w-]+$/.test(a.source)) throw new HttpError(400, "这是飞书消息 id；source 填 msg:<消息 id> 读取采集到的原文。");
+    if (/^(?:run:)?r[a-z0-9]{9}[0-9a-f]{10}$/.test(a.source)) throw new HttpError(400, "这是运行 id；用 read_run 的 run_id 参数读取。");
+    const study = studyIdLabel(a.source);
+    if (study) throw new HttpError(400, `这是研究的${study} id；用 read_ledger，item 填所属研究的事项 id。`);
+    const location = messageId ? await larkMessageSource(ctx, messageId, a.space) : null;
+    let id: string;
+    try { id = location?.id ?? resolveSource(ctx, a.source, a.space); }
+    catch (e) {
+      if (e instanceof HttpError && e.status === 404 && ctx.via === "cloud-http" && evidencePath(a.source))
+        throw new HttpError(404, `宿主找不到这条原件路径。如果它是你那边沙箱里的文件，宿主读不到。${["trial_report", "stage_report", "record_finding"].some(name => ctx.tools?.has(name)) ? "把要交的正文放进交结果工具的 evidence_text 参数。" : "用 search 找已收录的材料，再把原件 id 填入 source。"}`);
+      throw e;
+    }
+    if (!location && !id.startsWith("__")) await requireReadable(ctx.app, ctx.userId ?? OWNER, id);
+    const from = a.from ?? location?.line ?? 1;
+    const to = Math.min(a.to ?? (location && a.from === undefined ? location.line : from + 399), from + 399);
     const view = ctx.view;
     if (id.startsWith("__msg__:")) {
       const at = one<{ created_at: string }>(ctx.app.db, "select created_at from messages where id = ?", id.slice(8))?.created_at;
@@ -1762,6 +1806,8 @@ def({
   description: "读取 Wiki 页面全文，以及反向链接、引用原件和是否过期。",
   schema: z.object({ page: z.string().describe("页面路径（slug），可写成 space/slug"), space: z.string().optional() }),
   handler: async (ctx, a) => {
+    const larkHint = "page 填 omem Wiki 的路径（slug）。手里是飞书知识库节点 token 时，用 lark_doc_fetch 的 doc 参数传完整飞书链接；已收录的文档可用 search 找到原件 id，再用 read_source。";
+    if (/^https?:\/\/[^/]+\/(?:wiki|docx)\//i.test(a.page)) throw new HttpError(400, larkHint);
     let sp = a.space;
     let slug = a.page.replace(/^wiki:/, "");
     if (!sp && slug.includes("/") && findSpace(ctx.app, slug.split("/")[0])) [sp, slug] = [slug.split("/")[0], slug.split("/").slice(1).join("/")];
@@ -1771,7 +1817,14 @@ def({
     const wv = await import("../wiki/verify.ts");
     const draft = wv.draftTarget(ctx.app, ctx.runId, id, checkSlug(slug)) ? wv.draftOf(ctx.app, ctx.runId!) : null;
     if (draft) return `页面 ${id}/${draft.slug} 的草稿（还没发布，你这次提交的版本）·${draft.kind}\n---\n# ${draft.title}\n> ${draft.summary}\n\n${draft.body}`;
-    const p = readPage(ctx.app, id, slug);
+    let p: ReturnType<typeof readPage>;
+    try { p = readPage(ctx.app, id, slug); }
+    catch (e) {
+      const tail = slug.split("/").at(-1) ?? "";
+      if (e instanceof HttpError && e.status === 404 && /^[A-Za-z0-9]{20,}$/.test(tail) && /[A-Z]/.test(tail))
+        throw new HttpError(404, `没找到 Wiki 页面，这看起来是飞书知识库节点 token。${larkHint}`);
+      throw e;
+    }
     // Which pages are actually used: counted for the runs that answer or act (the nightly audit looks at those first).
     if (ctx.actor === "agent" && !ctx.view && !upkeepRoles.has(ownProfile(ctx) ?? ""))
       run(ctx.app.db, "insert into page_reads(space_id, slug, day, n) values(?,?,?,1) on conflict(space_id, slug, day) do update set n = n + 1", id, p.slug, new Date().toISOString().slice(0, 10));
@@ -1936,9 +1989,11 @@ function runSteps(events: { type: string; data: unknown }[], status: string): st
 def({
   name: "read_run",
   description: "读取一次运行的结果：总结、检查输出、评审结论、diff 摘要和子运行状态（Wiki 规划完成后还须查看各页写作状态）。按任务板报告的续页提示传 offset 读取下一段。",
-  schema: z.object({ run_id: z.string(), offset: z.number().int().nonnegative().optional().describe("任务板报告的起点，首段为 0，续页用上页给出的值") }),
+  schema: z.object({ run_id: z.string({ error: "run_id 必填，填 list_runs 或 read_item 返回的运行 id" }).describe("运行的 id（r 开头）"), offset: z.number().int().nonnegative().optional().describe("任务板报告的起点，首段为 0，续页用上页给出的值") }),
   handler: async (ctx, a) => {
-    const r = getRun(ctx.app, a.run_id);
+    const id = a.run_id.replace(/^run:/, ""), study = studyIdLabel(id);
+    if (study) throw new HttpError(400, `run_id 收到的是研究的${study} id。用 read_ledger，item 填研究的事项 id；run_id 只填运行 id（r 开头）。`);
+    const r = getRun(ctx.app, id);
     if (r.spaceId) space(ctx, r.spaceId);
     const allowed = scopeFor(ctx.app, ctx.userId ?? OWNER, ctx.spaces);
     if (r.spaceId && allowed && !allowed.includes(r.spaceId)) throw new HttpError(403, "不能访问该运行的空间");
@@ -2523,13 +2578,14 @@ def({
   },
 });
 def({
-  name: "trial_report", description: "只交这个试验的结果：passed / failed / blocked / unclear；拿不准标 unsure。evidence 填 $OMEM_ARTIFACTS 里的文件路径或 src: 引用；findings 只是候选，由小结归并。", write: true, schema: trialReportSchema,
+  name: "trial_report", description: "只交这个试验的结果：passed / failed / blocked / unclear；拿不准标 unsure。把证据正文直接填 evidence_text；evidence 填 src: 引用或宿主 $OMEM_ARTIFACTS 里的文件路径。findings 只是候选，由小结归并。", write: true, schema: trialReportSchema,
   handler: async (ctx, a) => {
     // A trial another of the owner's devices sent here (studies/remote-host.ts): kept with the run, fetched by that device.
     const remote = await import("../studies/remote-host.ts");
     if (remote.isPeerTrialRun(ctx.app, ctx.runId)) return remote.reportPeerTrial(ctx.app, ctx.runId!, a, flowActor(ctx).actor);
     const store = await import("../studies/store.ts");
     flowItem(ctx, store.trial(ctx.app, a.trial).item_id, "write");
+    if (ctx.via === "cloud-http" && a.evidence?.some(ref => !ref.startsWith("src:"))) throw new HttpError(400, cloudPathHint);
     await flowRefs(ctx, (a.evidence ?? []).filter((r) => r.startsWith("src:")));
     return (await import("../studies/service.ts")).reportTrial(ctx.app, a, flowActor(ctx));
   },
@@ -2550,12 +2606,23 @@ def({
   },
 });
 def({
-  name: "record_finding", description: "把有复现依据的试验归并成发现。repro 是 Markdown 正文，分“条件 / 现象 / 为什么是问题 / 建议”几段，命令和输出放代码块，可以放 read_ledger 给出的图片。遇到相近标题先读：same_as 合并到已有发现，distinct_from 列明确不同的已有发现 id；至少一个本研究有结果的试验。", write: true, schema: recordFindingSchema,
+  name: "record_finding", description: "把有复现依据的试验归并成发现。repro 是 Markdown 正文，分“条件 / 现象 / 为什么是问题 / 建议”几段，命令和输出放代码块，可以放 read_ledger 给出的图片。额外的文本证据填 evidence_text，宿主会把产物链接附在发现后面。遇到相近标题先读：same_as 合并到已有发现，distinct_from 列明确不同的已有发现 id；至少一个本研究有结果的试验。", write: true, schema: recordFindingSchema,
   handler: async (ctx, a) => {
     flowItem(ctx, a.item, "write");
     (await import("../studies/service.ts")).assertLedgerReader(ctx.app, ctx.runId);
     const { studyOperation } = await import("../flows/engine.ts");
-    return studyOperation(ctx.app, a.item, async () => (await import("../studies/store.ts")).recordFinding(ctx.app, a));
+    const { itemFlow } = await import("../flows/store.ts");
+    const store = await import("../studies/store.ts");
+    return studyOperation(ctx.app, a.item, async () => {
+      const flow = itemFlow(ctx.app, a.item);
+      if (!flow || flow.endedAt || !store.isStudy(flow)) throw new HttpError(409, "事项没有进行中的研究流程。用 upsert_item 的 id 和 note 给普通事项记发现，或直接回复本人。");
+      checkEvidencePaths(ctx, [a.repro]);
+      if (!a.evidence_text) return store.recordFinding(ctx.app, a);
+      if (!ctx.runId) throw new HttpError(400, "evidence_text 需要一个交结果的运行；也可以把文字直接写在 repro 里");
+      const artifact = await attachText(ctx.app, ctx.runId, a.evidence_text, { source: "agent", by: flowActor(ctx).actor, caption: "发现证据" });
+      try { return store.recordFinding(ctx.app, a, `[${artifact.caption}](${artifact.url})`); }
+      catch (error) { deleteArtifacts(ctx.app, { ids: [artifact.id] }); throw error; }
+    });
   },
 });
 def({
@@ -2622,7 +2689,11 @@ async function flowRefs(ctx: ToolContext, list: string[], itemId?: string) {
       const d = (await import("../designs/store.ts")).getDesign(ctx.app, ref.slice(7));
       if (d.userId !== (ctx.userId ?? OWNER) || allowed && !allowed.includes(d.spaceId)) throw new HttpError(403, "不能引用该方案");
     } else {
-      const r = getRun(ctx.app, ref.replace(/^(?:run:|code-work:)/, ""));
+      const id = ref.replace(/^(?:run:|code-work:)/, "");
+      const study = studyIdLabel(id);
+      if (study) throw new HttpError(400, `evidence 里填的是研究的${study} id。用 read_ledger 找对应证据，再在 evidence 填原件引用或运行 id，正文走 evidence_text。`);
+      if (/^https?:\/\//i.test(id)) throw new HttpError(400, "evidence 请填原件引用或运行 id。要让本人打开网页、文档或表格，把 http(s) 链接放在 links。");
+      const r = getRun(ctx.app, id);
       if (runUser(ctx.app, r.id) !== (ctx.userId ?? OWNER) || allowed && (!r.spaceId || !allowed.includes(r.spaceId))) throw new HttpError(403, "不能引用该运行");
     }
   }
@@ -2708,12 +2779,16 @@ def({
   },
 });
 def({
-  name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要本人确认或由本人承担的阶段通常要本人确认，只有对账核实普通本人阶段的结果后可直接完成。blocked：做不下去，waiting_on 写等谁或等什么；等本人看、改或确认某份东西（表格、文档、预览页）时，把它的地址放进 links，卡片上直接能点开；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：写原因；不能代本人跳过，只有定向对账核实本人明确说这一段这次不做，并能引用原话时，才可补记普通本人阶段的跳过，不能代过显式确认。",
-  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), links: z.array(z.object({ label: z.string().trim().min(1).max(80).describe("一句话说是什么，如“埋点核对表”"), url: z.string().trim().max(2000).describe("http(s) 地址") })).max(10).optional().describe("要本人打开的产物：表格、文档、预览页。传了就替换这一段之前交的链接，传空数组清掉"), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional(),
+  name: "stage_report", description: "交代流程里一个阶段的结果。note 和 waiting_on 是写给本人看的：直接写结论和等的人或事（waiting_on 不用以“等”开头），不写运行、提问之类的内部编号。done：做完了，至少附一项依据（原件引用、运行、交办、方案）；要直接附证据正文用 evidence_text。要本人确认或由本人承担的阶段通常要本人确认，只有对账核实普通本人阶段的结果后可直接完成。blocked：做不下去，waiting_on 写等谁或等什么；等本人看、改或确认某份东西（表格、文档、预览页）时，把它的地址放进 links，卡片上直接能点开；结果说不清、要不要继续定不下来时加 unsure: true，允许按这一轮的升档预算重做。skip：写原因；不能代本人跳过，只有定向对账核实本人明确说这一段这次不做，并能引用原话时，才可补记普通本人阶段的跳过，不能代过显式确认。",
+  write: true, schema: z.object({ item: z.string(), stage: z.string(), state: z.enum(["done", "blocked", "skip"]), note: z.string().trim().min(1).max(4000), evidence: z.array(z.string()).max(50).optional(), evidence_text: evidenceTextSchema, links: z.array(z.object({ label: z.string().trim().min(1).max(80).describe("一句话说是什么，如“埋点核对表”"), url: z.string().trim().max(2000).describe("http(s) 地址") })).max(10).optional().describe("要本人打开的产物：表格、文档、预览页。传了就替换这一段之前交的链接，传空数组清掉"), waiting_on: z.string().max(300).optional(), unsure: z.boolean().optional(),
     retry_at: z.string().min(1).max(40).optional().describe("仅 blocked：暂时等外部恢复时填带时区的 ISO 8601 最早重试时间；note 写已做的步骤和最后的错误，宿主最多自动重试三次，到上限才问本人。"),
     already_resolved: z.boolean().optional().describe("只供流程对账：确有依据说明卡住或等开始的助手阶段已在别处完成或被现实越过时，随 done / skip 补记，不再问要不要开始。note 写谁做了什么，evidence 附依据。不能替本人拍板或绕过宿主检查。") }), handler: async (ctx, a) => {
     checkBrief(a.note, "note ");
-    flowItem(ctx, a.item, "flow"); await flowRefs(ctx, a.evidence ?? [], a.item);
+    flowItem(ctx, a.item, "flow");
+    const flow = (await import("../flows/store.ts")).itemFlow(ctx.app, a.item);
+    if (!flow || flow.endedAt) throw new HttpError(409, "事项没有进行中的流程。用 upsert_item 的 id 和 note 记进展；要改状态再传 status。");
+    checkEvidencePaths(ctx, a.evidence ?? []);
+    await flowRefs(ctx, a.evidence ?? [], a.item);
     return JSON.stringify(await (await import("../flows/engine.ts")).reportStage(ctx.app, a.item, a.stage, { ...a, waitingOn: a.waiting_on }, flowActor(ctx)));
   },
 });
@@ -2979,7 +3054,7 @@ def({
 def({
   name: "read_item",
   description: "读取一件事项的全貌：完整字段、当前来源、全部时间线、材料、工作文件，以及它在哪些会话和群里进行（places：每处最近的一句话或摘要）、正在为它跑的运行（runs）、它的上层（parent）和挂在下面的事项（children）；工作线另有“现在”（now）和还没定的下一步（next）。纠正前先读。跨空间发现仍只读。",
-  schema: z.object({ item_id: z.string() }),
+  schema: z.object({ item_id: z.string({ error: "请用 item_id 填 list_items 或 search 返回的事项 id" }).describe("事项 id") }),
   handler: async (ctx, a) => {
     const item = requireItem(ctx.app, a.item_id, ctx.userId ?? OWNER, "read");
     const readable = itemScope(ctx.app, ctx.userId ?? OWNER, ctx.itemDiscoverySpaces === undefined ? ctx.spaces : ctx.itemDiscoverySpaces).spaceIds ?? null;

@@ -13,7 +13,7 @@ import { remoteKey } from "../core/repositories.ts";
 import { getSpace, listSpaces, type Space } from "../core/spaces.ts";
 import { roleNames, type RoleName } from "../core/config.ts";
 import { cancelRun, createRun, getRun, registerHandler, setRunOutput, type RunContext, type RunStatus } from "../agents/runs.ts";
-import { artifactInbox, artifactPath, artifactsByIds, attachPath } from "../agents/artifacts.ts";
+import { artifactInbox, artifactPath, artifactsByIds, attachPath, attachText } from "../agents/artifacts.ts";
 import { validateExecution } from "../agents/execution.ts";
 import { findAgentSpec, readSkill, skillUsable } from "../agents/specs.ts";
 import { workDirOf } from "../agents/workspaces.ts";
@@ -147,6 +147,7 @@ export async function reportPeerTrial(app: App, runId: string, report: TrialRepo
     if (!taken.made.length || taken.skipped.length) throw new HttpError(400, `证据没有收下：${taken.skipped.join("；") || ref}`);
     evidence.push(...taken.made.map((a) => a.id));
   }
+  if (report.evidence_text) evidence.push((await attachText(app, runId, report.evidence_text, { source: "agent", by, caption: "试验证据" })).id);
   const kept: Report = { result: resultSchema.parse(report.result), summary: report.summary, unsure: !!report.unsure, findings: report.findings ?? [], evidence };
   setRunOutput(app, runId, { trialReport: kept });
   return `已记下试验结果；${input.request.from.node} 会来取结果和证据。`;

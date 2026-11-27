@@ -5,6 +5,7 @@ import { confirmProbe, probeCloud } from "../src/agents/cloud-probe.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { createRun, runEvents } from "../src/agents/runs.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import * as toolApi from "../src/agents/tools.ts";
 import { all, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { addMember, createUser } from "../src/core/users.ts";
@@ -16,7 +17,7 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
   const profile = agentProfileSchema.parse({ id: "cloud-a", command: "unused", transport: "doubao" });
   app.config.agents.profiles = [profile];
   app.config.webUrl = "https://8.8.8.8";
-  Object.assign(app.config.agents.cloudTools, { enabled: true, backends: [profile.id], credentialIn: "message", maxCalls: 6 });
+  Object.assign(app.config.agents.cloudTools, { enabled: true, backends: [profile.id], credentialIn: "message", maxCalls: 7 });
   const probe = await probeCloud(app, profile.id, async (_app, _p, req) => {
     const nonce = req.prompt.match(/challenge\/([\w-]+)/)![1];
     return { text: fakeCloudReceipt(app, nonce, mode), agent: "test", stopReason: "end_turn" };
@@ -46,6 +47,15 @@ it.each(["header", "url"] as const)("binds %s grants to one member, scope and tu
       const result = await cloudRequest(app, first, mode, "read_source", { source: large.id });
       expect(result).toMatchObject({ text: expect.stringContaining("已截断") });
       expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(32000);
+      const tool = vi.spyOn(toolApi, "callTool").mockResolvedValueOnce({ text: `读取失败 ${first} ${"长".repeat(600)}`, isError: true });
+      try {
+        const failed = await cloudRequest(app, result.next?.split("/").pop() ?? first, mode, "read_source", args);
+        expect(failed).toMatchObject({ text: expect.stringContaining("读取失败 [云端凭据]"), isError: true });
+        const event = runEvents(app, id).at(-1)?.data as { status: string; output: string };
+        expect(event.status).toBe("failed");
+        expect(event.output).toHaveLength(500);
+        expect(event.output).not.toContain(first);
+      } finally { tool.mockRestore(); }
     } else if (choice === "cancel") {
       ctrl.abort();
       await expect(cloudRequest(app, first, mode)).rejects.toThrow("作废");

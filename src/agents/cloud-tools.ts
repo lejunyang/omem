@@ -25,8 +25,9 @@ const toolSummary = (tools: ReadonlySet<string>) => cloudToolNames.filter(name =
 
 export function cloudToolGuide(tools: ReadonlySet<string>, mode: Access["mode"]) {
   return "\n\n## 云端工具\n本轮可用：" + toolSummary(tools) + "。GET 工具地址查看参数。" +
-    (["trial_report", "propose_directions", "record_finding", "stage_report"].some(name => tools.has(name))
-      ? "用清单中对应的工具交结果。" : "") +
+    (["trial_report", "record_finding", "stage_report"].some(name => tools.has(name))
+      ? "沙箱文件宿主读不到，用对应工具的 evidence_text 交正文。" :
+      tools.has("propose_directions") ? "用对应工具交结果。" : "") +
     (mode === "header" ? "带 Authorization，POST 地址/工具名，正文为 JSON 参数。" :
       "GET 地址/工具名?args=URL编码的JSON参数。每个地址只用一次，下次用响应里的 next。") +
     "只用本轮连接信息。按报错修正；授权结束或次数用完就停止。";
@@ -173,7 +174,7 @@ export async function cloudRequest(app: App, secret: string, mode: Access["mode"
       event("failed", { output: logFailure(g, reason) });
       return { text: reason, isError: true, next, remaining: remaining(g) };
     }
-    const ctx = { ...g.ctx, tools, spaces: scopeFor(app, user, g.ctx.spaces) };
+    const ctx: ToolContext = { ...g.ctx, via: "cloud-http", tools, spaces: scopeFor(app, user, g.ctx.spaces) };
     const result = name === undefined ? { tools: toolSchemas(tools) } : await searchRun.run(g.runId, () => callTool(ctx, name, args));
     current(g);
     if ("text" in result) result.text = sanitized(result.text);
