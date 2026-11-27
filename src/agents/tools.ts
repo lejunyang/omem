@@ -221,10 +221,10 @@ const def = <S extends z.ZodObject>(t: { name: string; description: string; sche
 };
 
 def({
-  name: "supervise_report", description: "长任务监工每轮最后提交任务书建议、目标核对、决定及依据、进度和本人问题。",
+  name: "supervise_report", description: "长任务跟进每轮最后提交任务书建议、目标核对、决定及依据、进度和本人问题。",
   schema: supervisorReportSchema, write: true,
   handler: async (ctx, report) => {
-    if (ctx.role !== "supervisor" || !ctx.runId) throw new HttpError(403, "只接受本轮监工的报告");
+    if (ctx.role !== "supervisor" || !ctx.runId) throw new HttpError(403, "只有跟进角色可以交本轮报告");
     return (await import("./supervisor-report.ts")).submitSupervisorReport(ctx.app, ctx.runId, report);
   },
 });
@@ -1426,7 +1426,7 @@ def({
     "继续一个已经在独立工作会话里进行的工作（本人补充了要求，或你看了报告认为还要再推进）：传 work_id（或 own_topic=true 且不传 name，取本会话最近一个仍在进行的工作），在原工作会话里排下一轮，同一个 Agent 接着它上一轮的会话，name 不传沿用上一轮的 Agent；不要为同一件事新开一个工作会话。上一轮它回头找你代做的（缺工具），这一轮用 extra_tools 借给它，或你先做完那一步再交办。",
   schema: z.object({
     execution: executionSchema.optional(),
-    basis: z.string().trim().min(1).max(3000).optional().describe("监工派活的依据：任务书条目、本人补充或运行 ID"),
+    basis: z.string().trim().min(1).max(3000).optional().describe("助手派活的依据：任务书条目、本人补充或运行 ID"),
     name: z.string().optional().describe("Agent 档案名，或 assistant；继续已有工作时不传就沿用上一轮的 Agent"),
     task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入。继续已有工作时写这一轮要做什么：本人的新要求或你判断还需要推进的事"),
     space: z.string().optional(),
@@ -1455,8 +1455,8 @@ def({
       const { checkSupervisorBasis } = await import("./supervisor-code.ts");
       checkSupervisorBasis(ctx.app, ctx.runId, ctx.runId, a.basis);
       const { queueSupervisedAgent } = await import("./agent-work.ts");
-      const id = queueSupervisedAgent(ctx.app, ctx.runId, { agent: spec.name, task: a.task + "\n\n监工依据：" + a.basis, execution, assistantScope, extraTools });
-      return `已在长任务话题里派给 ${spec.name}，运行 ${id}；结束后由监工接手。`;
+      const id = queueSupervisedAgent(ctx.app, ctx.runId, { agent: spec.name, task: a.task + "\n\n跟进依据：" + a.basis, execution, assistantScope, extraTools });
+      return `已在长任务话题里派给 ${spec.name}，运行 ${id}；结束后由助手接手。`;
     }
     if (a.own_topic) {
       const { startAgentWork, workInConversation, queueAgentRound } = await import("./agent-work.ts");
@@ -4285,9 +4285,9 @@ def({
     }
     const askQuestion = !a.to && ctx.role !== "supervisor" ? createWorkerAsk : createAsk;
     const ask = askQuestion(ctx.app, { runId: ctx.runId, userId: target, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true, ui, ...(context ? { context } : {}) });
-    if (ask.toName === "监工" && !a.to) {
+    if (ask.toName === "助手" && !a.to) {
       const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 40) * 1000);
-      return got.status === "pending" ? `已交给监工（${ask.id}）。可以先做别的部分，再用 wait_answer 等回答。` : describeAnswer(got);
+      return got.status === "pending" ? `已交给助手跟进（${ask.id}）。可以先做别的部分，再用 wait_answer 等回答。` : describeAnswer(got);
     }
     if (context) {
       const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 0) * 1000);
@@ -5429,7 +5429,7 @@ def({
     "交办编码任务：每个涉及的代码仓库空间各有一条工作分支（新建的从仓库目录当前的提交切出，或接着已有分支），在 omem 自动管理的工作区里由同一个编码 Agent 一起实现并按功能提交，分别运行检查，再按评审档位由一个或几个评审项（功能、业务、架构、规范、历史，或本人建的专项）各自独立审查。之后的轮次在同一条分支上接着提交；分支在仓库目录检出时每轮结束会快进过去。最后本人确认时推送（apply_code_run）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
   write: true,
   schema: z.object({
-    goal: z.string().trim().min(1).max(2000).optional().describe("监工派活时，写任务书的目标或完成条件原文，供修改项沿用"),
+    goal: z.string().trim().min(1).max(2000).optional().describe("助手派活时，写任务书的目标或完成条件原文，供修改项沿用"),
     execution: executionSchema.optional().describe("编码 AI 的临时选择"),
     review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
     review_executions: reviewAIsSchema,
@@ -5670,7 +5670,7 @@ function supervisorTask(ctx: ToolContext, id: string | undefined, write: boolean
 
 def({
   name: "start_long_task", write: true,
-  description: "本人要求用监工跟进一件长任务时，按原话创建目标和工作话题。返回编号与话题，监工会起草任务书请本人确认。",
+  description: "本人要求持续跟进一件长任务时，按原话创建目标和工作话题。返回编号与话题，助手会起草任务书请本人确认。",
   schema: startLongTaskSchema.omit({ spaceId: true, threadId: true }).extend({ space: z.string().optional() }),
   handler: (ctx, a) => {
     if (!ownTurn(ctx)) throw new HttpError(403, "请在本人提出长任务的会话里创建");
@@ -5686,19 +5686,19 @@ def({
 
 def({
   name: "message_supervisor", write: true,
-  description: "向指定长任务的监工转达本人补充的原话。在任务自己的话题里可以省略 task_id。",
+  description: "向指定长任务转达本人的补充原话，唤醒助手跟进。在任务自己的话题里可以省略 task_id。",
   schema: z.object({ task_id: z.string().optional(), text: z.string().min(1) }),
   handler: async (ctx, a) => {
     if (!ownTurn(ctx)) throw new HttpError(403, "请在本人补充要求的会话里转达");
     const task = supervisorTask(ctx, a.task_id, true);
     await changeLongTask(ctx.app, task.id, { action: "supplement", text: a.text });
-    return `已把补充交给长任务 ${task.id} 的监工。`;
+    return `已将补充记入长任务 ${task.id}。`;
   },
 });
 
 def({
   name: "long_task_status",
-  description: "读长任务的目标、状态、监工 AI、预算和最近一次进展。在任务自己的话题里可以省略 task_id。",
+  description: "读长任务的目标、状态、跟进的 AI、预算和最近一次进展。在任务自己的话题里可以省略 task_id。",
   schema: z.object({ task_id: z.string().optional() }),
   handler: (ctx, a) => longTaskText(ctx.app, supervisorTask(ctx, a.task_id, false)),
 });
@@ -5749,7 +5749,7 @@ def({
     "接着一次编码交办或分支评审往下做，一个工具几种用法（run_id 都是交办或评审的任一运行 id，也可以是最初发起交办的 ask 运行 id）：\n- 开下一轮（默认）：评审要求修改，或本人看了结果要调整。复用同一次交办的工作区和编码 Agent 会话，不要重新 delegate_code。task 写这一轮要做的事。\n- 按评审结论改：fix 写要改的问题编号（read_run 的评审问题 #编号），later / wontfix 同时把问题标成暂不改或不改（不改要写业务理由，之后的评审不再提），task 写本人补充的要求。交办编码续在原工作区；分支评审基于该分支交办编码（只出意见的评审本身不能续轮）。只在本人明确要改时用。\n- 交给正在跑的这一轮（when=now）：本人在交办进行中说了新要求、纠正或补充，原话为主；编码 Agent 下一次调用 omem 工具时收到，已经在评审时随下一轮交给它。\n- 只改之后的评审（不写 task，只写 review_tier / review_checks / split / rotate_models / review_executions）：本人说“后面从简 / 别再拆需求 / 这轮只要功能评审 / 业务评审换个模型”时用，不开新的一轮，还没开始评审的这一轮就按新的来，之后沿用。",
   write: true,
   schema: z.object({
-    basis: z.string().trim().min(1).max(3000).optional().describe("监工的依据：引用任务书条目、本人补充的原文或本长任务运行 ID"),
+    basis: z.string().trim().min(1).max(3000).optional().describe("跟进的依据：引用任务书条目、本人补充的原文或本长任务运行 ID"),
     run_id: z.string().describe("交办或分支评审的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
     task: z.string().max(20000).optional().describe("这一轮要做什么、本人补充的要求或原话；只改之后的评审、只给问题定改不改时不写"),
     when: z.enum(["next", "now"]).optional().describe("now：交给正在进行的这一轮（不等它结束、不另开一轮）；默认 next：开下一轮"),
@@ -5773,7 +5773,7 @@ def({
       checkSupervisorBasis(ctx.app, ctx.runId, a.run_id, a.basis);
       if (!["code", "review"].includes(getRun(ctx.app, a.run_id).kind)) throw new HttpError(400, "请指定编码交办或评审的运行 ID");
       if (a.apply_first) throw new HttpError(403, "应用交办涉及推送，请在报告中交给本人确认");
-      if (a.task) a = { ...a, task: a.task + "\n\n监工依据：" + a.basis };
+      if (a.task) a = { ...a, task: a.task + "\n\n跟进依据：" + a.basis };
     }
     const execution = validateExecution(ctx.app, a.execution, ctx.userId, false, policyScope(ctx.app, "code"));
     const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId, false, policyScope(ctx.app, "review"));
@@ -6978,7 +6978,7 @@ def({
   schema: z.object({
     tasks: z.array(z.object({
       goal: z.string().trim().min(1).max(2000).optional().describe("长任务书的目标或完成条件原文，省略时沿用交办目标"),
-      deadline: z.string().datetime({ offset: true }).optional().describe("任务书或监工给本项指定的时限"),
+      deadline: z.string().datetime({ offset: true }).optional().describe("任务书或助手给本项指定的时限"),
       title: z.string().min(1).max(200).describe("一句话：这一项要做成什么"),
       done_when: z.string().max(2000).optional().describe("完成标准：怎样算做完（可核对）。只写在仓库和工作区里能做到、能验证的；把结果挂回事项、写工作文件、通知本人这些由发起的助手做，不拆成修改项"),
       files: z.array(z.string().max(500)).max(30).optional().describe("预计改的文件"),
@@ -7421,7 +7421,7 @@ def({
   description: "发起交办的助手处理修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决、同一处修了几层，编码 Agent 或评审负责人认为要本人定的）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（不合理的评审改动、等别的团队、缺外部字段）、later 记成以后再做（问题成立但和这次要的关系不大：不挡交付，同一分支下一次交办会接上）、owner 只在要本人在业务或功能上取舍、要新的授权或越出原需求时，写 question 和两三个 options。评审提的待做项（还没做的）也可以直接 skip 驳回或 later 放下，写清理由；同一处你放下两次后再被提出，会直接问本人。add 新增一项（不填 task，写 title 和 note 作完成标准）：需求要求了却没有哪一项在做、或评审漏了的必要修复。「等你决定」的项（卡片已经发给本人）只在本人这一轮回答了才转达（retry / skip），本人回答前不动它。retry 和 add 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
   write: true,
   schema: z.object({
-    basis: z.string().trim().min(1).max(3000).optional().describe("监工的依据：引用任务书条目、本人补充的原文或本长任务运行 ID"),
+    basis: z.string().trim().min(1).max(3000).optional().describe("跟进的依据：引用任务书条目、本人补充的原文或本长任务运行 ID"),
     run_id: z.string().describe("这次交办的任一运行 id"),
     task: z.union([z.string(), z.number()]).optional().describe("修改项编号，如 T3；add 时不填"),
     action: z.enum(["retry", "skip", "owner", "later", "add"]),
@@ -7434,7 +7434,7 @@ def({
     if (ctx.role === "supervisor") {
       checkSupervisorBasis(ctx.app, ctx.runId, a.run_id, a.basis);
       if (a.action === "owner") throw new HttpError(400, "需要本人决定的问题请合并到 supervise_report 的 askOwner");
-      a = { ...a, note: a.note + "\n\n监工依据：" + a.basis };
+      a = { ...a, note: a.note + "\n\n跟进依据：" + a.basis };
     }
     const t = await import("./code-tasks.ts");
     const rootId = t.workRootOf(ctx.app, a.run_id);

@@ -1056,7 +1056,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     return false;
   });
   // The long task owns the queue deadline and reports timeouts in its work topic.
-  if (supervising && !chain.length) throw agentRunError("指定的监工 AI 无法接手本轮，所需工具：" + requirement, "queue");
+  if (supervising && !chain.length) throw agentRunError("指定的 AI 无法接手本轮，所需工具：" + requirement, "queue");
   if (!supervising && scope?.strict && (!chain.length || chain.every(p => !backendAvailable(p, app.home) || excluded(app, p) || !!downReason(app, p) || !hasRoom(app, p)))) {
     await waitForPolicy(app, scope, input.runId);
   }

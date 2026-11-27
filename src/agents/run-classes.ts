@@ -8,7 +8,7 @@ export const runClasses = {
   review: { name: "评审", description: "按评审角色的设置独立检查", kinds: ["review", "quality-audit", "outcome-review", "flow-review", "profile-review", "replay-judge", "speaking-review"], roles: ["reviewer", "review-business", "review-arch", "review-style", "review-history", "review-simplify", "review-lead", "replay-judge", "outcome-reviewer"] },
   agents: { name: "调查与交办", description: "档案和其他设备承接的任务，内容差别大", kinds: ["agent", "ai-policy-draft", "agent-followup", "peer-agent", "peer-work", "rule-fire", "rule-script"], roles: [] },
   flows: { name: "流程与研究", description: "按阶段推进，可以为每个阶段指定 AI", kinds: ["flow-stage", "flow-runner", "flow-reconcile", "flow-blocker-check", "study-trial", "peer-trial"], roles: ["flow-reconcile"] },
-  supervise: { name: "监工", description: "长任务需要稳定、能力强的 AI", kinds: ["supervise"], roles: ["supervisor"] },
+  supervise: { name: "跟进", description: "长任务需要稳定、能力强的 AI", kinds: ["supervise"], roles: ["supervisor"] },
 } satisfies Record<string, { name: string; description: string; kinds: string[]; roles: string[] }>;
 export type RunClass = keyof typeof runClasses;
 export const classIds = Object.keys(runClasses) as RunClass[];

@@ -804,7 +804,7 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     const text = (m.mentions.length ? spoken(m, true) : m.text).trim();
     if (text.startsWith("/")) {
       const command = parseCommand(text);
-      if (command?.name === "监工") return topic.id;
+      if (command?.name === "跟进") return topic.id;
       if ((command && commandNames.includes(command.name)) || parseAiCommand(app, text, userId)) return;
     }
     if (topic.status !== "ended" && topic.status !== "done") return topic.id;

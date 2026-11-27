@@ -188,7 +188,7 @@ export function resumeAgentAfterSupervisorAnswer(app: App, worker: Run, answer: 
     wakeSupervisor(app, task.id, `工作运行 ${worker.id} 已收到回答。\n${answer}\n${stop}`, { immediate: true });
     return;
   }
-  const next = createRun(app, { kind: "agent", title: "按监工的回答继续", spaceId: worker.spaceId,
+  const next = createRun(app, { kind: "agent", title: "按助手的回答继续", spaceId: worker.spaceId,
     parentId: worker.parentId, userId: task.userId, lane: worker.lane, input: { ...worker.input, longTaskId: task.id,
       resumeFromRun: worker.id, task: `${worker.input.task ?? ""}\n\n${answer}` } });
   const work = workOfRun(app, worker);

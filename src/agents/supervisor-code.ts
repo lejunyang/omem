@@ -50,7 +50,7 @@ export function createCodeRound(app: App, request: Parameters<typeof createRun>[
     if ((request.userId ?? runUser(app, request.parentId ?? null)) !== task.userId)
       throw new HttpError(403, "编码运行与长任务必须属于同一用户");
     if (request.parentId && one(app.db, `select 1 from runs where id=? and kind='supervise' and json_extract(output,'$.supervisorReport') is not null`, request.parentId))
-      throw new HttpError(409, "监工已交本轮报告，不能再派活");
+      throw new HttpError(409, "助手已交本轮报告，不能再派活");
     if (!input.branches) {
       const stop = workBudgetStop(app, task, root);
       if (stop) throw new HttpError(409, stop);
@@ -71,7 +71,7 @@ export function checkSupervisorBasis(app: App, caller: string | null, target: st
   if (!task || task.id !== longTaskForRun(app, target)?.id) throw new HttpError(403, "只能调整自己长任务的交办");
   if (task.status !== "active") throw new HttpError(409, "只有推进中的长任务可以调整交办");
   if (one(app.db, "select 1 from runs where id=? and json_extract(output,'$.supervisorReport') is not null", caller))
-    throw new HttpError(409, "监工已交本轮报告，不能再调整交办");
+    throw new HttpError(409, "助手已交本轮报告，不能再调整交办");
   const text = basis?.trim();
   const entries = [task.goal, ...Object.values(task.brief).flat(), ...task.supplements.map(s => s.text)];
   if (text && entries.some(line => typeof line === "string" && line.trim() && text.includes(line.trim()))) return;
@@ -84,9 +84,9 @@ export function createWorkerAsk(app: App, input: Parameters<typeof createAsk>[1]
   const supervisor = longTaskForRun(app, input.runId);
   if (!supervisor) return createAsk(app, input);
   if ((input.kind && input.kind !== "question") || (input.context?.handler && input.context.handler !== "review-escalation"))
-    throw new HttpError(400, "只有工作者的问题和评审分歧可以交给监工");
+    throw new HttpError(400, "只有工作者的问题和评审分歧可以交给助手跟进");
   return withinTx(app.db, () => {
-    const ask = createAsk(app, { ...input, context: { ...input.context, supervisorTaskId: supervisor.id, toName: "监工", notificationOnly: true } });
+    const ask = createAsk(app, { ...input, context: { ...input.context, supervisorTaskId: supervisor.id, notificationOnly: true } });
     const choices = ask.options.map(option => option.label).join(" / ");
     const fields = ask.ui?.fields?.length ? fieldsText(ask.ui.fields) : "";
     wakeSupervisor(app, supervisor.id, [`运行 ${ask.runId} 的问题 ${ask.id}`, ask.question, choices, fields].filter(Boolean).join("\n"));
@@ -114,7 +114,7 @@ export async function answerWorkerQuestion(app: App, taskId: string, questionId:
     return;
   }
   const routed = one(app.db, `select 1 from asks where id=? and kind='question' and json_extract(context,'$.supervisorTaskId')=?`, questionId, taskId);
-  if (!routed) throw new HttpError(404, "这个长任务没有该监工问题");
+  if (!routed) throw new HttpError(404, "这个问题不在本任务的跟进清单里");
   const ask = getAsk(app, questionId);
   if (ask.status === "answered" && ask.answer === answer.trim()) return;
   const choice = ask.options.findIndex(option => option.label === answer.trim());

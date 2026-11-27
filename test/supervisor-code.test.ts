@@ -21,12 +21,12 @@ async function setup(rounds = 5) {
   app.config.agents.profiles.push({ id: "stub", transport: "acp", command: process.execPath, args: [], env: {}, idleTimeoutMs: 60000 });
   const task = await startLongTask(app, { spaceId: "personal", userId: "owner", goal: "校对说明", ai: { profile: "stub" } });
   run(app.db, "update long_tasks set status='active', budget=json_set(budget,'$.codeRounds',?), brief=json_set(brief,'$.scope',json(?)) where id=?", rounds, '["docs"]', task.id);
-  const lead = createRun(app, { kind: "supervise", title: "监工", lane: `supervisor:${task.id}`, input: { longTaskId: task.id, conversationId: task.threadId } });
+  const lead = createRun(app, { kind: "supervise", title: "助手", lane: `supervisor:${task.id}`, input: { longTaskId: task.id, conversationId: task.threadId } });
   const delegate = () => queueCodeWork(app, { parentId: lead.id, userId: "owner", spaceId: "personal", title: "校对", input: { task: "核对说明", taskMode: true, goal: "校对说明" } });
   return { app, task: getLongTask(app, task.id), lead, delegate };
 }
 
-describe("监工的编码交办", () => {
+describe("助手的编码交办", () => {
   it("共用总预算，每个交办只续自己的编码轮", async () => {
     const { app, delegate, lead, task } = await setup(3);
     const first = delegate();
@@ -47,7 +47,7 @@ describe("监工的编码交办", () => {
     expect(getRun(app, second.id).output.codeChain).toMatchObject({ lastCodeRunId: second.id });
   });
 
-  it("工作 Agent 和编码共用预算，工作结束仍由监工接手", async () => {
+  it("工作 Agent 和编码共用预算，工作结束仍由助手接手", async () => {
     const { app, lead, delegate, task } = await setup(1);
     const scope = { spaces: ["personal"], denyTools: [], userId: "owner", lark: { chats: [] } };
     const id = queueSupervisedAgent(app, lead.id, { agent: "assistant", task: "核对说明", assistantScope: scope });
@@ -58,7 +58,7 @@ describe("监工的编码交办", () => {
     expect(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
   });
 
-  it.each([1, 2])("工作者结束后收到答复，按总预算 %i 决定续轮或叫醒监工", async rounds => {
+  it.each([1, 2])("工作者结束后收到答复，按总预算 %i 决定续轮或唤醒助手跟进", async rounds => {
     const { app, lead, task } = await setup(rounds);
     const scope = { spaces: ["personal"], denyTools: [], userId: "owner", lark: { chats: [] } };
     const id = queueSupervisedAgent(app, lead.id, { agent: "assistant", task: "核对说明", assistantScope: scope });
@@ -77,7 +77,7 @@ describe("监工的编码交办", () => {
     }
   });
 
-  it("工作者在暂停期间提问并结束，继续后的第一轮监工答复原问题", async () => {
+  it("工作者在暂停期间提问并结束，继续后的第一轮跟进答复原问题", async () => {
     const { app, lead, task } = await setup();
     confirmLongTaskBrief(app, task.id, { doneWhen: ["说明已校对"] });
     const lane = `supervisor:${task.id}`;
@@ -136,7 +136,7 @@ describe("监工的编码交办", () => {
     expect(checkTaskDuration(app, late)).toContain("超过指定时限");
   });
 
-  it("只处理本长任务的普通问题，监工答复返回工作者", async () => {
+  it("只处理本长任务的普通问题，助手答复返回工作者", async () => {
     const { app, task, delegate } = await setup();
     const worker = delegate();
     const ask = createWorkerAsk(app, { runId: worker.id, question: "是否保留原示例？" });
@@ -147,11 +147,11 @@ describe("监工的编码交办", () => {
     await expect(answerWorkerQuestion(app, task.id, approval.id, "批准")).rejects.toThrow();
     const waiting = waitForAnswer(app, ask.id, 2000);
     await answerWorkerQuestion(app, task.id, ask.id, "保留");
-    expect(describeAnswer(await waiting)).toContain("监工回答");
+    expect(describeAnswer(await waiting)).toContain("助手回答");
     expect(getAsk(app, approval.id).status).toBe("pending");
   });
 
-  it("修改项的新问题取代旧问题，完成结果只叫醒监工", async () => {
+  it("修改项的新问题取代旧问题，完成结果只唤醒助手跟进", async () => {
     const { app, task, delegate } = await setup();
     const worker = delegate();
     codeChainFor(app, worker);
@@ -168,7 +168,7 @@ describe("监工的编码交办", () => {
     expect(getRun(app, worker.id).output.codeResultHandedOff).toBe(true);
   });
 
-  it.each([1, 2])("监工已重做两次，本人回答汇总卡后按总预算 %i 续轮", async rounds => {
+  it.each([1, 2])("助手已重做两次，本人回答汇总卡后按总预算 %i 续轮", async rounds => {
     const { app, task, lead, delegate } = await setup(rounds);
     confirmLongTaskBrief(app, task.id, { doneWhen: ["说明已校对"] });
     const worker = delegate();

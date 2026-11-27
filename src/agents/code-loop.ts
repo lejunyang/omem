@@ -921,10 +921,10 @@ export function ownerNote(app: App, runId: string, text: string, by: string, opt
   let task = addTask(app, rootId, { title: truncate(first, 120), doneWhen: text.trim(), kind: by === "supervisor" ? "build" : "owner", origin: { note: text.trim(), ...(opts.item ? { item: opts.item } : {}) } }, by);
   if (current) {
     task = updateTask(app, rootId, task.seq, { state: "coding", coderRun: last.id });
-    addCodeNote(app, last.id, `${by === "supervisor" ? "监工" : "本人"}补充修改项 ${taskLabel(task.seq)}：${text}`, by);
+    addCodeNote(app, last.id, `${by === "supervisor" ? "助手" : "本人"}补充修改项 ${taskLabel(task.seq)}：${text}`, by);
     return { task, next: null, current, handedTo: last };
   }
-  addRunEvent(app, last.id, "status", { text: `${by === "supervisor" ? "监工" : "本人"}补充记为待做项 ${taskLabel(task.seq)}：${truncate(first, 120)}` });
+  addRunEvent(app, last.id, "status", { text: `${by === "supervisor" ? "助手" : "本人"}补充记为待做项 ${taskLabel(task.seq)}：${truncate(first, 120)}` });
   if (stage !== "ended") return { task, next: null };
   return { task, next: advanceWork(app, rootId, { owner: true }) };
 }

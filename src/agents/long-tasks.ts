@@ -81,13 +81,17 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T {
   return result.data;
 }
 
+export function followAiLabel(ai: SupervisorAi) {
+  return [ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ");
+}
+
 function supervisorAi(app: App, userId: string, ai?: SupervisorAi): SupervisorAi {
   const pick = ai ?? app.config.longTasks.supervisor ?? app.config.agents.tiers.strong;
-  if (!pick) throw new HttpError(400, "请指定监工 AI，或在设置里配置默认监工或强模型");
+  if (!pick) throw new HttpError(400, "请指定跟进的 AI，或配置“长任务跟进用的 AI”或强模型档位");
   const profile = allProfiles(app.config).find(p => p.id === pick.profile);
   // Keep the chosen model even when the backend is temporarily down. The supervisor queues that exact choice.
   const e = validateExecution(app, { profile: pick.profile, model: pick.model ?? profile?.model,
-    effort: pick.effort ?? profile?.effort, source: "user", reason: "长任务的监工" }, userId, true, policyScope(app, "supervise"))!;
+    effort: pick.effort ?? profile?.effort, source: "user", reason: "负责跟进的助手" }, userId, true, policyScope(app, "supervise"))!;
   return { profile: e.profile, model: e.model, effort: e.effort };
 }
 
@@ -130,7 +134,7 @@ function requireOpen(task: LongTask) {
 /** Caller has authenticated the owner of this task (HTTP, command or confirmation card). Budget fields are new totals. */
 export async function changeLongTask(app: App, id: string, command: LongTaskCommand): Promise<LongTask> {
   const task = saveLongTaskChange(app, id, command);
-  if (command.action !== "supplement" && command.action !== "ai") {
+  if (command.action !== "supplement") {
     const { refreshSupervisorCard } = await import("./supervisor-report.ts");
     await refreshSupervisorCard(app, id);
   }
@@ -169,7 +173,7 @@ function saveLongTaskChange(app: App, id: string, command: LongTaskCommand): Lon
       }
       case "ai": {
         const ai = supervisorAi(app, task.userId, c.ai);
-        note = "本人更换监工 AI：" + [ai.profile, ai.model, ai.effort].filter(Boolean).join(" · ");
+        note = "本人更换跟进的 AI：" + followAiLabel(ai);
         run(app.db, "update long_tasks set ai=?,updated_at=? where id=?", JSON.stringify(ai), at, id);
         break;
       }

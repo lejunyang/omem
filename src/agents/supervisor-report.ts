@@ -4,7 +4,7 @@ import { one, withinTx } from "../core/db.ts";
 import { deliveryPlan, notify } from "../core/notify.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler } from "./asks.ts";
-import { confirmLongTaskBrief, changeLongTask, getLongTask, saveLongTaskReport, type LongTask } from "./long-tasks.ts";
+import { confirmLongTaskBrief, changeLongTask, followAiLabel, getLongTask, saveLongTaskReport, type LongTask } from "./long-tasks.ts";
 import { addRunEvent, getRun } from "./runs.ts";
 import { patchSupervisorState, scheduleSupervisorTimer, supervisorFacts, supervisorUsage, supervisorState } from "./supervisor.ts";
 import { getThread } from "./threads.ts";
@@ -22,7 +22,7 @@ export function supervisorProgressText(app: App, task: LongTask, report: Report)
     `修改项 ${facts.done}/${facts.total} · 工作轮次 ${facts.rounds}/${task.budget.codeRounds} · 用时 ${hours.toFixed(1)}/${task.budget.hours} 小时`,
     usage.length ? "已上报用量：" + usage.map(row => row.kind + " " + row.tokens + " tokens").join(" · ") : "用量待后端上报",
     section("已完成", report.progress.done), section("在做", report.progress.doing), section("下一步", report.progress.next),
-    section("目标核对", report.goalCheck), section("决定与依据", report.decisions.map(d => d.what + "：" + d.why)),
+    section("目标核对", report.goalCheck), section("跟进的判断与依据", report.decisions.map(d => d.what + "：" + d.why)),
     section("纠偏", report.actions), section("要你定", report.askOwner.map(q => q.question + "（倾向：" + q.prefer + "）")),
   ].filter(Boolean).join("\n\n");
 }
@@ -34,9 +34,9 @@ async function updateCard(app: App, task: LongTask, body: string) {
   const { buildCard, sendLark, updateLarkCard, recordInteraction } = await import("../channels/lark-send.ts");
   const controls = ["ended", "done"].includes(task.status) ? [] : [{ buttons: [
     { text: task.status === "paused" ? "继续" : "暂停", value: task.status === "paused" ? "继续" : "暂停" },
-    { text: "加 3 小时", value: "加 3 小时" }, { text: "换监工", value: "换监工" }, { text: "结束", value: "结束", confirm: "确认结束这件长任务？" },
+    { text: "加 3 小时", value: "加 3 小时" }, { text: "换跟进的 AI", value: "change-ai" }, { text: "结束", value: "结束", confirm: "确认结束这件长任务？" },
   ] }];
-  const card = buildCard({ title: "长任务进度", color: "wathet", blocks: [{ markdown: body }, ...controls] });
+  const card = buildCard({ title: "长任务进度", subtitle: `由 ${followAiLabel(task.ai)} 跟进`, color: "wathet", blocks: [{ markdown: body }, ...controls] });
   await withBot(botOfChannel(thread.channel), async () => {
     const saved = supervisorState(app, task.id).cardId;
     if (saved) return updateLarkCard(saved, card);
@@ -72,7 +72,7 @@ export function flushSupervisorPush(app: App, task: LongTask) {
   const plan = deliveryPlan(app, { outlet: "lark" });
   if (plan.when === "later" && plan.at) return scheduleSupervisorTimer(app, task, "push", plan.at);
   const highlights = state.pendingHighlights?.length ? "\n\n**免打扰期间的进展**\n" + state.pendingHighlights.map(entry => "- " + entry).join("\n") : "";
-  notify(app, { graceDone: true, userId: task.userId, entity: "item", entityId: task.itemId, title: "长任务进展", body: state.pendingPush + highlights, link: `#/items/${task.itemId}` });
+  notify(app, { graceDone: true, userId: task.userId, entity: "item", entityId: task.itemId, title: "长任务跟进", body: state.pendingPush + highlights, link: `#/items/${task.itemId}` });
   patchSupervisorState(app, task.id, { lastPush: now(), pendingPush: null, pendingHighlights: null });
 }
 
@@ -90,7 +90,7 @@ function offerOwnerQuestions(app: App, task: LongTask, runId: string, qs: Report
   createAsk(app, { runId, userId: task.userId, conversationId: task.threadId,
     question: `「${truncate(task.goal, 80)}」有 ${qs.length} 个问题要你定。`,
     allowText: false, ui: { submitLabel: "确认选择", fields: qs.map((q, i) => ({ id: `q${i}`, type: "choice", label: q.question,
-      options: q.options, default: q.prefer, required: true, help: `监工建议选「${q.prefer}」。${q.why}` })) },
+      options: q.options, default: q.prefer, required: true, help: `跟进的判断：建议选「${q.prefer}」。${q.why}` })) },
     context: { handler: "supervisor-questions", longTaskId: task.id, questions: qs, larkApprover: task.userId },
   });
 }
@@ -112,7 +112,7 @@ registerAskHandler("supervisor-questions", async (app, ask, context) => {
 
 export async function submitSupervisorReport(app: App, runId: string, report: Report) {
   const round = getRun(app, runId);
-  if (round.kind !== "supervise" || round.status !== "running") throw new HttpError(403, "只有正在推进这一轮的监工能交报告");
+  if (round.kind !== "supervise" || round.status !== "running") throw new HttpError(403, "只有正在推进这一轮的助手能交报告");
   const task = getLongTask(app, String(round.input.longTaskId));
   if (round.output.supervisorReport) throw new HttpError(409, "本轮已经交过报告");
   if (["paused","ended","done"].includes(task.status)) throw new HttpError(409, "本人已暂停或结束长任务");
@@ -161,7 +161,7 @@ const briefLabels = { doneWhen: "怎么算完成", outOfScope: "不做的", scop
 function proposeBrief(app: App, task: LongTask, runId: string, proposed: Proposal) {
   const entries = Object.entries(proposed) as [keyof Proposal, string[]][];
   const prior = supervisorState(app, task.id).briefAsk;
-  if (prior) cancelAsk(app, prior, "监工已提交新版任务书");
+  if (prior) cancelAsk(app, prior, "助手已提交新版任务书");
   const fields: UiField[] = entries.map(([key, values]) => ({
     type: "textarea", id: key, label: briefLabels[key], default: values.join("\n"), required: key === "doneWhen",
   }));
@@ -170,10 +170,10 @@ function proposeBrief(app: App, task: LongTask, runId: string, proposed: Proposa
     if (!proposed.constraints) fields.push({ type: "textarea", id: "constraints", label: "约束", default: task.brief.constraints.join("\n"), required: false });
     fields.push({ type: "number", id: "hours", label: "总时长（小时）", required: true, min: 0.01, default: task.budget.hours },
       { type: "number", id: "codeRounds", label: "工作轮数", required: true, min: 1, default: task.budget.codeRounds },
-      { type: "number", id: "dailyWakes", label: "监工每天最多被叫醒几次", required: true, min: 1, default: task.budget.dailyWakes });
+      { type: "number", id: "dailyWakes", label: "每日跟进唤醒上限", required: true, min: 1, default: task.budget.dailyWakes });
   }
   const ask = createAsk(app, { runId, conversationId: task.threadId, userId: task.userId, allowText: false,
-    question: `请确认「${task.goal}」的任务书。可以直接修改下面各项。`,
+    question: `请确认「${task.goal}」的跟进任务书。可以直接修改下面各项。`,
     ui: { submitLabel: "确认任务书", fields },
     context: { handler: "supervisor-brief", longTaskId: task.id, larkApprover: task.userId, proposed },
   });

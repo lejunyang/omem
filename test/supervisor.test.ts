@@ -48,7 +48,7 @@ function turn(app: App, task: LongTask) {
   return context(app, wakeSupervisor(app, task.id, "新证据", { immediate: true })!);
 }
 
-describe("长任务监工", () => {
+describe("长任务跟进", () => {
   it("按话题接收本人原话，和待处理事件合在一轮", async () => {
     const { app, task } = await setup();
     const queued = wakeSupervisor(app, task.id, "修改项完成");
@@ -70,11 +70,11 @@ describe("长任务监工", () => {
       setRunOutput(app, ctx.run.id, { queueSince: Date.now() - 241 * 60_000 });
       await expect(runSupervisor(context(app, ctx.run.id))).rejects.toThrow(/本轮停止/);
       expect(call).not.toHaveBeenCalled();
-      expect(all(app.db, "select text from messages where conversation_id=? and role='assistant'", task.threadId)).toContainEqual({ text: expect.stringContaining("stub") });
+      expect(all(app.db, "select text from messages where conversation_id=? and role='assistant'", task.threadId)).toContainEqual({ text: expect.stringContaining("跟进中 · stub") });
     } finally { call.mockRestore(); }
   });
 
-  it("创建和唤醒使用监工类别，指定后端忙时沿用长任务的等待期限", async () => {
+  it("创建和唤醒使用跟进类别，指定后端忙时沿用长任务的等待期限", async () => {
     const app = testApp();
     app.baseUrl = "http://127.0.0.1:1";
     const profile = { transport: "acp" as const, command: process.execPath, args: [], env: {}, idleTimeoutMs: 60000 };
@@ -103,6 +103,8 @@ describe("长任务监工", () => {
     const ctx = turn(app, task);
     const view = await submitSupervisorReport(app, ctx.run.id, draftReport);
     expect(view).toContain("修改项 0/0");
+    expect(view).toContain("跟进的判断与依据");
+    expect(ctx.run.title).toContain("跟进");
     expect(getRun(app, ctx.run.id).output.progressText).toBe(view);
     const latest = getLongTask(app,task.id);
     expect(JSON.stringify(latest.notes)).toContain("目标要求逐项检查");
@@ -124,7 +126,7 @@ describe("长任务监工", () => {
       const redundant = { question: "是否确认草案？", options: ["确认","调整"], prefer: "确认", why: "已覆盖目标" };
       await expect(submitSupervisorReport(app, ctx.run.id, { ...draftReport, askOwner: [redundant] })).rejects.toThrow(/确认卡/);
       await submitSupervisorReport(app, ctx.run.id, draftReport);
-      expect(reply).toHaveBeenCalledWith(expect.objectContaining({ path: { message_id: "om_anchor" }, data: expect.objectContaining({ reply_in_thread: true }) }));
+      expect(reply).toHaveBeenCalledWith(expect.objectContaining({ path: { message_id: "om_anchor" }, data: expect.objectContaining({ reply_in_thread: true, content: expect.stringContaining("由 stub 跟进") }) }));
       expect(listAsks(app, { conversationId: task.threadId, status: "pending" })).toHaveLength(1);
       run(app.db, "update long_tasks set status='active' where id=?", task.id);
       const next = turn(app, task);
@@ -135,7 +137,7 @@ describe("长任务监工", () => {
     } finally { setLarkClient(null); }
   });
 
-  it("群话题直接补充立即唤醒监工，命令、HTTP 和按钮操作同一任务，附件单独采集", async () => {
+  it("群话题直接补充立即唤醒助手，命令、HTTP 和按钮操作同一任务，附件单独采集", async () => {
     const app = testApp();
     app.config.lark.ownerOpenId = "ou_owner";
     app.config.agents.profiles.push({ id: "claude", model: "opus", transport: "acp", command: process.execPath, args: ["test/fake-acp-agent.ts"], env: {}, idleTimeoutMs: 60000 });
@@ -185,7 +187,7 @@ describe("长任务监工", () => {
       expect.soft(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
     };
     try {
-      const anchor = await send("/监工 codex 核对示例", { topic: "", mention: true });
+      const anchor = await send("/跟进 codex 核对示例", { topic: "", mention: true });
       const task = getLongTask(app, one<{ id: string }>(app.db, "select id from long_tasks")!.id);
       expect(task).toMatchObject({ spaceId: "docs", userId: "editor" });
       expect(await deliverToThread(app, task.threadId, task.goal, { openTopicFrom: anchor })).toBe(true);
@@ -193,7 +195,7 @@ describe("长任务监工", () => {
       await submitSupervisorReport(app, turn(app, task).run.id, { ...draftReport, brief: undefined, stage: "校对" });
       const repliesBefore = reply.mock.calls.length;
       for (const address of [{ sender: "ou_owner" }, { topic: "omt_other" }, { chat: "oc_other" }, { receiver: otherBot, sender: "ou_editor_other" }]) {
-        await send("/监工 暂停", address);
+        await send("/跟进 暂停", address);
         await send("这条群消息不属于任务", address);
       }
       await send("/whoami");
@@ -201,7 +203,7 @@ describe("长任务监工", () => {
       expect(reply).toHaveBeenCalledTimes(repliesBefore);
       expect(getLongTask(app, task.id).supplements).toEqual([]);
       addMember(app, "docs", "editor", "reader");
-      await send("/监工 暂停");
+      await send("/跟进 暂停");
       expect(reply.mock.calls.at(-1)?.[0].data.content).toContain("没有权限");
       expect(getLongTask(app, task.id).status).toBe("active");
       expect(patch).not.toHaveBeenCalled();
@@ -224,10 +226,10 @@ describe("长任务监工", () => {
         run(app.db, "update runs set status='done' where id=?", queued);
       }
       const supplemented = getLongTask(app, task.id);
-      await send("/监工");
+      await send("/跟进");
       expect(reply.mock.calls.at(-1)?.[0].data.content).toContain(task.id);
 
-      await send("/监工 暂停");
+      await send("/跟进 暂停");
       expect(getLongTask(app, task.id).status).toBe("paused");
       expect(patch).toHaveBeenCalledTimes(1);
       expect(patch.mock.calls[0][0].data.content).toContain("已暂停");
@@ -243,21 +245,28 @@ describe("长任务监工", () => {
       expect(patch).toHaveBeenCalledTimes(3);
       expect(patch.mock.calls[2][0].data.content).toContain('"action":"继续"');
 
-      await send("/监工 继续");
+      await send("/跟进 继续");
       expect(getLongTask(app, task.id).status).toBe("active");
-      await send("/监工 加 3 小时");
+      await send("/跟进 加 3 小时");
       expect(getLongTask(app, task.id).budget.hours).toBe(task.budget.hours + 3);
-      await send("/监工 换 claude opus high");
+      await send("/跟进 换 claude opus high");
       expect(getLongTask(app, task.id).ai).toMatchObject({ profile: "claude", model: "opus", effort: "high" });
 
+      expect(patch.mock.calls.at(-1)![0].data.content).toContain("由 claude · opus · high 跟进");
+      for (const action of ["change-ai", "换监工"]) {
+        await handleCardAction(app, { operator: { open_id: "ou_editor" }, context: { open_message_id: "om_progress" }, action: { value: { action } } });
+      }
+      expect(listAsks(app, { conversationId: task.threadId, status: "pending" }).filter(ask => ask.handler === "supervisor-ai"))
+        .toEqual(Array(2).fill(expect.objectContaining({ question: "这件长任务接下来由哪个 AI 跟进？" })));
+
       const beforeEnd = patch.mock.calls.length;
-      await send("/监工 结束");
+      await send("/跟进 结束");
       expect(patch).toHaveBeenCalledTimes(beforeEnd + 1);
       expect(getLongTask(app, task.id).status).toBe("ended");
       await expectCaptureOnly(supplemented, await send({ file_key: "file_example", file_name: "示例.txt" }), "file_example");
       await send("任务结束后回到群聊");
       expect(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
-      const statusMessage = await send("/监工");
+      const statusMessage = await send("/跟进");
       expect(reply).toHaveBeenLastCalledWith(expect.objectContaining({
         path: { message_id: statusMessage }, data: expect.objectContaining({ content: expect.stringContaining("已结束") }),
       }));
@@ -302,7 +311,7 @@ describe("长任务监工", () => {
     } finally { stub.mockRestore(); }
   });
 
-  it("达到当天上限排到次日，定时检查没有新事实不排监工", async () => {
+  it("达到当天上限排到次日，定时检查没有新事实不排助手", async () => {
     const { app, task } = await setup();
     const ctx = turn(app, task);
     const day = new Intl.DateTimeFormat("sv-SE", { timeZone: app.config.timezone }).format(new Date());
@@ -315,7 +324,7 @@ describe("长任务监工", () => {
     expect(pendingWakes(app)).toEqual([]);
   });
 
-  it("定时检查只把最近有事实的在跑工作交给监工", async () => {
+  it("定时检查只把最近有事实的在跑工作交给助手跟进", async () => {
     const { app, task } = await setup();
     const ctx = turn(app, task);
     const child = createRun(app, { kind: "code", title: "编辑说明", parentId: ctx.run.id });
@@ -329,7 +338,7 @@ describe("长任务监工", () => {
     expect(all(app.db, "select id from runs where kind='supervise' and status='queued'")).toHaveLength(1);
   });
 
-  it("工作者的问题先留给监工，必须由本人决定的合成一张卡，答复写回原问题", async () => {
+  it("工作者的问题先留给助手，必须由本人决定的合成一张卡，答复写回原问题", async () => {
     const { app, task } = await setup();
     run(app.db, "update long_tasks set status='active' where id=?", task.id);
     const ctx = turn(app, task);
@@ -361,7 +370,7 @@ describe("长任务监工", () => {
       const ctx = turn(app, task);
       await submitSupervisorReport(app, ctx.run.id, { ...draftReport, brief: undefined, status: "drifting", actions: [action] });
     }
-    const notices = () => all<{ body: string }>(app.db, "select body from notifications where title='长任务进展'");
+    const notices = () => all<{ body: string }>(app.db, "select body from notifications where title='长任务跟进'");
     expect(notices()).toHaveLength(0);
     app.config.notify.quietEnd = hour;
     flushSupervisorPush(app, task);

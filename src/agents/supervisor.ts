@@ -7,7 +7,7 @@ import { backendAvailable } from "./availability.ts";
 import { downReason, excludedReason, hasRoom } from "./capacity.ts";
 import { policyScope } from "./ai-policy.ts";
 import { validateExecution, type Execution } from "./execution.ts";
-import { getLongTask, type LongTask } from "./long-tasks.ts";
+import { followAiLabel, getLongTask, type LongTask } from "./long-tasks.ts";
 import { createRun, getRun, queuedInLane, ResumeRunAt, updateQueuedRun, type RunContext } from "./runs.ts";
 import { getThread } from "./threads.ts";
 
@@ -59,7 +59,7 @@ export function wakeSupervisor(app: App, id: string, note: string, options: { im
       });
       return queued.id;
     }
-    return createRun(app, { kind: "supervise", title: truncate(`监工 · ${task.goal}`, 80), userId: task.userId,
+    return createRun(app, { kind: "supervise", title: truncate(`跟进 · ${task.goal}`, 80), userId: task.userId,
       spaceId: task.spaceId, lane, input: { longTaskId: id, threadId: task.threadId, conversationId: task.threadId,
         itemId: task.itemId, spaces: [task.spaceId], events },
       notBefore: options.immediate || options.drift ? null : new Date(Date.now() + 5 * minute).toISOString(),
@@ -90,7 +90,7 @@ const workers = `with recursive related(id) as (
 export function supervisorUsage(app: App, task: LongTask) {
   // Providers emit cumulative split token counts; use the last such event for each run.
   return all<{ kind: string; tokens: number }>(app.db, workers + `
-    select case when r.kind='supervise' then '监工' else '干活的' end kind,
+    select case when r.kind='supervise' then '跟进' else '干活的' end kind,
       sum(json_extract(e.data,'$.input') + json_extract(e.data,'$.output')) tokens
     from related cross join runs r on r.id=related.id cross join run_events e on e.run_id=r.id
       and e.seq=(select max(seq) from run_events indexed by progress_tokens where run_id=r.id and type='usage'
@@ -146,7 +146,7 @@ async function waitForAi(ctx: RunContext, task: LongTask, why: string): Promise<
   const end = since + ctx.app.config.agents.queueTimeoutMinutes * minute;
   ctx.output({ queueSince: since, queueReason: why });
   if (Date.now() < end) throw new ResumeRunAt(Math.min(end, Date.now() + minute));
-  const text = `监工 ${Object.values(task.ai).join(" · ")} 等待超过 ${ctx.app.config.agents.queueTimeoutMinutes} 分钟，本轮停止。原因：${why}。`;
+  const text = `跟进中 · ${followAiLabel(task.ai)} 等待超过 ${ctx.app.config.agents.queueTimeoutMinutes} 分钟，本轮停止。原因：${why}。`;
   const { deliverToThread } = await import("./inbox.ts");
   await deliverToThread(ctx.app, task.threadId, text, { runId: ctx.run.id });
   throw new Error(text);
@@ -156,7 +156,7 @@ async function ensureTopic(app: App, task: LongTask) {
   const thread = getThread(app, task.threadId);
   if (!thread.channel.startsWith("lark") || thread.key?.includes("#") || !thread.parentId) return;
   const anchor = thread.settings.lastMessageId;
-  if (anchor) await (await import("./inbox.ts")).deliverToThread(app, task.threadId, `长任务 · ${task.goal}`, { openTopicFrom: anchor });
+  if (anchor) await (await import("./inbox.ts")).deliverToThread(app, task.threadId, `跟进中 · ${task.goal}`, { openTopicFrom: anchor });
 }
 
 export async function runSupervisor(ctx: RunContext) {
@@ -171,7 +171,7 @@ export async function runSupervisor(ctx: RunContext) {
   if (ctx.run.output.supervisorReport) return { summary: "本轮报告已保存" };
   const profile = allProfiles(app.config).find(p => p.id === task.ai.profile);
   const selected = profile && { ...profile, ...task.ai };
-  const execution: Execution = { ...task.ai, source: "flow", reason: "长任务指定的监工" };
+  const execution: Execution = { ...task.ai, source: "flow", reason: "长任务指定的跟进 AI" };
   await ensureTopic(app, task);
   try { validateExecution(app, execution, task.userId, true, policyScope(app, "supervise")); }
   catch (error) {
@@ -190,7 +190,7 @@ export async function runSupervisor(ctx: RunContext) {
     ...events.filter(e => e.drift).map(e => e.note),
     "# 任务书", task.goal, JSON.stringify(task.brief), JSON.stringify(task.budget),
     "# 本人补充", JSON.stringify(task.supplements),
-    "# 监工笔记", JSON.stringify(task.notes),
+    "# 跟进笔记", JSON.stringify(task.notes),
     "# 本轮事件", ...events.filter(e => !e.drift).map(e => e.note),
     `当前状态：${task.status}；上轮阶段：${state.stage ?? "起草任务书"}。`,
   ].join("\n\n");
@@ -215,7 +215,7 @@ export async function runSupervisor(ctx: RunContext) {
     throw error;
   });
   const report = getRun(app, ctx.run.id).output.supervisorReport;
-  if (!report) throw new Error("这一轮监工没有提交 supervise_report");
+  if (!report) throw new Error("这一轮跟进没有提交 supervise_report");
   const stage = supervisorState(app, task.id).stage ?? "";
   const limit = app.config.sessions.background.maxContextTokens;
   const keep = result.sessionId && !stopped(getLongTask(app, task.id)) && (!state.stage || state.stage === stage) && !(limit && (result.contextUsage?.used ?? 0) > limit);

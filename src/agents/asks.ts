@@ -93,7 +93,7 @@ type Row = {
 };
 
 export function toAsk(r: Row, requester?: string): Ask {
-  const context = JSON.parse(r.context ?? "{}") as { operationApproval?: unknown; askedBy?: string; toName?: string; lapsed?: string; handler?: string; stageCard?: Ask["stageCard"] };
+  const context = JSON.parse(r.context ?? "{}") as { operationApproval?: unknown; askedBy?: string; toName?: string; supervisorTaskId?: string; lapsed?: string; handler?: string; stageCard?: Ask["stageCard"] };
   // A delegated approver sees the decision, not data returned using the requester's privileges.
   const hidePayload = context.operationApproval && context.askedBy !== r.user_id && requester !== context.askedBy;
   return {
@@ -123,7 +123,7 @@ export function toAsk(r: Row, requester?: string): Ask {
     ui: context.stageCard ? { ...stageCardUi(context.stageCard), ...(r.ui ? (JSON.parse(r.ui) as AskUi) : {}) } : r.ui ? (JSON.parse(r.ui) as AskUi) : null,
     value: r.value ? (JSON.parse(r.value) as Record<string, unknown>) : null,
     askedBy: context.askedBy ?? null,
-    toName: context.toName ?? null,
+    toName: context.supervisorTaskId ? "助手" : context.toName ?? null,
     lapsed: context.lapsed ?? null,
   };
 }

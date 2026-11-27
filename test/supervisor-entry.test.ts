@@ -33,26 +33,33 @@ function commandEntries() {
 
 it("creates a task from a multiline command and applies the topic controls to that task", async () => {
   const { app, thread, created } = commandEntries();
+  for (const help of ["/help", "/help all"]) {
+    const text = await runCommand(app, thread, help, { text: help });
+    expect(text).toContain("/跟进 [AI] 任务");
+    expect(text).not.toContain("/监工");
+  }
+  expect(await runCommand(app, thread, "/监工 启动", { text: "" })).toBeNull();
   const goal = "核对  迁移\n完成前不发布";
-  const started = await receive(app, { conversationId: thread.id, text: "/监工 codex astra xhigh " + goal });
+  const started = await receive(app, { conversationId: thread.id, text: "/跟进 codex astra xhigh " + goal });
   const task = created();
   expect(started.reply).toContain(task.threadId);
+  expect(started.reply).toContain("由 codex · astra · xhigh 跟进");
   expect(started.runId).toBeNull();
   expect(task).toMatchObject({ goal, status: "draft", ai: { profile: "codex", model: "astra", effort: "xhigh" } });
   const work = getThread(app, task.threadId);
   expect(work.parentId).toBe(thread.id);
   const send = (text: string) => runCommand(app, work, text, { text });
-  expect(await send("/监工")).toContain(task.id);
-  expect(await send("/监工 暂停")).toContain("已暂停");
-  expect(await send("/监工 继续")).toContain("等确认任务书");
-  expect(await send("/监工 加 0 小时")).toContain("用法");
-  await send("/监工 加 3 小时");
+  expect(await send("/跟进")).toContain(task.id);
+  expect(await send("/跟进 暂停")).toContain("已暂停");
+  expect(await send("/跟进 继续")).toContain("等确认任务书");
+  expect(await send("/跟进 加 0 小时")).toContain("用法");
+  await send("/跟进 加 3 小时");
   expect(created().budget.hours).toBe(task.budget.hours + 3);
-  await send("/监工 换 校对 opus effort=high");
+  await send("/跟进 换 校对 opus effort=high");
   expect(created().ai).toMatchObject({ profile: "claude", model: "opus", effort: "high" });
-  expect(await send("/监工 结束")).toContain("已结束");
-  expect(await runCommand(app, thread, "/监工 暂停", { text: "" })).toContain("长任务话题");
-  expect(await runCommand(app, thread, "/监工 启动", { text: "", asker: "访客" })).toContain("自己的会话");
+  expect(await send("/跟进 结束")).toContain("已结束");
+  expect(await runCommand(app, thread, "/跟进 暂停", { text: "" })).toContain("长任务话题");
+  expect(await runCommand(app, thread, "/跟进 启动", { text: "", asker: "访客" })).toContain("自己的会话");
   expect(app.db.prepare("select count(*) as n from long_tasks").get()).toEqual({ n: 1 });
 });
 
@@ -60,15 +67,15 @@ it("starts with a concrete group pick and keeps an English goal on the following
   const { app, thread, created } = commandEntries();
   app.config.agents.groups.find(g => g.id === "strong")!.items = [{ profile: "claude", model: "opus", effort: "max" }];
   const send = (text: string) => receive(app, { conversationId: thread.id, text });
-  expect((await send("/监工 codex fix the bug")).reply).toContain("找不到模型 fix the bug");
+  expect((await send("/跟进 codex fix the bug")).reply).toContain("找不到模型 fix the bug");
   expect(one(app.db, "select id from long_tasks")).toBeUndefined();
-  await send("/监工 /强\nfix the bug");
+  await send("/跟进 /强\nfix the bug");
   const task = created();
   expect(task).toMatchObject({ goal: "fix the bug", ai: { profile: "claude", model: "opus", effort: "max" } });
   const work = getThread(app, task.threadId);
-  await runCommand(app, work, "/监工 换 codex astra xhigh", { text: "" });
+  await runCommand(app, work, "/跟进 换 codex astra xhigh", { text: "" });
   expect(created().ai).toEqual({ profile: "codex", model: "astra", effort: "xhigh" });
-  await runCommand(app, work, "/监工 换 /强", { text: "" });
+  await runCommand(app, work, "/跟进 换 /强", { text: "" });
   expect(created().ai).toEqual(task.ai);
 });
 
@@ -77,20 +84,20 @@ it("lists exact choices for ambiguous key models before creating or changing a t
   app.config.ai.providers.push({ id: "demo", name: "示例", kind: "openai-compatible", baseUrl: "https://example.test", backends: ["codex"], models: ["sample-fast", "sample-pro"] });
   setKey(app.home, "demo", "test");
   const send = (text: string, conversationId = thread.id) => receive(app, { conversationId, text });
-  expect((await send("/监工 codex 示例 sample 检查文档")).reply).toContain("sample-fast、sample-pro");
+  expect((await send("/跟进 codex 示例 sample 检查文档")).reply).toContain("sample-fast、sample-pro");
   expect(one(app.db, "select id from long_tasks")).toBeUndefined();
-  await send("/监工 codex 示例 sample-pro medium\naudit the docs");
+  await send("/跟进 codex 示例 sample-pro medium\naudit the docs");
   const task = created();
   expect(task).toMatchObject({ goal: "audit the docs", ai: { profile: "codex@demo", model: "sample-pro", effort: "medium" } });
-  expect((await send("/监工 换 codex 示例 sample", task.threadId)).reply).toContain("sample-fast、sample-pro");
-  expect((await send("/监工 换 codex 示例 missing", task.threadId)).reply).toContain("找不到模型 missing");
+  expect((await send("/跟进 换 codex 示例 sample", task.threadId)).reply).toContain("sample-fast、sample-pro");
+  expect((await send("/跟进 换 codex 示例 missing", task.threadId)).reply).toContain("找不到模型 missing");
   expect(created().ai).toEqual(task.ai);
 });
 
 it("creates through the tool, forwards verbatim from another conversation and checks the task owner and space", async () => {
   const { app, ctx, created, thread } = entries();
   const ai = { profile: "codex", model: "sample", effort: "high" };
-  const initial = addMessage(app, thread.id, "user", "让监工盯着原目标");
+  const initial = addMessage(app, thread.id, "user", "让助手盯着原目标");
   const ask = createRun(app, { kind: "ask", title: "开始长任务", input: { conversationId: thread.id, messageIds: [initial] } });
   const result = await callTool({ ...ctx, runId: ask.id }, "start_long_task", { goal: "原目标", ai, budget: { hours: 5 } });
   expect(result.isError, result.text).toBe(false);

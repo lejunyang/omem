@@ -117,21 +117,21 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     const task = getLongTask(app, String(inter.payload.longTaskId));
     if (task.userId !== operatorUser() || !canWrite(app, task.userId, task.spaceId)) return { toast: { type: "error", content: "只有任务发起人可以操作" } };
     const action = String(value?.action ?? "");
-    if (action === "换监工") {
+    if (action === "change-ai" || action === "换监工") {
       const { createAsk } = await import("../agents/asks.ts");
-      createAsk(app, { conversationId: task.threadId, runId: null, userId: task.userId, question: "这件长任务接下来由哪个 AI 监工？",
+      createAsk(app, { conversationId: task.threadId, runId: null, userId: task.userId, question: "这件长任务接下来由哪个 AI 跟进？",
         context: { handler: "supervisor-ai", longTaskId: task.id, larkApprover: task.userId }, allowText: false,
-        ui: { submitLabel: "更换监工", fields: [
+        ui: { submitLabel: "更换跟进的 AI", fields: [
           { type: "text", id: "profile", label: "后端", required: true, default: task.ai.profile },
           { type: "text", id: "model", label: "模型", required: false, default: task.ai.model },
           { type: "text", id: "effort", label: "思考强度", required: false, default: task.ai.effort },
         ] } });
-      return { toast: { type: "info", content: "在话题里的卡片上选择新监工" } };
+      return { toast: { type: "info", content: "在话题里的卡片上选择跟进的 AI" } };
     }
     if (!["暂停", "继续", "结束", "加 3 小时"].includes(action)) return { toast: { type: "error", content: "未知的长任务操作" } };
     const { runCommand } = await import("../agents/commands.ts");
     const thread = findThread(app, task.threadId)!;
-    const text = "/监工 " + action;
+    const text = "/跟进 " + action;
     const reply = await runCommand(app, thread, text, { userId: task.userId, channel: thread.channel, text });
     return { toast: { type: "info", content: String(reply).slice(0, 80) } };
   }

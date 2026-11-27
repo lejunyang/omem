@@ -928,7 +928,7 @@ async function onEscalationAnswer(app: App, ask: Ask, ctx: { codeRunId: string; 
     return;
   }
   if (picked === "先停下，我来调整") return;
-  const who = ask.answeredBy === "supervisor" ? "监工" : "本人";
+  const who = ask.answeredBy === "supervisor" ? "助手" : "本人";
   // Another round: the lead's change request, the option the owner picked, or the owner's own words.
   const task = picked === "按修改单再改一轮" || picked === null && !ask.answer
     ? `评审要求修改（第 ${lead?.round ?? 1} 轮评审，${who}确认继续）：\n\n${lead?.changeRequest ?? ""}`

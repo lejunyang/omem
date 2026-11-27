@@ -1436,7 +1436,7 @@ export const configSchema = z.object({
     })
     .default({ expiry: true, days: { todo: 14, decision: 7, watch: 7, waiting: 14, reminder: 1 }, infer: true }),
   longTasks: z.object({
-    supervisor: supervisorAiSchema.optional(),
+    supervisor: supervisorAiSchema.optional().describe("长任务跟进用的 AI"),
     checkMinutes: z.number().int().positive().default(40),
   }).prefault({}),
   /**
