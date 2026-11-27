@@ -403,7 +403,7 @@ npm install -g @omem-ai/cli
 /help  /help all           五个常用命令 / 完整清单
 /new [任务]  /resume <id>   开新会话并执行任务（不带任务只开空白会话）/ 回到旧会话
 /topic [AI] <任务>          从飞书群聊或机器人私聊开话题，已有话题内拒绝；如 /topic codex astra xhigh 整理方案
-/监工 [AI] 任务             开长任务；在工作话题里发 /监工 看状态，发 /监工 暂停、继续、加 3 小时、换 后端 或结束
+/监工 [AI] 任务             指定后端、别名或 AI 组开启长任务；英文目标可另起一行。在工作话题发 /监工 看状态，或暂停、继续、加时、换 AI、结束
 /status  /stop  /sessions  当前状态 / 停止 / 最近的会话
 /link <id>  /summary  /compact   关联会话 / 查看摘要 / 从摘要重开 Agent 会话
 /space <id>  /agent <后端>  /as <档案> [任务]   切空间 / 换后端 / 让某个 Agent 档案接管或做一件事

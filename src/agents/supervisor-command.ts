@@ -1,41 +1,17 @@
 import type { App } from "../core/app.ts";
-import { allProfiles } from "../core/config.ts";
-import { parseModelArgs } from "./commands.ts";
+import { parseAiSpec, type AiSpec } from "./ai-spec.ts";
 import { canWrite, OWNER } from "../core/users.ts";
 import { itemAccess } from "../items/access.ts";
-import { resolveModelOption } from "./models.ts";
-import { userProbe } from "./probe.ts";
 import { getRun } from "./runs.ts";
 import { changeLongTask, longTaskInThread, startLongTask, type LongTask } from "./long-tasks.ts";
 import type { Thread } from "./threads.ts";
 import type { Inbound } from "./inbox.ts";
 
-const usage = "/监工 [后端 [模型] [强度]] 任务";
-type ParsedSupervisorAi = {
-  ai?: LongTask["ai"]; group?: string; rest: string; notes: string[];
-  ambiguous?: { profile: string; model: string }[]; unknown?: string;
-};
+const usage = "/监工 [后端或组名 [模型] [强度]] 任务";
 
-// Only the first line can name the backend and model; subsequent lines belong to the goal.
-export function supervisorArgs(app: App, args: string, userId: string): ParsedSupervisorAi {
-  const first = /^(\S+)([\s\S]*)$/.exec(args);
-  const profile = first && allProfiles(app.config).find(p => p.id === first[1]);
-  if (!first || !profile) return { rest: args, notes: [] };
-  let rest = first[2];
-  const token = /^[^\S\r\n]+([\w.@:/-]+)(?=\s|$)/.exec(rest);
-  const effortOnly = /^(low|medium|high|xhigh|max)$/i;
-  let model: string | undefined;
-  if (token && !effortOnly.test(token[1]) && !/^effort$/i.test(token[1])) {
-    const offered = userProbe(app, userId, profile.id)?.models ?? [];
-    const resolved = resolveModelOption(token[1], offered);
-    if (!offered.length || resolved.matched) {
-      model = resolved.value;
-      rest = rest.slice(token[0].length);
-    }
-  }
-  const level = /^[^\S\r\n]+(?:effort[ \t]*[:=][ \t]*([\w.-]+)|(low|medium|high|xhigh|max))(?=\s|$)/i.exec(rest);
-  const selected = parseModelArgs([model, level && `effort=${level[1] ?? level[2]}`].filter(Boolean).join(" "));
-  return { ai: { profile: profile.id, ...selected }, rest: rest.slice(level?.[0].length ?? 0).trimStart(), notes: [] };
+function selectionProblem(spec: AiSpec) {
+  if (spec.unknown) return spec.unknown;
+  if (spec.ambiguous) return "匹配到多个模型，请用完整型号重发命令：" + spec.ambiguous.map(p => p.model).join("、");
 }
 
 export function longTaskText(app: App, task: LongTask) {
@@ -71,10 +47,12 @@ export async function supervisorCommand(app: App, thread: Thread, args: string, 
         break;
       }
       case "换": {
-        const { ai, rest } = supervisorArgs(app, value, userId);
-        if (!ai || rest) return "用法：/监工 换 后端 [模型] [强度]";
-        updated = await changeLongTask(app, current.id, { action: "ai", ai });
-        break;
+        const spec = parseAiSpec(app, value, { userId });
+        const problem = selectionProblem(spec);
+        if (problem) return problem;
+        if (!spec.ai || spec.rest) return "用法：/监工 换 后端或组名 [模型] [强度]";
+        updated = await changeLongTask(app, current.id, { action: "ai", ai: spec.ai });
+        return [...spec.notes, longTaskText(app, updated)].join("\n");
       }
       default: {
         if (value) return "用法：/监工 暂停、/监工 继续、/监工 结束";
@@ -86,8 +64,11 @@ export async function supervisorCommand(app: App, thread: Thread, args: string, 
   }
   if (args === "接管") return "请用 /监工 加上要推进的目标，另开长任务。";
   if (current) return "在这个话题直接说要补充的内容，或发 /监工 查看状态。";
-  const { rest: goal, ai } = supervisorArgs(app, args, userId);
+  const spec = parseAiSpec(app, args, { userId });
+  const problem = selectionProblem(spec);
+  if (problem) return problem;
+  const { rest: goal, ai } = spec;
   if (!goal) return `请写明任务目标。用法：${usage}`;
   const task = startLongTask(app, { spaceId, userId, threadId: thread.id, goal, ai });
-  return longTaskText(app, task);
+  return [...spec.notes, longTaskText(app, task)].join("\n");
 }
