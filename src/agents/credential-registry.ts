@@ -7,7 +7,7 @@ import { run } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { canonical, normalizeSandbox, under } from "./own-sandbox.ts";
-import { commandCredentialVariable } from "./sandbox.ts";
+import { commandCredentialVariable, setBackendStateCheck } from "./sandbox.ts";
 
 export type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome };
 const ID = /^[a-z][a-z0-9-]{0,31}$/;
@@ -85,6 +85,8 @@ export function checkBackendCommandState(backend: string, home: string, backendP
     }
   }
 }
+
+setBackendStateCheck(checkBackendCommandState);
 
 export const defaultSharingScope = (id: string) => id === OWNER ? "all" : "self";
 

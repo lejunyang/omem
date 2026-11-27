@@ -1,4 +1,3 @@
-import { checkBackendCommandState } from "./credential-registry.ts";
 import { commandMounts, sandboxGate } from "./command-mounts.ts";
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
@@ -20,6 +19,15 @@ import { fileURLToPath } from "node:url";
  */
 
 export const egressRelayPath = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url));
+
+/**
+ * The clash check between a backend's own login state and the command logins plugins declare
+ * (credential-registry.ts sets it when it loads). Not imported here: this module sits under the
+ * test setup and every launch path, and the registry pulls in the database and the users. With no
+ * registry loaded no command login is declared, so there is nothing to clash with.
+ */
+let backendStateCheck: ((backend: string, home: string, paths: string[]) => void) | undefined;
+export function setBackendStateCheck(check: typeof backendStateCheck) { backendStateCheck = check; }
 
 export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; reason?: string };
 
@@ -295,7 +303,7 @@ export function omemInstallDir() {
 export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, registryFile?: string) {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
-  if (acct.backendState) checkBackendCommandState(acct.backend, acct.home, acct.backendState.map(rel => join(acct.home, rel)));
+  if (acct.backendState) backendStateCheck?.(acct.backend, acct.home, acct.backendState.map(rel => join(acct.home, rel)));
   const hide = [...new Set([...acct.hide, homedir(), "/tmp"].filter((p) => isAbsolute(p) && existsSync(p)).map(real))];
   const nodeBin = dirname(process.execPath);
   const ro = new Set(acct.ro);
