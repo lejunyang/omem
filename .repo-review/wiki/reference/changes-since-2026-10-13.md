@@ -5,6 +5,38 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 沙箱在启动前报告后端与命令的登录目录冲突（2026-11-28）
+
+从 `src/agents/credential-registry.ts` 的 `checkBackendCommandState` 读起。本人、成员及借用账号启动 Linux 沙箱时检查两个路径是否相同或互相包含。冲突时提示分开供给独立凭据或改用其他后端。
+
+## 登录目录重合的凭据插件可注册（2026-11-28）
+
+从 `src/agents/credential-registry.ts` 读起。注册接受后端与命令的状态目录相同或互为父子。本人关闭沙箱时可照常使用这类登录。
+
+## 按运行类型分批启用沙箱，分开后端与命令登录（2026-11-28）
+
+从 `src/agents/own-run.ts` 读起。非空的 `includeKinds` 只隔离列出的本人运行，`excludeKinds` 优先。飞书 CLI 在执行器里使用本账号的登录，常见浏览器资料加入默认隐藏清单。凭据插件分别供给后端与命令状态的例子见 `examples/plugins/acmeauth`。
+
+## Git 远端与子模块更新使用本身份的登录（2026-11-28）
+
+`src/agents/git-command.ts` 供垫片和执行器共同识别 `git remote update` 与 `git submodule update --remote`。这两类更新与 fetch 共用执行许可和命令审计。查看、添加或删除 remote 仍按本地操作处理。
+
+## 执行器恢复命令登录变量（2026-11-28）
+
+`src/agents/command-executor.ts` 为 gh、npm 等命令恢复各自的登录环境，受信任的凭据插件可按子命令声明 `loginEnv`。本人使用后端档案或宿主环境中的值，成员只使用本账号的值。
+
+## 沙箱命令使用本人授权的额外目录（2026-11-28）
+
+从 `src/agents/own-sandbox.ts` 的挂载计划读起。执行器沿用启动时确定的工作区权限，额外仓库可通过 cwd 或 Git 的 `-C` 使用。后端状态、隐藏路径和各命令自己的登录仍分别隔离。
+
+## 沙箱保留 npm 的源设置（2026-11-28）
+
+从 `src/agents/sandbox-npmrc.ts` 读起。Linux 本人和成员沙箱把用户 npm 配置作为只读快照挂回原位，保留源、作用域、代理及 CA 设置，去掉登录字段。私有源需要认证时由明确授权的执行器处理，或由本人安装。
+
+## 本人沙箱的登录路径与运行类型（2026-11-28）
+
+从 `src/agents/own-run.ts` 读起。挂载工作区后再遮住登录文件、SSH agent 套接字和插件状态，设置可替换内置路径或排除指定类型的本人运行。`src/agents/egress-run.ts` 将本人沙箱接入已有的 all-sandboxed 出网模式。命令启动从 `src/agents/command-executor.ts` 读起，同身份的命令使用独立沙箱和流式管道，原有借用流程保留。
+
 ## 用 /跟进 开启和管理长任务（2026-11-28）
 
 从 `src/agents/supervisor-command.ts` 读起。在工作话题发 `/跟进` 看进展，进度卡显示由哪个 AI 跟进。跟进消息沿用主助手署名，设置项名为“长任务跟进用的 AI”。

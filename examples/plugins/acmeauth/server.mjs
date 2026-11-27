@@ -2,6 +2,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const file = ctx => join(ctx.home, ".acme-demo", "account.json");
+const backendFile = ctx => join(ctx.home, ".acme-demo-agent.json");
 const expires = () => Date.now() + 7 * 86400_000;
 
 export default function register(api) {
@@ -32,7 +33,10 @@ export default function register(api) {
       return { user: ctx.userId, expiresAt: expires() };
     },
     async refresh(ctx) { return await ctx.secret.get() ? { expiresAt: expires() } : null; },
-    async provide(ctx) { await writeFile(file(ctx), JSON.stringify({ user: ctx.userId, expiresAt: expires() }), { mode: 0o600 }); },
+    async provide(ctx) {
+      await writeFile(file(ctx), JSON.stringify({ user: ctx.userId, expiresAt: expires() }), { mode: 0o600 });
+      await writeFile(backendFile(ctx), JSON.stringify({ user: ctx.userId }), { mode: 0o600 });
+    },
     async check(ctx) {
       try {
         const { user, expiresAt } = JSON.parse(await readFile(file(ctx), "utf8"));
@@ -40,6 +44,6 @@ export default function register(api) {
       }
       catch (err) { if (err.code === "ENOENT") return { state: "missing" }; throw err; }
     },
-    async logout(ctx) { await rm(file(ctx), { force: true }); },
+    async logout(ctx) { await Promise.all([file(ctx), backendFile(ctx)].map(path => rm(path, { force: true }))); },
   });
 }

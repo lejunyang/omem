@@ -8,4 +8,4 @@ backends:
     name: 示例回声后端
     command: acme-demo-agent
     account:
-      owns: [.acme-demo]
+      owns: [.acme-demo-agent.json]

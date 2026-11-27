@@ -36,7 +36,7 @@ import { memberThreadAi } from "./member-ai.ts";
 import { selectMemberRunAccount } from "./member-run-ai.ts";
 import { aiLoginWait } from "./credential-wait.ts";
 import { SandboxStartError } from "./spawn.ts";
-import { accountTag, egressRequested } from "./sandbox.ts";
+import { accountTag, accountOf } from "./sandbox.ts";
 import { afterTurn, noteRateLimit, quotaPressure } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
 import { awarenessNote } from "./awareness.ts";
@@ -642,7 +642,7 @@ ${WAKE_NOTE}`
             parts: prep.parts,
             scene: prep.scene,
             ...turnMessage(prep, !resume),
-            ownSandbox: prep.isolation.box, allowWrites: prep.allowWrites, doubaoPermission: prep.doubaoPermission,
+            workspace: prep.workspace, ownSandbox: prep.isolation.box, allowWrites: prep.allowWrites, doubaoPermission: prep.doubaoPermission,
             modes: prep.modes,
             fullAccess: prep.fullAccess, acpWritable: prep.acpWritable,
             signal: ctx.signal,
@@ -746,7 +746,7 @@ ${WAKE_NOTE}`
             parts: curPrep.parts,
             scene: curPrep.scene,
             ...turnMessage(curPrep, true, carry),
-            ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites, doubaoPermission: curPrep.doubaoPermission,
+            workspace: curPrep.workspace, ownSandbox: curPrep.isolation.box, allowWrites: curPrep.allowWrites, doubaoPermission: curPrep.doubaoPermission,
             modes: curPrep.modes,
             fullAccess: curPrep.fullAccess, acpWritable: curPrep.acpWritable,
             signal: ctx.signal,
@@ -773,7 +773,7 @@ ${WAKE_NOTE}`
           const handle = await openAcp(profile, {
             app, cwd, signal, resumeSessionId, env: networkEnvironment(app, profile), strictSelection,
             cleanup: await sessionCleanup(app, profile, { cwd, runId: ctx.run.id, persistSession: true }, emit),
-            mcp: selected.mcp, extraMcp: selected.extraMcp, ownSandbox: selected.isolation.box,
+            mcp: selected.mcp, extraMcp: selected.extraMcp, workspace: selected.workspace, ownSandbox: selected.isolation.box,
             allowWrites: selected.allowWrites, modes: selected.modes, fullAccess: selected.fullAccess,
             acpWritable: selected.acpWritable, system: selected.system, queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
           }, emit);
@@ -786,7 +786,7 @@ ${WAKE_NOTE}`
         }
       };
       let l = step === 0 ? live.get(threadId) : undefined;
-      if (l && (curPrep.isolation.box || egressRequested(app.config, used) || l.key !== liveKey(curPrep) || !l.handle.alive() || tooLong)) {
+      if (l && (curPrep.isolation.box || accountOf(used) || l.key !== liveKey(curPrep) || !l.handle.alive() || tooLong)) {
         release(threadId);
         l = undefined;
       }
@@ -857,7 +857,7 @@ ${WAKE_NOTE}`
         const cur = live.get(threadId);
         if (cur) {
           cur.busy = false;
-          if (curPrep.isolation.box || egressRequested(app.config, curPrep.profile)) release(threadId);
+          if (curPrep.isolation.box || accountOf(curPrep.profile)) release(threadId);
           else if (done) keepAlive(app, cur);
         }
       }

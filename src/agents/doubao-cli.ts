@@ -189,7 +189,7 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
     const extra = [file, toolsDir].filter((path): path is string => !!path && !box?.hidden.some(hidden => under(path, hidden)));
     const ownSandbox = box ? { ...box, plan: { ...box.plan, ro: [...box.plan.ro, ...extra] } } : box;
     const { args, permission } = doubaoCommand(profile, req, prompt, doubaoFeatures(profile).cwdOption);
-    const child = await (await import("./egress-run.ts")).launchRun(profile, req, sandbox => emptyStdin(stdin => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin, sandbox })));
+    const child = await (await import("./egress-run.ts")).launchRun(profile, { ...req, ownSandbox }, (sandbox, box) => emptyStdin(stdin => launch(exe, args, { cwd: req.cwd, workspace: req.workspace, ownSandbox: box, env: { ...profile.env, ...req.mcp?.env, ...req.env }, stdin, sandbox })));
     emit({ type: "status", text: aiUsageText(profile, permission === "always_allow" ? "完全访问" : "风险审批", req.selection) });
     emit({ type: "status", text: "豆包 CLI 在本机执行，整轮结束后才输出回复；过程里只看得到它调用的 omem 工具" });
     if (req.runId) shellToolRuns.add(req.runId);

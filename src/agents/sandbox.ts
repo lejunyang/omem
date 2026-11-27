@@ -1,5 +1,7 @@
+import { checkBackendCommandState } from "./credential-registry.ts";
+import { commandMounts, sandboxGate } from "./command-mounts.ts";
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,12 +19,17 @@ import { fileURLToPath } from "node:url";
  * `sandboxSupport` checks once. Everywhere else members keep borrowing the owner's backends.
  */
 
+export const egressRelayPath = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url));
+
 export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; reason?: string };
 
 /** What a run for one user's own account carries on its profile (accounts.ts sets it in prepareRun). */
 export type SandboxAccount = {
+  guarded?: string;
   /** In a borrowed HOME, bind only shared state and create the other required directories privately. */
   borrowed?: { state: string[]; dirs: string[] };
+  backendState?: string[];
+  masked?: string[];
   network?: SandboxNetwork;
   userId: string;
   /** The account backend (catalog id): codex, claude, traex, doubao-cli. */
@@ -92,6 +99,9 @@ export function detectSandbox(platform: NodeJS.Platform = process.platform, env:
     const why = (p.error?.message ?? p.stderr.trim()).slice(0, 200) || `退出码 ${p.status}`;
     return { ok: false, bwrap, version, reason: `bubblewrap 起不来（多半是系统没有允许非特权用户命名空间）：${why}` };
   }
+  const help = run(bwrap, ["--help"]);
+  if (!["--bind-fd", "--ro-bind-fd"].every(flag => (help.stdout + help.stderr).includes(flag)))
+    return { ok: false, bwrap, version, reason: "bubblewrap 缺少按文件描述符挂载的能力，需要 --bind-fd 和 --ro-bind-fd" };
   return { ok: true, bwrap, version };
 }
 
@@ -99,6 +109,10 @@ const depth = (p: string) => p.split("/").filter(Boolean).length;
 const inside = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
 
 export type SandboxPlan = {
+  privateTmp?: string;
+  minimalRoot?: boolean;
+  commandMounts?: string[];
+  masked?: string[];
   network?: SandboxNetwork;
   /** Empty directories created in the sandbox with mode 0700. */
   privateDirs?: string[];
@@ -114,15 +128,16 @@ export type SandboxPlan = {
   args: string[];
 };
 
-export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointers">;
+export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointers" | "privateTmp">;
 
 /**
- * bubblewrap's arguments for a plan. Pure. Mounts go from the shallowest path to the deepest, so a
+ * Build the mount arguments and collect snapshot entries to pin at launch. Mounts go from the shallowest path to the deepest, so a
  * folder inside a hidden one comes back on top of it and a hidden folder inside a read-only one
  * (omem's data folder inside its checkout) stays hidden; at the same path writable wins. /tmp is
  * always private.
  */
-export function bwrapArgs(plan: SandboxPlan): string[] {
+export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
+  const pinned = new Set<string>();
   const rank = { dir: 0, tmpfs: 1, ro: 2, rw: 3 } as const;
   const ops = new Map<string, { path: string; kind: keyof typeof rank }>();
   const add = (path: string, kind: keyof typeof rank) => {
@@ -135,26 +150,67 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
   for (const p of [...plan.hide, "/tmp"]) add(p, "tmpfs");
   for (const p of plan.ro) add(p, "ro");
   for (const p of plan.rw) add(p, "rw");
+  // Project the existing names in a read-only parent. Newly created host logins stay
+  // outside the run, and no mountpoint has to be created in the real HOME.
+  const credentials = [...new Set(plan.masked)].filter(path => !plan.masked?.some(parent => parent !== path && inside(path, parent)));
+  const snapshots = new Map<string, "ro" | "rw">();
+  const snapshotLinks: string[] = [];
+  for (const path of credentials) {
+    let parent = dirname(path);
+    while (!existsSync(parent)) parent = dirname(parent);
+    const mount = [...ops.values()].filter(op => inside(parent, op.path)).sort((a, b) => b.path.length - a.path.length)[0];
+    if (mount ? mount.kind !== "ro" && mount.kind !== "rw" : plan.network || plan.minimalRoot) continue;
+    if (parent === "/") throw new Error("根目录下的隐藏登录路径需要已存在的父目录");
+    snapshots.set(parent, mount?.kind === "rw" ? "rw" : "ro");
+  }
+  for (const [parent, access] of [...snapshots].sort(([a], [b]) => depth(a) - depth(b))) {
+    ops.set(parent, { path: parent, kind: "tmpfs" });
+    const dir = opendirSync(parent);
+    try {
+      let count = 0;
+      for (let entry; (entry = dir.readSync());) {
+        if (++count > 4096) throw new Error("登录路径父目录条目过多，请指定专用的登录目录");
+        const path = join(parent, entry.name);
+        if (ops.has(path) || credentials.includes(path)) continue;
+        if (entry.isSymbolicLink()) snapshotLinks.push("--symlink", readlinkSync(path), path);
+        else { add(path, access); pinned.add(path); }
+      }
+    } finally { dir.closeSync(); }
+  }
   const sorted = [...ops.values()].sort((a, b) => depth(a.path) - depth(b.path) || rank[a.kind] - rank[b.kind] || a.path.localeCompare(b.path));
   const mounts = sorted.flatMap(({ kind, path }) => {
     if (kind === "dir") return ["--perms", "0700", "--dir", path];
+    if (kind === "tmpfs" && path === "/tmp" && plan.privateTmp) return ["--bind", plan.privateTmp, path];
     if (kind === "tmpfs") return ["--tmpfs", path];
     return [kind === "ro" ? "--ro-bind-try" : "--bind", path, path];
   });
   const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
   const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
+  // Apply credential masks last, including inside writable caches or a mounted account HOME.
+  const npmrc = registryFile && credentials.includes(registryFile) && statSync(registryFile, { throwIfNoEntry: false })?.isFile() ? registryFile : undefined;
+  const masks = credentials.filter(path => path !== npmrc).flatMap(path => {
+    const stat = statSync(path, { throwIfNoEntry: false });
+    if (!stat) return [];
+    return stat.isDirectory() ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path];
+  });
   const n = plan.network;
-  const relay = n ? [process.execPath, fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)), String(n.callbackPort ?? 0)] : [];
+  const ca = n?.bundle ? ["SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"]
+    .flatMap(key => ["--setenv", key, "/tmp/omem-ca.pem"]) : [];
+  const relay = n ? [process.execPath, egressRelayPath, String(n.callbackPort ?? 0)] : [];
   // A read-only host root still exposes live filesystem sockets. Networked runs start with
   // the runtime directories and explicit run mounts, leaving host service sockets outside.
-  const root = n ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
-  return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links,
+  const root = n || plan.minimalRoot ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
+  const args = ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, ...snapshotLinks, ...masks, ...(plan.commandMounts ?? []),
+    ...(npmrc ? ["--ro-bind-data", "3", npmrc] : []),
+    ...[...snapshots].flatMap(([p, access]) => access === "ro" ? ["--remount-ro", p] : []),
     ...(n ? ["--unshare-net", "--tmpfs", "/run", ...(n.secrets && existsSync(n.secrets) ? ["--tmpfs", n.secrets] : []), "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
-    "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
+    ...ca, "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
+  return { args, pinned, npmrc };
 }
 
-export function egressRequested(config: import("../core/config.ts").Config, profile: object) {
+export function egressRequested(config: import("../core/config.ts").Config, profile: object, own = false) {
   const mode = config.security.egress.mode;
+  if (own) return mode === "all-sandboxed";
   return !!accountOf(profile) && mode !== "off" && (mode === "all-sandboxed" || config.agents.accountIsolation === "require");
 }
 
@@ -166,6 +222,18 @@ export function egressSupport(): SandboxSupport {
   if (networkSupport) return networkSupport;
   const probe = exec(s.bwrap, ["--unshare-net", ...PROBE_ARGS]);
   return networkSupport = probe.status === 0 ? s : { ok: false, reason: "出网隔离不可用：" + (probe.error?.message ?? probe.stderr.trim()).slice(0, 200) };
+}
+
+// Backend API keys and the per-run tool token are needed by the backend itself.
+const backendLogin = /^(?:OPENAI|ANTHROPIC|CLAUDE|CODEX|TRAE|DOUBAO|GEMINI)_|^OMEM_TOKEN$/i;
+const commandLogin = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE_KEY|ACCESS_KEY|API_KEY)(?:_|$)|^(?:SSH_AUTH_SOCK|SSH_AGENT_PID|SSH_ASKPASS|GIT_ASKPASS|GIT_CONFIG_.+|GH_.+|GITHUB_.+|GITLAB_.+|GLAB_.+|DOCKER_AUTH_CONFIG|AWS_.+|AZURE_.+|CLOUDSDK_.+|GOOGLE_APPLICATION_CREDENTIALS|KUBECONFIG)$/i;
+
+export const commandCredentialVariable = (key: string) => !backendLogin.test(key) && commandLogin.test(key);
+
+export function stripCommandLogin(env: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv) {
+  for (const key of Object.keys(env)) if (commandCredentialVariable(key)) delete env[key];
+  const gate = run.OMEM_COMMAND_GATE;
+  if (sandboxGate(gate) && run.GIT_ASKPASS === join(dirname(gate), "git-askpass")) env.GIT_ASKPASS = run.GIT_ASKPASS;
 }
 
 /** Variables of the service that do not go into a user's sandbox: credentials, and paths into what is hidden. */
@@ -191,6 +259,7 @@ export function sandboxEnv(base: NodeJS.ProcessEnv, runEnv: Record<string, strin
   out.PATH = [nodeBin, ...path.split(":").filter((d) => d && d !== nodeBin)].join(":");
   out.HOME = acct.home;
   for (const [k, v] of Object.entries(acct.env)) out[k] = v;
+  if (sandboxGate(runEnv.OMEM_COMMAND_GATE)) stripCommandLogin(out, runEnv);
   return out;
 }
 
@@ -223,9 +292,10 @@ export function omemInstallDir() {
  * What `launch` starts instead of the command, for a run of one user's own account: bwrap with
  * the mounts worked out from where the command really lives.
  */
-export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env): { file: string; args: string[]; env: Record<string, string> } {
+export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, registryFile?: string) {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
+  if (acct.backendState) checkBackendCommandState(acct.backend, acct.home, acct.backendState.map(rel => join(acct.home, rel)));
   const hide = [...new Set([...acct.hide, homedir(), "/tmp"].filter((p) => isAbsolute(p) && existsSync(p)).map(real))];
   const nodeBin = dirname(process.execPath);
   const ro = new Set(acct.ro);
@@ -262,7 +332,7 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
+    ...bwrapArgs({ privateTmp: workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: [...new Set(acct.masked?.flatMap(path => [path, real(path)]))], network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, registryFile),
     env: sandboxEnv(baseEnv, runEnv, acct, hide, nodeBin),
   };
 }

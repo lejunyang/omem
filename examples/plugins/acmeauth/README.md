@@ -4,7 +4,7 @@
 
 成员调用 `POST /api/credentials/acmeauth:demo/login` 后即可用 `GET /api/credentials` 查看状态。成员沙箱里的 `acme-demo whoami` 输出虚构账号名。选择后端 `acmeauth:demo` 进行一次对话，它通过 ACP 返回同一个账号名。调用 `DELETE /api/credentials/acmeauth:demo` 退出会移除账号文件。
 
-示例在成员 HOME 的 `.acme-demo/account.json` 写入虚构账号名，续签有效期为七天。登录、检查和对话都在本机完成。
+示例给命令写入 `.acme-demo/account.json`，给回声后端单独写入只含虚构账号名的 `.acme-demo-agent.json`。借用后端只能看到后者。示例账号有效期为七天，续签会再次供给两份状态。从旧版示例升级后可重新登录生成后端文件。登录、检查和对话都在本机完成。
 
 用 `acme-demo show --project sample` 查看公共示例项目，换成示例账号名则查看其个人项目。垫片识别拒绝时会显示示例申请链接。用 `who_can(resource="project:sample", kind="acmeauth:demo")` 查询权限记录，没有记录时会用插件预检。
 

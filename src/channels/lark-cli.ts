@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
+import { larkCliInstallation } from "./lark-cli-path.ts";
 import { promisify } from "node:util";
 import { Client, Domain, LoggerLevel } from "@larksuiteoapi/node-sdk";
 
@@ -44,29 +44,21 @@ export function larkActing(): LarkActor | null {
   return a && a.userId !== "owner" ? a : null;
 }
 
-function larkCliScript() {
-  try {
-    return createRequire(import.meta.url).resolve("@larksuite/cli/scripts/run.js");
-  } catch {
-    throw new Error("未安装 @larksuite/cli；请重新安装 omem 依赖");
-  }
-}
-
 /** The command line that runs lark-cli with these arguments (for long-running processes such as `event consume`). */
 export function larkCliCommand(args: string[]): [string, string[]] {
-  return [process.execPath, [larkCliScript(), ...args]];
+  return [process.execPath, [larkCliInstallation().script, ...args]];
 }
 
 /** Run lark-cli in the terminal (device-flow login): its prompts and QR code go straight to the user. */
 export function larkCliInteractive(args: string[]) {
   if (override) return 0;
-  return spawnSync(process.execPath, [larkCliScript(), ...args], { stdio: "inherit", windowsHide: true }).status ?? 1;
+  return spawnSync(process.execPath, [larkCliInstallation().script, ...args], { stdio: "inherit", windowsHide: true }).status ?? 1;
 }
 
 /** lark-cli's plain-text output (e.g. an ASCII QR code), or null on failure. */
 export function larkCliText(args: string[]): string | null {
   if (override) return null;
-  const r = spawnSync(process.execPath, [larkCliScript(), ...args], { encoding: "utf8", windowsHide: true, timeout: 20_000 });
+  const r = spawnSync(process.execPath, [larkCliInstallation().script, ...args], { encoding: "utf8", windowsHide: true, timeout: 20_000 });
   return r.status === 0 ? r.stdout : null;
 }
 
@@ -77,7 +69,7 @@ export async function larkCliOutput(args: string[], timeoutMs = 30_000): Promise
     return typeof r === "string" ? r : JSON.stringify(r);
   }
   try {
-    return (await exec(process.execPath, [larkCliScript(), ...args], { timeout: timeoutMs, maxBuffer: 20_000_000, windowsHide: true })).stdout;
+    return (await exec(process.execPath, [larkCliInstallation().script, ...args], { timeout: timeoutMs, maxBuffer: 20_000_000, windowsHide: true })).stdout;
   } catch (e) {
     throw new Error(`飞书 CLI：${String((e as { stderr?: string }).stderr || (e as Error).message).trim().slice(0, 300)}`);
   }
@@ -86,7 +78,7 @@ export async function larkCliOutput(args: string[], timeoutMs = 30_000): Promise
 /** Run lark-cli with a secret on stdin (never on the command line), output to the terminal. */
 export function larkCliWithInput(args: string[], stdin: string) {
   if (override) return 0;
-  return spawnSync(process.execPath, [larkCliScript(), ...args], { input: stdin, stdio: ["pipe", "inherit", "inherit"], windowsHide: true }).status ?? 1;
+  return spawnSync(process.execPath, [larkCliInstallation().script, ...args], { input: stdin, stdio: ["pipe", "inherit", "inherit"], windowsHide: true }).status ?? 1;
 }
 
 /**
@@ -109,7 +101,7 @@ export async function larkCliAsBot(bot: { appId: string; appSecret: string; bran
     if (typeof token !== "string" || !token) throw new Error("未能获取机器人的访问令牌，请检查机器人应用凭据");
     const env: NodeJS.ProcessEnv = { ...process.env, LARKSUITE_CLI_APP_ID: bot.appId, LARKSUITE_CLI_TENANT_ACCESS_TOKEN: token, LARKSUITE_CLI_BRAND: brand, LARKSUITE_CLI_STRICT_MODE: "bot", LARKSUITE_CLI_DEFAULT_AS: "bot" };
     for (const name of ["LARKSUITE_CLI_APP_SECRET", "LARKSUITE_CLI_USER_ACCESS_TOKEN", "LARKSUITE_CLI_TENANT_ACCESS_TOKEN_SOURCE", "LARKSUITE_CLI_AUTH_PROXY", "LARKSUITE_CLI_PROFILE"]) delete env[name];
-    const { stdout } = await exec(process.execPath, [larkCliScript(), ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd, env });
+    const { stdout } = await exec(process.execPath, [larkCliInstallation().script, ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd, env });
     const value = JSON.parse(stdout);
     assertLarkResult(value);
     return value;
@@ -137,7 +129,7 @@ export async function larkCli(args: string[], timeoutMs = 90_000, cwd?: string):
   const user = actor ? await credentials!(actor, args) : null;
   context?.beforeCall?.(args);
   if (override) { const result = await override(args, cwd, actor?.userId); if (!user) noticeLoginGone(result); assertLarkResult(result); return result; }
-  const script = larkCliScript();
+  const script = larkCliInstallation().script;
   const env = user ? { ...process.env, LARKSUITE_CLI_APP_ID: user.appId, LARKSUITE_CLI_USER_ACCESS_TOKEN: user.token, LARKSUITE_CLI_BRAND: user.brand ?? "feishu" } : undefined;
   try {
     const { stdout } = await exec(process.execPath, [script, ...args], { timeout: timeoutMs, maxBuffer: 50_000_000, windowsHide: true, cwd, env });

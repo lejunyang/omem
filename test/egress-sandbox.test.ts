@@ -68,3 +68,33 @@ it.skipIf(!support.ok)("真实 bubblewrap 中 curl 直连失败、按规则访�
     expect(runEvents(app, runId).filter(r => r.type === "status" && (r.data as {kind?:string}).kind === "egress")).toHaveLength(1);
   } finally { revokeToolToken(token); upstream.close(); await callback.close(); app.db.close(); }
 }, 20000);
+
+it.skipIf(!support.ok)("本人沙箱可经本轮代理访问允许的地址 " + (support.reason ?? ""), async () => {
+  const { ownRun } = await import("../src/agents/own-run.ts");
+  const { egressRequested } = await import("../src/agents/sandbox.ts");
+  const app = testApp();
+  const cwd = join(app.home, "workspaces", "fixture");
+  mkdirSync(cwd, { recursive: true });
+  const profile = catalogProfile({ id: "fixture", name: "fixture", command: "/bin/sh" });
+  const upstream = createServer((_req, res) => res.end("fixture"));
+  try {
+    upstream.listen(0, "127.0.0.1");
+    await once(upstream, "listening");
+    const url = "http://127.0.0.1:" + (upstream.address() as { port: number }).port + "/ok";
+    expect(egressRequested(app.config, profile, true)).toBe(false);
+    app.config.security.egress.mode = "all-sandboxed";
+    app.config.agents.ownSandbox.mode = "require";
+    app.config.security.operationRules = [{ id: "fixture", revision: 1, enabled: true, action: "allow", match: { kind: "http", host: "127.0.0.1", pathRegex: "^/ok$" } }];
+    const box = ownRun(app, profile, cwd, false).box!;
+    // Keep the test independent of the local user's cache and backend state.
+    box.state = [];
+    box.plan.rw = [cwd];
+    const child = await launchRun(profile, { app, ownSandbox: box }, (_account, ownSandbox) =>
+      launch("/bin/sh", ["-ec", 'if curl -fs --noproxy "*" --max-time 2 "$1"; then exit 1; fi; curl -fs --noproxy "" --max-time 5 "$1"', "sh", url], { cwd, ownSandbox }));
+    let out = "", err = "";
+    child.stdout.on("data", chunk => out += chunk);
+    child.stderr.on("data", chunk => err += chunk);
+    expect((await once(child, "close"))[0], err).toBe(0);
+    expect(out).toBe("fixture");
+  } finally { upstream.close(); app.db.close(); }
+});

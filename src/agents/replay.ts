@@ -621,7 +621,7 @@ async function judgeOnce(app: App, parent: RunContext, q: Question, profile: Age
   const cwd = mkdtempSync(join(tmpdir(), "omem-judge-"));
   const started = Date.now();
   try {
-    const isolation = ownRun(app, profile, cwd, true, id);
+    const isolation = ownRun(app, profile, cwd, true, id, { kind: "replay-judge" });
     if (isolation.note) addRunEvent(app, id, "status", { text: isolation.note });
     const scene = ["background", "replay-judge"];
     const system = toolSections(loadRole("replay-judge", app).body, new Set(), backendCapabilities(profile).localTools, scene);
