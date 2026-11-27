@@ -1,5 +1,6 @@
 import { routeGroups } from "./route-groups.ts";
 import { profilesFor, groupItems, policyScope, policyReason, scopedProfiles, pickOf, type PolicyScope } from "./ai-policy.ts";
+import { builtinGroups, type AiGroup } from "../core/ai-policy-schema.ts";
 import { runClasses, type RunClass } from "./run-classes.ts";
 import { modelDisplayName } from "../core/ai-keys.ts";
 import type { App } from "../core/app.ts";
@@ -82,6 +83,27 @@ export function routingCandidates(app: App): Candidate[] {
   return groupItems(app, "candidates").map(({ note, ...p }) => ({ ...p, when: note ?? "" }));
 }
 
+/** Legacy flow tiers do not join unrestricted runs just because a configuration was upgraded. */
+function unrestrictedGroups(app: App, scope: PolicyScope, current: AgentProfile): AiGroup[] {
+  const { groups, tiers, routing, policy } = app.config.agents;
+  const configured = groups.filter(g => g.items.length);
+  if (policy.classes[scope.classId] || !configured.length) return configured;
+  const migrated = configured.every(g => {
+    if (g.id === "candidates") return routing.candidates.length === g.items.length && g.items.every((item, i) => {
+      const { when, ...ai } = routing.candidates[i];
+      return item.note === when && !item.hours && item.profile === ai.profile && item.model === ai.model && item.effort === ai.effort;
+    });
+    const tier = Object.hasOwn(builtinGroups, g.id) ? tiers[g.id as keyof typeof builtinGroups] : undefined;
+    const [item] = g.items;
+    return tier && g.items.length === 1 && !item.hours && !item.note && item.profile === tier.profile && item.model === tier.model && item.effort === tier.effort;
+  });
+  if (!migrated) return configured;
+  const candidates = configured.find(g => g.id === "candidates");
+  if (!candidates) return [];
+  const ai = pickOf(current);
+  return [{ id: "ai:" + label(ai), name: "角色默认 AI", items: [ai] }, candidates];
+}
+
 /** The owner's candidates as profiles, installed and not left out (limit 0, quota spent, daily cap); why the others were left out goes to `left`. */
 export function candidateProfiles(app: App, left?: string[], userId?: string): (AgentProfile & { when: string })[] {
   const r = app.config.agents.routing;
@@ -148,7 +170,7 @@ export async function chooseAI(
     record({ outcome: "skipped", reason });
     return null;
   };
-  const configuredGroups = app.config.agents.groups.filter(g => g.items.length);
+  const configuredGroups = scope && !scope.use.length ? unrestrictedGroups(app, scope, o.current) : [];
   if (scope && (scope.use.length || scope.deny.length || scope.order === "fixed" || configuredGroups.length || ["coding", "review"].includes(scope.classId))) {
     const candidates = [o.current, ...candidateProfiles(app, undefined, o.userId)];
     candidates.forEach(accept);

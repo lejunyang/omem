@@ -67,3 +67,34 @@ it.each([
     rmSync(app.home, { recursive: true, force: true });
   }
 }, 60_000);
+
+it("加载旧配置后，流程档位不接管普通运行，旧候选仍可和角色默认 AI 比较", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { chooseAI } = await import("../src/agents/choose-ai.ts");
+  const home = mkdtempSync(join(tmpdir(), "omem-route-"));
+  const profiles = ["original", "alternate", "flow-ai"].map(id => ({
+    id, transport: "acp" as const, command: process.execPath, args: [], env: {}, model: "demo", idleTimeoutMs: 1000,
+  }));
+  try {
+    for (const useCandidates of [false, true]) {
+      writeFileSync(join(home, "config.json"), JSON.stringify({ agents: { profiles, default: "original",
+        tiers: { strong: { profile: "flow-ai" } }, routing: { choose: { tasks: "decision" },
+          candidates: useCandidates ? [{ profile: "alternate", when: "短任务" }] : [] } } }));
+      const app = testApp(home);
+      try {
+        const opt = { scene: "tasks" as const, who: "ingest", task: "整理项目记录", current: profiles[0] };
+        const result = await chooseAI(app, opt);
+        if (!useCandidates) { expect(result).toBeNull(); continue; }
+        expect(result?.order.map(p => p.id)).toEqual(["original", "alternate"]);
+        app.config.ai.providers = [{ id: "d", name: "测试", kind: "openai", backends: [] }];
+        app.config.ai.decision.provider = "d";
+        setKey(home, "d", "test-key");
+        setDecisionFetchForTests(async () => Response.json({ answers: [{ name: "q", type: "choice", choice: "candidates",
+          probabilities: [{ value: "ai:original · demo", probability: 0.1 }, { value: "candidates", probability: 0.9 }] }] }));
+        expect((await chooseAI(app, opt))?.order.map(p => p.id)).toEqual(["alternate", "original"]);
+      } finally { app.db.close(); }
+    }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
