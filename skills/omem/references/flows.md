@@ -22,9 +22,9 @@
 | 工具 | 参数与用法 |
 | --- | --- |
 | `propose_directions` | `item, directions, note?`。方向零到三个，每个有 `goal / approach / acceptance / env? / thirdParty? / estimate? / trials: [{ object, check, features? }]`（1–40 个；features 填它覆盖的功能清单二级标题原文，覆盖次数按它统计，对不上的整份拒绝）。env 留空为本机，否则须用任务列出的登记环境 id 或名字（去空白、不区分大小写）；未知时拒绝并列出可用环境。执行别人仓库的安装或构建脚本须标 `thirdParty: true`，本人选方向时检查环境许可。空数组是正常结果，note 写原因。只能由定方向阶段交；宿主按规范化的对象和检查项去掉已有结果的完全重复试验，保留同对象的新检查并标以前的结论；然后问本人选一个或这一轮不跑。本人附的话带入试验任务。 |
-| `trial_report` | `trial, result, summary, evidence?, findings?, unsure?`。result 是 passed / failed / blocked / unclear；证据是 `$OMEM_ARTIFACTS` 内的文件路径或可读 `src:` 引用。只能由这个试验自己的运行交。候选 findings 为 `{ kind, title, repro }`，不会自动变成正式发现。 |
+| `trial_report` | `trial, result, summary, evidence?, evidence_text?, findings?, unsure?`。result 是 passed / failed / blocked / unclear；证据是宿主 `$OMEM_ARTIFACTS` 内的文件路径或可读 `src:` 引用。直接交证据正文用 `evidence_text`，最多 4000 字符，宿主存为文本产物。只能由这个试验自己的运行交。候选 findings 为 `{ kind, title, repro }`，不会自动变成正式发现。 |
 | `read_ledger` | `item, direction?, object?, result?, round?, limit?`。方向一节默认列本轮和仍在做的方向，传 `direction` 或 `round` 时按所给条件筛方向。每个方向列 id、轮次、状态、目标、验收和全部试验的计数，已结束的附结论首行。每个试验带方向 id、摘要、证据和候选，末尾列已有发现。凡阶段 tools 包含 propose_directions，即使误授了此工具也拒绝读取。 |
-| `record_finding` | `item, kind, title, repro, trials, same_as?, distinct_from?`，kind 是 defect / gap / idea。repro 是 Markdown 正文，按“条件 / 现象 / 为什么是问题 / 建议”分节，可放 read_ledger 给出的试验截图。依据至少一条，须是本研究有结果的试验。相近标题会提示先读，same_as 合并依据到已有发现，distinct_from 是已核对且不同的发现 id 数组。拒绝的发现只影响这一条。 |
+| `record_finding` | `item, kind, title, repro, trials, evidence_text?, same_as?, distinct_from?`，kind 是 defect / gap / idea。repro 是 Markdown 正文，按“条件 / 现象 / 为什么是问题 / 建议”分节，可放 read_ledger 给出的试验截图。依据至少一条，须是本研究有结果的试验。附加文本用 `evidence_text`，保存为运行产物并在正文附链接。相近标题会提示先读，same_as 合并依据到已有发现，distinct_from 是已核对且不同的发现 id 数组。拒绝的发现只影响这一条。 |
 | `revise_study_finding` | `item, finding, kind?, title?, repro?, state?, reason?`。本人在对话里要改一条发现时用：重写标题、正文或类型（第一次改时宿主留原文），或改状态 confirmed / rejected / later / fixed（已改好，reason 写提交或交办）；改成别的状态会清掉“已改好”。只有事项本人的运行能用。主助手经 `group:study` 带上它和 read_ledger、record_finding、close_direction，不带 propose_directions、trial_report。 |
 | `queue_study_fixes` | `item, findings, note?`。本人说把哪些发现交给改时用：一次交多条（不限轮次和类型），宿主按交的顺序一次交办一条（同一个研究同时只有一个在改），用研究范围里的 `fixAI.coder` / `fixAI.reviewer` 改代码和评审；评审通过的自动标为已改好，没过的留给本人，队列接着走。研究范围要允许改代码并登记仓库；不算、重复、已改好或正在改的拒绝。note 带进每条交办。不要替本人挑。 |
 | `close_direction` | `direction, state: done / dropped, conclusion`。方向 id 在 `read_ledger` 的“方向”一节。结论必填，未做的试验跳过。 |
@@ -46,7 +46,7 @@
 | `flow_start` | `item`、`flow`；一个事项同时只能有一个进行中的流程。成员只能启动本轮可见且适用于该事项类型和空间的流程。开始时复制定义，之后改模板不影响它。 |
 | `flow_start`（内联清单） | `item, stages, name?`，不同时传 `flow`。没有适用模板而本人交代多步工作时直接开始，一条消息说清清单。阶段沿用 `id / name / needs / by / done / gate` 等字段，另加 `effect: read / local / external`（只读 / 本地可回退 / 写外部或发消息）。前两种默认自动，外部动作或不确定的动作先问，单纯等待可自动。清单不进模板；研究专用阶段和插件运行器用已启用模板。 |
 | `flow_start`（不传 `flow`） | `item`；本人说“再来一轮”时开始下一轮。定义须有 `repeat`，上一轮所有阶段完成或跳过后才可调用。只重做 `repeat.from` 及之后的阶段，之前的保留。 |
-| `stage_report` | `item`、`stage`、`state: done / blocked / skip`、`note`；可带 `evidence`、`links`、`waiting_on`、`unsure`。`links` 是交给本人打开的产物（`[{label, url}]`，http(s)，最多 10 个），显示在事项页这一段和给本人的卡片上；再交一次带 `links` 的结果会替换它，不带就保留上次的。做完须有依据，卡住写等谁或等什么，跳过写理由。结果说不清、要不要继续定不下来时用 `blocked` 加 `unsure: true`；宿主按阶段的升档上限带反馈重做，用完仍卡住。缺权限、缺材料等确定的阻碍不标拿不准。运行交过的截图（`$OMEM_ARTIFACTS` 或 `attach_artifact`）在报做完或卡住时附在给本人的卡片上（最多 4 张），事项页这一段下面列出全部截图。 |
+| `stage_report` | `item`、`stage`、`state: done / blocked / skip`、`note`；可带 `evidence`、`evidence_text`、`links`、`waiting_on`、`unsure`。直接交文本证据用 `evidence_text`，宿主保存为运行产物，并在阶段附该运行的引用和产物链接。`links` 是交给本人打开的产物（`[{label, url}]`，http(s)，最多 10 个），显示在事项页这一段和给本人的卡片上；再交一次带 `links` 的结果会替换它，不带就保留上次的。做完须有依据，卡住写等谁或等什么，跳过写理由。结果说不清、要不要继续定不下来时用 `blocked` 加 `unsure: true`；宿主按阶段的升档上限带反馈重做，用完仍卡住。缺权限、缺材料等确定的阻碍不标拿不准。运行交过的截图（`$OMEM_ARTIFACTS` 或 `attach_artifact`）在报做完或卡住时附在给本人的卡片上（最多 4 张），事项页这一段下面列出全部截图。 |
 | `report_tests`、`attach_artifact` | 只在承担一个阶段的运行里有。验证或验收的阶段用它们逐条交结果：`report_tests` 的每条写需求点（`req`）、`status`、`mode`（在哪测、怎么测）、`note`（做了什么、看到什么）和这一条的截图、录屏（先放进 `$OMEM_ARTIFACTS`）。事项页按条显示，本人照着看完再确认这一段。 一个运行同时做几件事项的这一段时（流程写了 `together: push`，任务开头会说），`report_tests` 带 `item` 指明这批结果是哪件的，每件各交一次 `stage_report`。 |
 | `stage_reopen` | `item`、`stage`、`reason`，可带 `refs`。该段重新开始，下游已完成的变成待复核，已跳过的保持跳过；正在做的照做，宿主问本人要不要停下（停下就取消并待复核，交办只停不删）。 |
 | `read_flow_reviews` | `flow?`、`item?`、`limit?`（默认 10，最多 20）。读已经结束的流程的回顾，新的在前：怎么结束的（`how`：completed / stopped / closed）、用了多久、轮次、返工合计、等本人最久的一段，每段的 `doingMinutes / gatedMinutes / blockedMinutes / ownerMinutes`、卡住的原因、`starts / reopened / refused / staled / escalated / reworks`、跳过及原因、关卡的问与答（`gate.direct`：问过且每次都直接同意）、现在的连续同意次数和是否已授权。只读本人自己的、可读空间里的事项。数字是宿主按阶段日志算的，口径见 `docs/v2/flows.md` 文末。 |
@@ -62,6 +62,8 @@
 普通执行轮用 `execution_status: executed / failed / uncertain` 写回，不填 `done`、`decision` 或新的操作。已核对才报 `executed`；明确没有完成的报 `failed` 并写原因；可能已改但不能确认就报 `uncertain`，下次接手先只读核对，不重做。
 
 `note_item_change` 有下一步时传 `steps` 而不是只填文字 `next`，每条是 `{ who, step, done_when }`，`who` 取 `me-read / me-write / owner / other`。`other` 再填 `waiting_for` 和带时区的 `check_at`。可把“核对后更新”拆成同一变化里先读后写的两步。宿主用步骤生成时间线里的下一步；旧记录的 `next` 仍可读。`read_item` 的变化带 `steps`，含核对状态、回查时间、结果和引用。
+
+流程运行需要本机工作区或命令时，在阶段的 `by.run` 中设 `local: true`。普通事项更新进展用 `upsert_item(id, note)`。
 
 `read_item(item_id)` 的 `flow` 返回流程摘要、阶段状态、进入时间、承担者、等待对象、依据和最近 50 条日志，还带当前轮、重复方式、下一轮时间、是否可手动开始、各段等待的时刻、指定和实际 AI、预算及已用分钟、升档次数、最近 10 轮结果快照。`changes` 是最近十条变化、状态与引用，`follow` 是当前订阅原件、已处理位置及待处理数量。工具只能修改本次运行可读且可写空间里、属于调用者的事项。
 

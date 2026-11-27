@@ -94,7 +94,7 @@ export function similarTitle(a: string, b: string) {
   const x = words(a), y = words(b), n = [...x].filter((w) => y.has(w)).length;
   return n > 0 && n / Math.min(x.size, y.size) >= 0.5;
 }
-export function recordFinding(app: App, input: FindingInput) {
+export function recordFinding(app: App, input: FindingInput, attachment?: string) {
   if (input.same_as && input.distinct_from?.length) throw new HttpError(400, "same_as 和 distinct_from 不能同时填写");
   const evidence = [...new Set(input.trials)];
   if (!evidence.length || evidence.some((id) => !one(app.db, "select 1 from study_trials where id=? and item_id=? and result is not null", id, input.item))) throw new HttpError(400, "依据至少有一个，且必须是本研究里有结果的试验");
@@ -105,12 +105,14 @@ export function recordFinding(app: App, input: FindingInput) {
   if (!target && similar.length) throw new HttpError(409, `有相近发现，先读再决定 same_as 或 distinct_from：\n${similar.slice(0, 10).map((f) => `${f.id}（${f.state}）${f.title}\n${f.repro}`).join("\n")}`);
   const at = now();
   if (target) {
-    run(app.db, "update study_findings set trials=?,updated_at=? where id=?", JSON.stringify([...new Set([...json<string[]>(target.trials, []), ...evidence])]), at, target.id);
+    run(app.db, "update study_findings set trials=?,repro=?,updated_at=? where id=?", JSON.stringify([...new Set([...json<string[]>(target.trials, []), ...evidence])]),
+      attachment ? `${target.repro}\n\n${attachment}` : target.repro, at, target.id);
     return target.id;
   }
   const id = newId("sf");
   const flow = itemFlow(app, input.item);
-  run(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,created_at,updated_at,round,flow_started_at) values(?,?,?,?,?,?,?,?,?,?,?)", id, input.item, input.kind, input.title, input.repro, JSON.stringify(evidence), "new", at, at, flow?.round ?? 0, flow?.startedAt ?? null);
+  const repro = attachment ? `${input.repro}\n\n${attachment}` : input.repro;
+  run(app.db, "insert into study_findings(id,item_id,kind,title,repro,trials,state,created_at,updated_at,round,flow_started_at) values(?,?,?,?,?,?,?,?,?,?,?)", id, input.item, input.kind, input.title, repro, JSON.stringify(evidence), "new", at, at, flow?.round ?? 0, flow?.startedAt ?? null);
   return id;
 }
 /**

@@ -1,15 +1,16 @@
 import { groupItems, groupPick, policyScope } from "../agents/ai-policy.ts";
+import { hasHostTools } from "../agents/capabilities.ts";
 import { continuedUpstream, finishStage, overrideStageGate } from "./plugin-gates.ts";
 import { pollFlowSignal } from "./plugin-signals.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import { requireItem } from "../items/access.ts";
 import type { App, AppEvent } from "../core/app.ts";
 import { latestEach, testsOfRuns } from "../items/req-tests.ts";
-import { artifactsByIds, runImages } from "../agents/artifacts.ts";
+import { artifactsByIds, attachText, runImages } from "../agents/artifacts.ts";
 import { all, one, run } from "../core/db.ts";
 import { decide, decisionReady, describeDecision } from "../core/decision.ts";
 import { notify } from "../core/notify.ts";
-import { HttpError, json, now, truncate, webLink } from "../core/util.ts";
+import { HttpError, json, now, truncate, webBase, webLink } from "../core/util.ts";
 import { cancelAsk, createAsk, getAsk, registerAskHandler, reviseAsk, type Ask } from "../agents/asks.ts";
 import { stopRun, createRun, getRun, registerHandler } from "../agents/runs.ts";
 import { validateExecution, executionArgs, type Execution } from "../agents/execution.ts";
@@ -393,6 +394,9 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
   ].filter(Boolean).join("\n\n");
 }
 
+const localStage = (d: FlowStage) => typeof d.by === "object" &&
+  ("run" in d.by ? d.by.run.local === true : "object" in d.by && ["trials", "fixes", "code-work"].includes(d.by.object));
+
 async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Date) {
   const choice = s.control.escalated && d.escalate ? d.escalate.to : d.ai;
   if (!choice) return { s, execution: undefined, waitUntil: null };
@@ -401,8 +405,10 @@ async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Dat
   const spec = role ? null : findAgentSpec(app, name);
   if (!role && !spec) throw new HttpError(400, `没有 Agent 档案 ${name}`);
   const scope = policyScope(app, "flow-stage", name, spec ?? undefined);
-  const pick = typeof choice === "string" ? groupPick(app, choice, scope, true) : choice;
-  if (!pick && typeof choice === "string" && groupItems(app, choice).length) throw new HttpError(400, "流程指定的组 " + choice + " 没有符合规则的后端");
+  const needsHost = localStage(d) || !!(spec?.cwd || spec?.writes);
+  const pick = typeof choice === "string" ? groupPick(app, choice, scope, true, needsHost ? hasHostTools : undefined) : choice;
+  if (!pick && typeof choice === "string" && groupItems(app, choice).length)
+    throw new HttpError(400, "流程指定的组 " + choice + (needsHost ? " 没有符合规则的本机后端" : " 没有符合规则的后端"));
   if (choice && !pick && !s.control.tierFallback?.includes(String(choice))) {
     s = changeStage(app, f.itemId, d.id, s.state, { control: { ...s.control, tierFallback: [...s.control.tierFallback ?? [], String(choice)] } }, host, `档位 ${choice} 没有配置，用了默认的 AI`);
   }
@@ -410,6 +416,7 @@ async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Dat
   const execution = validateExecution(app, { ...pick, source: "flow", reason: `流程「${f.definition.name}」的「${d.name}」阶段指定` }, undefined, false, scope)!;
   const { resolveRunProfile } = await import("../agents/runner.ts");
   const profile = resolveRunProfile(app, { actor: spec ? { spec } : { role: role! }, ...executionArgs(execution) });
+  if (needsHost && !hasHostTools(profile)) throw new HttpError(400, `这一段需要本机工作区或本机命令，请把指定的后端 ${profile.id} 换成本机后端`);
   const actual = validateExecution(app, { ...execution, model: profile.model, effort: profile.effort }, undefined, false, scope)!;
   const until = outOfQuotaUntil(app, profile, at);
   const daily = dailyCapReached(app, profile, at.getTime());
@@ -957,13 +964,14 @@ function escalateStage(app: App, f: ItemFlow, d: FlowStage, s: StageRow, feedbac
   return true;
 }
 
-export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; pluginEvidence?: StageControl["pluginEvidence"]; links?: StageLink[]; note: string; waitingOn?: string; unsure?: boolean; already_resolved?: boolean; retry_at?: string };
+export type StageReport = { state: "done" | "blocked" | "skip"; evidence?: string[]; evidence_text?: string; pluginEvidence?: StageControl["pluginEvidence"]; links?: StageLink[]; note: string; waitingOn?: string; unsure?: boolean; already_resolved?: boolean; retry_at?: string };
 export function reportStage(app: App, itemId: string, stageId: string, report: StageReport, by: FlowActor) {
   return serial(app, itemId, async () => {
     const f = running(app, itemId), d = definition(f, stageId);
     if (d.tools?.includes("propose_directions") || isTrials(d) || isFixes(d)) throw new HttpError(403, "研究方向和试验由专门的工具交结果，不能用 stage_report 绕过本人选择或试验队列");
     let s = getStage(app, itemId, stageId);
     const fromReconcile = assertReconcileStage(app, f, s, by, report.evidence ?? []);
+    if (report.evidence_text && (!by.runId || fromReconcile)) throw new HttpError(400, "evidence_text 需要一个交结果的运行；对账请在 evidence 引用已有依据");
     if (report.already_resolved) {
       if (!fromReconcile) throw new HttpError(403, "只有对账能补记现实已经完成或越过的阶段");
       if (report.state === "blocked" || !(s.state === "gated" && s.control.question === "gate" || s.state === "blocked" && !s.control.question) || s.control.gateReview || s.control.budgetExceeded || d.by === "owner" || typeof d.done === "object" || typeof d.by === "object" && !("run" in d.by)) throw new HttpError(409, "这一段仍有要本人决定或由宿主检查的条件，不能由对账补记");
@@ -1004,11 +1012,7 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     // An old carrier cannot finish the replacement's attempt.
     if (!fromReconcile && by.runId && (s.by === s.control.runId && !!s.by) && s.by !== by.runId) throw new HttpError(409, "这不是当前阶段的承担运行");
     if (by.runId && getRun(app, by.runId).input.flowStartedAt && (stageItemStart(getRun(app, by.runId).input, itemId) !== f.startedAt || getRun(app, by.runId).input.stageId !== stageId || s.control.runId !== by.runId)) throw new HttpError(409, "这次运行所属的流程、阶段或尝试已变化");
-    const evidence = report.evidence ?? [];
-    if (report.state === "blocked" && report.unsure && escalateStage(app, f, d, s, report.note, new Date(), evidence)) {
-      await advanceNow(app, itemId, "拿不准，升档重做");
-      return flowView(app, itemId);
-    }
+    const evidence = [...new Set([...(report.evidence ?? []), ...(report.evidence_text ? [`run:${by.runId}`] : [])])];
     const settledOwner = fromReconcile && observableOwnerTurn(d, s);
     if (report.state === "skip" && by.actor !== "owner" && (d.gate === "confirm" || d.done === "confirm" || d.by === "owner")
       && !(settledOwner && d.gate !== "confirm" && hasFocusedOwnerWords(app, by.runId!, stageId, evidence))) throw new HttpError(403, "这一段要本人确认或由本人承担，不能由你跳过：由本人明确说明，或在卡片或事项页上跳过");
@@ -1016,17 +1020,25 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
     const asksOwner = report.state === "done" && !missingRedoWork && (d.done === "confirm" || d.by === "owner" && by.actor !== "owner" && !settledOwner);
     if (asksOwner && pendingPushConfirmation(app, getItem(app, itemId), d)) return flowView(app, itemId);
     if (report.state === "done" && !asksOwner && (!evidence.length || evidence.some((r) => !validEvidence(app, r)))) throw new HttpError(400, "做完需要至少一项依据（src: 引用、运行 id 或对象引用）");
+    if (report.links?.some(l => !/^https?:\/\//i.test(l.url))) throw new HttpError(400, "链接要以 http:// 或 https:// 开头");
+    if (report.retry_at && (report.state !== "blocked" || s.state !== "doing" || !by.runId || s.control.runId !== by.runId || ownerWait(report.waitingOn) || !report.waitingOn?.trim()))
+      throw new HttpError(409, "只有阶段自己的运行可为暂时的外部卡点安排重试");
+    let links = report.links;
+    if (report.evidence_text) {
+      const artifact = await attachText(app, by.runId!, report.evidence_text, { source: "agent", by: by.actor, caption: "阶段证据" });
+      links = [...(links ?? s.control.links ?? []), { label: artifact.caption, url: (webBase(app) ?? "") + artifact.url }];
+    }
+    if (report.state === "blocked" && report.unsure && escalateStage(app, f, d, s, report.note, new Date(), evidence)) {
+      await advanceNow(app, itemId, "拿不准，升档重做");
+      return flowView(app, itemId);
+    }
     if (by.actor === "owner") resetStreak(app, itemId);
     s = { ...s, control: finishUsage(app, s, new Date()) };
     if (report.pluginEvidence) s.control.pluginEvidence = report.pluginEvidence;
     // A later report without links keeps the earlier ones: the sheet the owner is asked to confirm stays on the stage.
-    if (report.links) {
-      if (report.links.some((l) => !/^https?:\/\//i.test(l.url))) throw new HttpError(400, "链接要以 http:// 或 https:// 开头");
-      s.control.links = report.links.length ? report.links : undefined;
-    }
+    if (links) s.control.links = links.length ? links : undefined;
     if (report.retry_at) {
-      if (report.state !== "blocked" || s.state !== "doing" || !by.runId || s.control.runId !== by.runId || ownerWait(report.waitingOn) || !report.waitingOn?.trim()) throw new HttpError(409, "只有阶段自己的运行可为暂时的外部卡点安排重试");
-      scheduleStageRetry(app, f, d, { ...s, waitingOn: report.waitingOn, note: report.note }, report.retry_at, "先重新核对外部状态和写入结果，只补还没完成的部分，不重复提交。", evidence, by);
+      scheduleStageRetry(app, f, d, { ...s, waitingOn: report.waitingOn!, note: report.note }, report.retry_at, "先重新核对外部状态和写入结果，只补还没完成的部分，不重复提交。", evidence, by);
     } else if (asksOwner) {
       const pending = s.control.question === "done" && s.askId && getAsk(app, s.askId).status === "pending";
       const refs = pending ? [...new Set([...s.evidence, ...evidence])] : evidence;
@@ -1629,7 +1641,7 @@ async function runStageAgent(ctx: Parameters<Parameters<typeof registerHandler>[
   // the role's own tools) are welcome but optional, so a backend that reaches only a few tools (a cloud one
   // over HTTP, cloud-tools.ts) can still take the stage.
   const requiredTools = [ctx.run.kind === "study-trial" ? "trial_report" : planner ? "propose_directions" : "stage_report"];
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, requiredTools, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push", "revise_study_finding", "queue_study_fixes"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, requiredTools, requiresLocal: localStage(d), spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: typeof input.cwd === "string" ? input.cwd : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push", "revise_study_finding", "queue_study_fixes"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
 }
 registerHandler("flow-stage", runFlowStage);

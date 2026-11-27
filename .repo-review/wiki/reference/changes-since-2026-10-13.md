@@ -9,6 +9,12 @@ updated: 2026-11-28
 
 - omem 启动的 Codex 关闭 `plugin_discovery_prefetch`。ACP 用 `CODEX_PATH` 给原本选中的 Codex 传启动参数，CLI 后备和额度查询直接传同一开关。仍可按需浏览和使用插件。
 
+## 云端后端调工具（2026-11-28）
+
+- 试验、编码和评审、带工作区或要求运行本机命令的阶段只走本机后端。流程用 `by.run.local: true` 声明；入口见 `src/flows/engine.ts` 和 `src/agents/runner.ts`。
+- 云端工具凭据按活动运行续期。名单外的调用返回本轮工具及用途，无头 GET 可用 next 继续。工具失败事件写截断脱敏的原因。角色说明按 HTTP 名单裁剪。见 `src/agents/cloud-tools.ts` 和 `instruction-sections.ts`。
+- 试验、阶段和研究发现可随结果交 `evidence_text`，宿主保存为文本产物并引用。飞书 `msg:om_…` 能定位到可读聊天原件的一行；误用事项参数、试验编号或飞书 token 时提示正确工具。见 `src/agents/tools.ts`、`artifacts.ts`。
+
 ## 进度块的任务行对齐（2026-11-28）
 
 - 运行页“分头在做的”、事项和工作页“在做的”（`ProgressBoard`）：同一块里的任务行共用列宽（`.pg-tasks` 定列，各行 `subgrid`），结果列至少 6em，产出列不再随“已接受”“29 条取舍”“阻塞”的宽度左右错开；圆点对齐标题第一行，不再在产出占两三行时掉到中间。研究的试验行在列里缩进（圆点平移、标题加内边距），不加宽圆点那一列。演示数据上 1440 和 390 宽度核对过，没有溢出。

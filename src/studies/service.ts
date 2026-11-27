@@ -5,7 +5,7 @@ import { HttpError, json, now } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { describeStage } from "../flows/definitions.ts";
 import { answerAsk, createAsk, getAsk, registerAskHandler } from "../agents/asks.ts";
-import { artifactInbox, artifactsByIds, attachPath } from "../agents/artifacts.ts";
+import { artifactInbox, artifactsByIds, attachPath, attachText } from "../agents/artifacts.ts";
 import { getRun } from "../agents/runs.ts";
 import { changeStage, getStage, itemFlow, type FlowActor } from "../flows/store.ts";
 import { studyOperation } from "../flows/engine.ts";
@@ -112,6 +112,7 @@ export async function reportTrial(app: App, report: TrialReport, by: FlowActor) 
   // Revalidate after copying artifacts: an owner action may have cancelled this run meanwhile.
   await studyOperation(app, t.item_id, async () => {
     if (trial(app, t.id).state !== "running" || itemFlow(app, t.item_id)?.endedAt || getStage(app, t.item_id, d!.id).control.runId !== by.runId) throw new HttpError(409, "试验已结束或被取消");
+    if (report.evidence_text) evidence.push((await attachText(app, r.id, report.evidence_text, { source: "agent", by: by.actor, caption: "试验证据" })).id);
     run(app.db, "update study_trials set state='reported',result=?,summary=?,evidence=?,findings=?,unsure=?,updated_at=? where id=?", report.result, report.summary, JSON.stringify(evidence), JSON.stringify(report.findings ?? []), report.unsure ? 1 : 0, now(), t.id);
   });
   return "已记下试验结果；候选发现由小结归并。";

@@ -6,6 +6,7 @@ import type { RunKind } from "../src/agents/runs.ts";
 import { prepareRun, type PreparedRun } from "../src/agents/runner.ts";
 import { seedBuiltinSkills } from "../src/agents/specs.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
+import { agentSpecSchema } from "../src/agents/specs.ts";
 import { testApp } from "./helpers.ts";
 
 // Measurements with the fixed fixture below. The shell bridge preamble is 39 characters
@@ -139,5 +140,13 @@ it("bounds the HTTP instructions for each cloud role including every allowed too
       revokeToolToken(on.token);
     }
   }
+  const prep = prepareRun(app, {
+    actor: { spec: { ...agentSpecSchema.parse({ name: "demo", description: "核对材料", tools: ["search", "stage_report", "attach_artifact"] }),
+      prompt: "## 检索\n<!-- tools: search -->\n用 search 找材料。\n\n## 交阶段\n<!-- tools: stage_report -->\n用 stage_report 交结论。\n\n## 交附件\n<!-- tools: search attach_artifact -->\n用 attach_artifact 交附件。\n" } },
+    profileId: "doubao", spaceId: "personal", runId: "budget", scene: { chat: false, kind: "flow-stage" },
+  });
+  expect(prep.system).toContain("用 search 找材料");
+  expect(prep.system).not.toMatch(/stage_report|attach_artifact|omem_call|omem_help/);
+  revokeToolToken(prep.token);
   app.db.close();
 });

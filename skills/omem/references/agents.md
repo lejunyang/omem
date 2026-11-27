@@ -45,7 +45,7 @@
 
 - `revise_reply_outcome(run_id, label, why)`：`read_run` 里有“按后续消息标的结果”时（回答发出几小时后由决策模型临时标的，满一天后回扫读整段对话再判：解决了、接着往下、要补充、被纠正、别人接手了、看不出），你读了那几句话确定它标错了才用；`label` 写英文的那个词（resolved / next / supplement / corrected / taken_over / unrelated），`why` 写哪句话说明了什么。原标注保留，之后以你的为准。本人在运行页改过的不能再改。
 - `review_reply_outcomes(tasks)`：只给回扫回答的 outcome-reviewer 交结论（docs/v2/reply-sweep.md）。把这一段的回答分成件，一件一项：`title`、接着之前那件时的 `task` id、`answers`（每次回答 `{run_id, label, why, missing?}`，label 是 resolved / next / supplement / corrected / taken_over / unrelated / silent，supplement 和 corrected 写 `missing`）、`outcome`（done / unfinished / handed_over / unclear，没做完的写 `note`）、`type`（现有类型的名字；都不合适就写新名字并给 `new_type: {parent?, description}`，一段最多新建三个，本人删掉过的不能再建）、`topics`、`queries`（给出了从某个系统查到的数的回答，每次一条：`question`、`definition` 口径、`sources`、`result`）。和第一遍一样记为同意，不一样就改判，第一遍的标注留着；本人标的、按表情记的不改标注。一件只在一个会话里，每次回答只交一次；结果里列出还没交的回答。
-- `list_runs` / `read_run`：查运行的状态、输入输出和子运行。`read_run` 单列思考气泡的 `thinkingDelivery` 错误，它是投递状态，任务成败看运行 status。
+- `list_runs` / `read_run`：查运行的状态、输入输出和子运行。`read_run` 的 `run_id` 填运行编号（r 开头）。试验、方向和发现的编号在 `read_ledger(item)` 里查。`read_run` 单列思考气泡的 `thinkingDelivery` 错误，它是投递状态，任务成败看运行 status。
 - 任务后面的“同时在办的相关工作”列出和这次同一个会话、同一条消息或同一件事项的其他运行（进行中或 30 分钟内结束）：先 `read_run` 看它做到哪，不重复做。
 - `take_over_run(run_id)`：本人在问的事正由后台运行（巡检、有人找你的处理、盯群、唤醒、规则的 Agent）在办，由你来答更合适时，停下它并拿到它最后写的文字、工作文件、碰过的事项和已经发出的消息，接着做；已结束的也能取结果。只能接手同一个人的后台运行，编码交办和评审用 `stop_code_run`。
 

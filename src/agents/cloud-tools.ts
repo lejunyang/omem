@@ -16,6 +16,22 @@ type Grant = { ctx: ToolContext; runId: string; profile: AgentProfile; access: A
 const grants = new Map<string, Grant>();
 const hash = (secret: string) => createHash("sha256").update(secret).digest("hex");
 const sanitized = (text: string) => text.replace(/oct_[\w-]+/g, "[云端凭据]");
+const purposes: Record<(typeof cloudToolNames)[number], string> = {
+  search: "检索材料", read_source: "读原件", read_page: "读 Wiki 页", read_item: "读事项",
+  read_ledger: "读研究记录", propose_directions: "交研究方向", trial_report: "交试验证据和结果",
+  record_finding: "交研究发现", close_direction: "结束方向", stage_report: "交流程阶段证据和结果",
+};
+const toolSummary = (tools: ReadonlySet<string>) => cloudToolNames.filter(name => tools.has(name)).map(name => `${name}（${purposes[name]}）`).join("、") || "无";
+
+export function cloudToolGuide(tools: ReadonlySet<string>, mode: Access["mode"]) {
+  return "\n\n## 云端工具\n本轮可用：" + toolSummary(tools) + "。GET 工具地址查看参数。" +
+    (["trial_report", "record_finding", "stage_report"].some(name => tools.has(name))
+      ? "沙箱文件宿主读不到，用对应工具的 evidence_text 交正文。" :
+      tools.has("propose_directions") ? "用对应工具交结果。" : "") +
+    (mode === "header" ? "带 Authorization，POST 地址/工具名，正文为 JSON 参数。" :
+      "GET 地址/工具名?args=URL编码的JSON参数。每个地址只用一次，下次用响应里的 next。") +
+    "只用本轮连接信息。按报错修正；授权结束或次数用完就停止。";
+}
 function rotate(g: Grant) {
   grants.delete(g.hash);
   const secret = "oct_" + randomBytes(32).toString("base64url");
@@ -40,7 +56,7 @@ export function revokeCloud(app: App, session?: string) {
   return count;
 }
 export function cloudUsage(app: App) {
-  const live = [...grants.values()].filter(g => g.ctx.app === app && Date.now() < g.expires).map(g => ({ id: g.runId, limit: g.limit }));
+  const live = [...grants.values()].filter(g => g.ctx.app === app).map(g => ({ id: g.runId, limit: g.limit }));
   const active = one<{ n: number }>(app.db, `select count(*) n from json_each(?) j
     join runs r on r.id=json_extract(j.value,'$.id') and r.status='running'
     left join cloud_tool_usage u on u.run_id=r.id where coalesce(u.calls,0)<json_extract(j.value,'$.limit')`, JSON.stringify(live));
@@ -110,10 +126,20 @@ export async function cloudTurn(app: App, profile: AgentProfile, ctx: ToolContex
 function current(g: Grant) {
   const { app } = g.ctx;
   const access = cloudAccess(app, g.profile);
-  if (Date.now() >= g.expires) throw new HttpError(401, "凭据已过期，请停止重试");
   if (!grants.has(g.hash) || access.url !== g.access.url || access.mode !== g.access.mode ||
     !one(app.db, "select 1 from runs where id=? and status='running'", g.runId))
     throw new HttpError(403, "本轮授权已结束，请停止重试");
+  // Renew on demand after checking the live turn. A quiet period in the sandbox does not end the run.
+  const at = Date.now();
+  if (at >= g.expires) g.expires = at + app.config.agents.cloudTools.ttlMinutes * 60_000;
+}
+
+function logFailure(g: Grant, error: string) {
+  const reason = sanitized(error).slice(0, 500);
+  run(g.ctx.app.db, `insert into cloud_tool_usage(run_id,calls,errors,last_error,at) values(?,0,1,?,?)
+    on conflict(run_id) do update set errors=errors+1,last_error=excluded.last_error,at=excluded.at`,
+  g.runId, reason.slice(0, 200), new Date().toISOString());
+  return reason;
 }
 
 export async function cloudRequest(app: App, secret: string, mode: Access["mode"], name?: string, args?: unknown) {
@@ -125,9 +151,7 @@ export async function cloudRequest(app: App, secret: string, mode: Access["mode"
     current(g);
     if (!remaining(g)) throw new HttpError(429, "本次运行的调用次数已用完，请停止重试");
   } catch (e) {
-    const reason = (e as Error).message;
-    run(app.db, `insert into cloud_tool_usage(run_id,calls,errors,last_error,at) values(?,0,1,?,?)
-      on conflict(run_id) do update set errors=errors+1,last_error=excluded.last_error,at=excluded.at`, g.runId, reason, new Date().toISOString());
+    const reason = logFailure(g, (e as Error).message);
     addRunEvent(app, g.runId, "tool", { id: randomUUID(), title: "云端工具请求", kind: "omem", via: "cloud-http", status: "failed", output: reason });
     throw e;
   }
@@ -145,19 +169,24 @@ export async function cloudRequest(app: App, secret: string, mode: Access["mode"
   try {
     if (!activeUser(findUser(app, user))) throw new HttpError(403, "成员已停用，请停止重试");
     if (input.includes("oct_")) throw new HttpError(400, "工具参数不能包含凭据");
-    if (name !== undefined && ![...tools].some(t => t === name)) throw new HttpError(403, "工具不在本轮名单内，请停止重试");
-    const ctx = { ...g.ctx, tools, spaces: scopeFor(app, user, g.ctx.spaces) };
+    if (name !== undefined && ![...tools].some(t => t === name)) {
+      const reason = `工具不在本轮名单内。本轮可用：${toolSummary(tools)}。请按括号里的用途选择工具，GET 本轮工具地址可查看参数。`;
+      event("failed", { output: logFailure(g, reason) });
+      return { text: reason, isError: true, next, remaining: remaining(g) };
+    }
+    const ctx: ToolContext = { ...g.ctx, via: "cloud-http", tools, spaces: scopeFor(app, user, g.ctx.spaces) };
     const result = name === undefined ? { tools: toolSchemas(tools) } : await searchRun.run(g.runId, () => callTool(ctx, name, args));
     current(g);
-    const failed = "isError" in result && result.isError;
-    if (failed) run(app.db, "update cloud_tool_usage set errors=errors+1,last_error=? where run_id=?", sanitized(result.text).slice(0, 200), g.runId);
-    event(failed ? "failed" : "completed");
+    if ("text" in result) result.text = sanitized(result.text);
+    if ("isError" in result && result.isError) event("failed", { output: logFailure(g, result.text) });
+    else event("completed");
     if ("text" in result && Buffer.byteLength(JSON.stringify(result)) > 32000)
       result.text = result.text.slice(0, 4900) + "\n结果超过 32 KB，已截断；请缩小范围，不要重复原请求。";
     return { ...result, next, remaining: remaining(g) };
   } catch (e) {
-    run(app.db, "update cloud_tool_usage set errors=errors+1,last_error=? where run_id=?", sanitized((e as Error).message).slice(0, 200), g.runId);
-    event("failed");
-    throw e;
+    const reason = logFailure(g, (e as Error).message);
+    event("failed", { output: reason });
+    if (e instanceof HttpError) throw new HttpError(e.status, reason);
+    throw new Error(reason);
   }
 }
