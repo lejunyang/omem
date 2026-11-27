@@ -7,6 +7,7 @@ import { run } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { canonical, normalizeSandbox, under } from "./own-sandbox.ts";
+import { commandCredentialVariable } from "./sandbox.ts";
 
 export type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome };
 const ID = /^[a-z][a-z0-9-]{0,31}$/;
@@ -27,6 +28,8 @@ const providesSchema = z.object({
     subcommand: z.array(z.string().min(1).max(100)).min(1).max(8).optional(),
     install: z.array(z.string().min(1).max(1024)).max(32).default([]),
     state: z.array(z.string().min(1).max(1024)).max(32).default([]),
+    loginEnv: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
+      .refine(key => !/^OMEM_/i.test(key) && commandCredentialVariable(key), "需要命令登录变量名，例如 ACME_TOKEN")).max(32).optional(),
     readOnly: z.array(match).max(256).optional(),
     resource: z.array(z.object({ match, key: z.string().min(1).max(1024) }).strict()).max(64).optional(),
     outcomes: z.object({ unauthenticated: z.array(outcome).optional(), expired: z.array(outcome).optional(),

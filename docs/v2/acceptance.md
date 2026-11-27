@@ -327,6 +327,8 @@
 
 19. 在可写清单中添加一个含模拟仓库的额外目录。从该仓库运行 `git fetch`，再从启动目录运行 `git -C <仓库> fetch`。两次都能更新仓库，执行器内看不到同级被隐藏的文件和后端状态。
 
+20. 宿主设置模拟 `GH_TOKEN`，本人档案配置 `NPM_TOKEN`，用户 `.npmrc` 用 `${NPM_TOKEN}` 认证。Agent 环境中两者均为空；调用 gh 和受规则保护的 npm 时，两条命令各用自己的模拟令牌认证，审计记录 argv 和 cwd。用声明了登录变量的插件命令核对成员只取得本账号配置的值。
+
 自动验证见 `test/command-executor.test.ts`、`test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 插件凭据第三期

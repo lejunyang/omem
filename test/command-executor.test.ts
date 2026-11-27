@@ -78,8 +78,14 @@ it.skipIf(!support.ok)("多个调用入口使用同一条拒绝规则，模拟�
   const module = join(modules, "samplepkg");
   for (const dir of [home, cwd, bin, pkg, join(python, "bin"), module]) mkdirSync(dir, { recursive: true });
   writeFileSync(join(home, ".git-credentials"), "fixture");
-  writeFileSync(join(home, ".npmrc"), "registry=https://registry.example.org/\n_authToken=fixture\n");
-  writeFileSync(join(bin, "npm"), '#!/bin/sh\ngrep -qx "_authToken=fixture" "$HOME/.npmrc"\n', { mode: 0o755 });
+  vi.stubEnv("GH_TOKEN", "fixture-gh");
+  writeFileSync(join(bin, "gh"), '#!/bin/sh\ntest "$GH_TOKEN" = fixture-gh && test -z "${NPM_TOKEN+x}"\n', { mode: 0o755 });
+  writeFileSync(join(home, ".npmrc"), 'registry=https://registry.example.org/\n//registry.example.org/:_authToken=${NPM_TOKEN}\n');
+  writeFileSync(join(bin, "npm"), String.raw`#!/usr/bin/env node
+const config = require("node:fs").readFileSync(process.env.HOME + "/.npmrc", "utf8");
+const token = config.match(/^\/\/registry\.example\.org\/:_authToken=\$\{(\w+)\}$/m)?.[1];
+process.exit(token && process.env[token] === "fixture-npm" && !("GH_TOKEN" in process.env) ? 0 : 23);
+`, { mode: 0o755 });
   const entry = join(pkg, "cli.js"), link = join(bin, "samplecli");
   writeFileSync(join(pkg, "package.json"), JSON.stringify({ bin: { samplecli: "./cli.js" } }));
   writeFileSync(entry, '#!/usr/bin/env node\nconst fs=require("node:fs"); process.exit(fs.existsSync(process.env.HOME+"/.git-credentials") && fs.statSync(process.env.HOME+"/.git-credentials").size ? 0 : 23);', { mode: 0o755 });
@@ -102,12 +108,12 @@ it.skipIf(!support.ok)("多个调用入口使用同一条拒绝规则，模拟�
     id: executable, revision: 1, enabled: true, action: "deny", match: { kind: "command", executable },
   }));
   app.config.security.operationRules.push({ id: "npm-install", revision: 1, enabled: true, action: "allow", match: { kind: "command", executable: "npm" } });
-  const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+  const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh", env: { NPM_TOKEN: "fixture-npm" } });
   const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: "personal", runId: null, profile, cwd });
   const box = prep.isolation.box!;
   box.plan.ro.push(home, bin, pkg, python);
   async function invoke(exe: string, args: string[]) {
-    const child = launch(exe, args, { cwd, ownSandbox: box, env: prep.mcp.env });
+    const child = launch(exe, args, { cwd, ownSandbox: box, env: { ...profile.env, ...prep.mcp.env } });
     let out = "";
     child.stderr.on("data", b => out += b);
     const [code] = await once(child, "close");
@@ -130,8 +136,17 @@ it.skipIf(!support.ok)("多个调用入口使用同一条拒绝规则，模拟�
     expect((await invoke(join(bin, "guarded-tool"), [])).code).toBe(126);
     expect((await invoke(dispatcher, [])).code).toBe(126);
     expect((await invoke(process.execPath, [join(cwd, "copy.js")])).code).toBe(23);
-    const install = await invoke(join(bin, "npm"), ["install"]);
-    expect(install.code, install.out).toBe(0);
+    const auth = await invoke("/bin/sh", ["-ec", [
+      'test -z "${GH_TOKEN+x}${NPM_TOKEN+x}"',
+      'GH_TOKEN=from-request gh auth status',
+      'NPM_TOKEN=from-request npm install',
+    ].join("\n")]);
+    expect(auth.code, auth.out).toBe(0);
+    const logins = app.db.prepare("select target, detail from audit_events where action='command.execute' and target in ('gh','npm') order by rowid").all();
+    expect(logins.map(row => [row.target, JSON.parse(String(row.detail))])).toEqual([
+      ["gh", { runId: null, argv: ["auth", "status"], cwd }],
+      ["npm", { runId: null, argv: ["install"], cwd }],
+    ]);
     const remote = await invoke("/bin/sh", ["-ec", "git status && git push"]);
     expect(remote.code, remote.out).toBe(0);
     expect((await invoke(join(cwd, "git-fixture"), ["push"])).code).toBe(23);
@@ -144,7 +159,7 @@ it.skipIf(!support.ok)("多个调用入口使用同一条拒绝规则，模拟�
   }
 }, 45000);
 
-it.skipIf(!support.ok)("成员执行器仅恢复本账号的声明目录 " + (support.reason ?? ""), async () => {
+it.skipIf(!support.ok)("成员执行器仅恢复本账号的声明目录和登录变量 " + (support.reason ?? ""), async () => {
   const { localAccount, ensureAccountHome } = await import("../src/agents/accounts.ts");
   const { issueToolToken } = await import("../src/agents/tools.ts");
   const { createUser } = await import("../src/core/users.ts");
@@ -155,18 +170,21 @@ it.skipIf(!support.ok)("成员执行器仅恢复本账号的声明目录 " + (su
   const home = join(root, "owner"), cwd = join(root, "work"), bin = join(root, "bin");
   for (const dir of [join(home, ".fixture"), cwd, bin]) mkdirSync(dir, { recursive: true });
   vi.stubEnv("HOME", home); vi.stubEnv("OMEM_DESKTOP_TOOLS", "off"); vi.stubEnv("PATH", bin + ":" + process.env.PATH);
-  const unregister = registerCredential("fixture", { id: "sample", name: "示例", login: async () => ({ user: "example" }), provides: { commands: [{ name: "samplecli", state: [".fixture"] }] } });
+  vi.stubEnv("SAMPLE_TOKEN", "owner"); vi.stubEnv("ALTERNATE_TOKEN", "owner");
+  const unregister = registerCredential("fixture", { id: "sample", name: "示例", login: async () => ({ user: "example" }),
+    provides: { commands: [{ name: "samplecli", state: [".fixture"], loginEnv: ["SAMPLE_TOKEN", "ALTERNATE_TOKEN"] }] } });
   createUser(app, { id: "member", name: "示例成员", role: "member" });
   const member = ensureAccountHome(app, "member");
   writeFileSync(join(member, ".fixture", "login"), "member");
   writeFileSync(join(home, ".fixture", "login"), "owner");
-  writeFileSync(join(bin, "samplecli"), '#!/bin/sh\ncat "$HOME/.fixture/login"\n', { mode: 0o755 });
+  writeFileSync(join(bin, "samplecli"), '#!/bin/sh -e\ntest "$SAMPLE_TOKEN" = member\ntest -z "${ALTERNATE_TOKEN+x}${OTHER_TOKEN+x}"\ncat "$HOME/.fixture/login"\n', { mode: 0o755 });
   const account = localAccount(app, "member", "fixture");
-  const profile = { ...agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" }), ownAccount: account };
+  account.env = { SAMPLE_TOKEN: "member", OTHER_TOKEN: "unrelated" };
+  const profile = { ...agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh", env: { ALTERNATE_TOKEN: "shared-profile" } }), ownAccount: account };
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
   const token = issueToolToken({ actor: "agent", userId: "member", commandHomeUser: "member", runId: null, spaceId: "", spaces: [], tools: null, commandSandbox: { profile, workspace: { ro: [], rw: [cwd] } } });
   try {
-    const child = launch("/bin/sh", ["-ec", 'test ! -e "$HOME/.fixture/login"; test ! -e "$1/.fixture/login"; exec samplecli', "sh", home],
+    const child = launch("/bin/sh", ["-ec", 'test -z "${SAMPLE_TOKEN+x}${ALTERNATE_TOKEN+x}${OTHER_TOKEN+x}"; test ! -e "$HOME/.fixture/login"; test ! -e "$1/.fixture/login"; exec samplecli', "sh", home],
       { cwd, sandbox: account, env: agentToolEnv(app.home, app.baseUrl, token, commandGateDir(app, true)) });
     child.stdin.end();
     let output = "";

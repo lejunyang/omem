@@ -20,7 +20,7 @@ import { canonical, gitLoginPaths, standardCommandLogins, under, type OwnSandbox
 import { currentRules } from "./operation-policy.ts";
 import { addRunEvent } from "./runs.ts";
 import { withPinnedBinds } from "./bwrap-spawn.ts";
-import { bwrapArgs, egressRelayPath, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
+import { accountOf, bwrapArgs, egressRelayPath, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 import { remoteGit } from "./git-command.ts";
 import { stop } from "./spawn.ts";
 import { onToolTokenRevoked, toolContextForToken, type ToolContext } from "./tools.ts";
@@ -28,6 +28,17 @@ import { actingAs } from "../rules/run-as.ts";
 
 export type CommandSandbox = { profile: AgentProfile; workspace: WorkspaceMounts; own?: OwnSandbox };
 type Call = { command: string; args: string[]; cwd: string };
+
+const npmLogin = ["NPM_TOKEN", "NODE_AUTH_TOKEN"];
+const standardLoginEnv: ReadonlyMap<string, readonly string[]> = new Map([
+  ["gh", ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_HOST"]],
+  ["glab", ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN", "GITLAB_HOST"]],
+  ["aws", ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE"]],
+  ["az", ["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]],
+  ["gcloud", ["CLOUDSDK_AUTH_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS"]],
+  ["kubectl", ["KUBECONFIG"]], ["docker", ["DOCKER_AUTH_CONFIG"]],
+  ["npm", npmLogin], ["pnpm", npmLogin],
+]);
 
 function program(name: string, writable: string[]) {
   if (basename(name) !== name || !/^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$/.test(name)) throw new Error("需要命令名");
@@ -60,6 +71,12 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
     ro.push(modules);
   }
   const env: NodeJS.ProcessEnv = { HOME: home, PATH: [dirname(process.execPath), "/usr/local/bin", "/usr/bin", "/bin"].join(":"), LANG: process.env.LANG ?? "C", TMPDIR: "/tmp/.omem-executor-tmp" };
+  const account = accountOf(scope.profile);
+  const memberEnv = account?.userId === user ? account.env : undefined;
+  for (const key of [...(standardLoginEnv.get(call.command) ?? []), ...(entry?.command.loginEnv ?? [])]) {
+    const value = user === OWNER ? scope.profile.env[key] ?? process.env[key] : memberEnv?.[key];
+    if (value !== undefined) env[key] = value;
+  }
   const granted = new Set<string>();
   if (entry) {
     if (user !== OWNER) accountStatePaths(app, user, entry.command.state ?? []);
