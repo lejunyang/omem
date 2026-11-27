@@ -18,8 +18,9 @@ const parseAI = (text: string): PickAI => {
   return { profile, model, effort };
 };
 const backend = (name: string) => name.split("@")[0].replace(/-cli$/, "");
-const sameAI = (ai: PickAI, p: AgentProfile) => ai.profile === p.id && (!ai.model || ai.model === p.model) && (!ai.effort || ai.effort === p.effort);
-export function matchesSelector(selector: string, p: AgentProfile): boolean {
+export type PolicyAI = Pick<AgentProfile, "id" | "model" | "effort" | "peer" | "keyRef">;
+const sameAI = (ai: PickAI, p: PolicyAI) => ai.profile === p.id && (!ai.model || ai.model === p.model) && (!ai.effort || ai.effort === p.effort);
+export function matchesSelector(selector: string, p: PolicyAI): boolean {
   const pos = selector.indexOf(":");
   const value = selector.slice(pos + 1).trim();
   switch (selector.slice(0, pos)) {
@@ -36,7 +37,7 @@ export function inHours(hours: string | undefined, time: string) {
   const [start, end] = hours.split("-");
   return start < end ? start <= time && time < end : time >= start || time < end;
 }
-export function groupItems(app: App, id: string): AiGroup["items"] {
+export function groupItems(app: Pick<App, "config">, id: string): AiGroup["items"] {
   const group = app.config.agents.groups.find(g => g.id === id);
   if (group?.items.length) return group.items;
   const old = Object.hasOwn(builtinGroups, id) ? app.config.agents.tiers[id as keyof typeof builtinGroups] : undefined;
@@ -72,7 +73,7 @@ export type PolicyScope = {
   classId: RunClass; use: string[]; strict: boolean; order: "fixed" | "choose"; deny: { selector: string; rule: string }[];
   groups: AiGroup[]; said: string[]; members: PickAI[];
 };
-export function policyScope(app: App, kind?: string, role?: string, spec?: Pick<AgentSpec, "ai" | "agent" | "model" | "effort" | "class">): PolicyScope | undefined {
+export function policyScope(app: Pick<App, "config">, kind?: string, role?: string, spec?: Pick<AgentSpec, "ai" | "agent" | "model" | "effort" | "class">): PolicyScope | undefined {
   const classId = runClass(kind, role, spec?.class);
   if (!classId) return;
   const config = app.config.agents;
@@ -102,7 +103,7 @@ export function policyScope(app: App, kind?: string, role?: string, spec?: Pick<
     ],
   };
 }
-export function policyReason(scope: PolicyScope | undefined, p: AgentProfile): string | undefined {
+export function policyReason(scope: PolicyScope | undefined, p: PolicyAI): string | undefined {
   if (!scope) return;
   const served = p.keyRef && p.model ? modelDisplayName(p.model) : p.model;
   const blocked = scope.deny.find(d => matchesSelector(d.selector, p) || (served !== p.model && d.selector.startsWith("model:") && matchesSelector(d.selector, { ...p, model: served })));

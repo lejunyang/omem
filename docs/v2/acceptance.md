@@ -2739,6 +2739,8 @@ TraeX 与其他 ACP 的清理补验：
 
 ## 运行前自动选 AI 与后端故障换后端（2026-11-10）
 
+在强组配置一个能调用工具的后端。对助手说“日常整理别用 Gemini”，或通过 `POST /api/ai/policy/propose` 传 `{"text":"日常整理别用 Gemini"}`。响应的 `runId` 指向起草运行，完成后 `output.askId` 指向预览。核对各后端的 Gemini 模型和近七天受影响次数；点“不改”和“改一下”后配置保持原值。确认新版预览后重新加载配置，核对类别规则、原话和时间。另开一张卡，先手工改规则再确认旧卡，保留手工改动。
+
 在临时库通过 `PUT /api/ai/policy` 提交 `{"classes":{"routine":{"deny":["model:gemini"]}}}`，导入一份材料，核对 ingest 的选择事件包含类别、采用的 AI 和排除理由。通过 `GET /api/ai/policy` 核对该类别近七天的次数。给同类规则指定组和 strict 后，关掉组内后端，确认排队到期时留下失败通知。用例见 `test/ai-policy.test.ts`、`test/config-merge.test.ts`。
 
 

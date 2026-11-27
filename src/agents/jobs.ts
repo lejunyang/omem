@@ -660,6 +660,7 @@ registerHandler("archive", async ctx => {
     scheduleIngest(ctx.app, ctx.run.spaceId!, ready);
   }
 });
+registerHandler("ai-policy-draft", async ctx => (await import("./ai-policy-proposal.ts")).runPolicyDraft(ctx));
 registerHandler("archive-rule-draft", async ctx => {
   const r = await agent(ctx, "archive-rule-writer", ctx.run.spaceId!, `本人的要求：${String(ctx.run.input.description)}\n当前草稿：${JSON.stringify(ctx.run.input.current ?? {})}`, null);
   return { ...getRun(ctx.app, ctx.run.id).output, summary: r.text.trim() };

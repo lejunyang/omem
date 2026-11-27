@@ -1,6 +1,6 @@
 # AI 规则：先定能用哪些，再让模型排先后
 
-状态：设计（2026-11-27），未实现。和 [ai-models.md](ai-models.md) 的“运行前选 AI”“换后端的顺序”、[agent-accounts.md](agent-accounts.md) 的成员账号一起读。
+第 3 期（2026-11-27）已接入强组起草、影响预览和本人确认。各期进度见 [实现状态](status.md)。和 [ai-models.md](ai-models.md) 的“运行前选 AI”“换后端的顺序”、[agent-accounts.md](agent-accounts.md) 的成员账号一起读。
 
 ## 1. 现在的问题
 

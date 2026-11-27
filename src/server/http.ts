@@ -3789,11 +3789,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const preview = change ?? (access.owner ? retainedIndexPreview(app, next, candidate) : null);
     if (preview && (req.query as { confirmEmbedding?: string }).confirmEmbedding !== preview.token)
       return reply.code(409).send({ confirmation: "embedding-model", ...preview });
+    const guidance = (req.body as { agents?: { routing?: { guidance?: unknown } } }).agents?.routing?.guidance;
+    const guidanceHint = access.edit("ai") && typeof guidance === "string" && /禁止|不要用|别用|只用|必须用/.test(guidance)
+      ? { guidanceWarning: "写在这里只当倾向，要一定做到请转成规则" } : {};
     const hasChanges = Object.keys(changes).length > 0;
     if (hasChanges || change) save.write();
     if (change) replaceIndex(app, change.to);
     if (checkModel) resumeEmbedding(app);
-    if (!hasChanges) return { config: settingsView(app.config, access.view, access.owner), restart };
+    if (!hasChanges) return { config: settingsView(app.config, access.view, access.owner), restart, ...guidanceHint };
     audit(app, who(req), "settings.update", "settings", { changes });
     // A provider taken out takes its key with it.
     for (const id of Object.keys(readKeys(app.home))) if (!id.startsWith("mcp:") && !next.ai.providers.some((p) => p.id === id)) setKey(app.home, id, null);
@@ -3805,7 +3808,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       // The timers were made in the old zone.
       rezoneScheduler(app);
     }
-    return { config: settingsView(app.config, settingsAccess(req).view, access.owner), restart };
+    return { config: settingsView(app.config, settingsAccess(req).view, access.owner), restart, ...guidanceHint };
   });
 
   // ----------------------------------------------- AI providers and model categories (core/ai-keys.ts)
@@ -3904,6 +3907,12 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.get("/api/ai/decision/report", async (req) => {
     const b = q(z.object({ days: z.coerce.number().int().min(1).max(90).default(30) }), req.query);
     return (await import("../core/decision-log.ts")).decisionReport(app, b);
+  });
+
+  server.post("/api/ai/policy/propose", async req => {
+    const { startPolicyDraft, policyText } = await import("../agents/ai-policy-proposal.ts");
+    const { text } = q(z.object({ text: policyText }).strict(), req.body);
+    return { runId: startPolicyDraft(app, text).id };
   });
 
   // Settings → AI → 决策: try a question on the configured decision model.

@@ -484,7 +484,7 @@ async function recordAnswer(app: App, before: Ask, context: Record<string, unkno
   const action = before.handler ? askActions.get(before.handler) : undefined;
   const changed = tx(app.db, () => {
     if (getAsk(app, id).status !== "pending") throw new HttpError(409, "这个提问已经处理过了");
-    const result = action?.(app, { ...before, status: "answered", answer, choice: option ? input.choice! : null, approved, answeredBy: input.by }, context);
+    const result = action?.(app, { ...before, status: "answered", answer, value, choice: option ? input.choice! : null, approved, answeredBy: input.by }, context);
     return run(
       app.db,
       "update asks set status = 'answered', answer = ?, value = ?, choice = ?, approved = ?, answered_at = ?, answered_by = ?, consumed = ?, result = coalesce(?, result) where id = ? and status = 'pending'",

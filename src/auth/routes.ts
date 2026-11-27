@@ -45,6 +45,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/ai/policy": cap("settings.ai.view"),
   "PUT /api/ai/policy": cap("settings.ai.edit"),
   "PUT /api/ai/groups": cap("settings.ai.edit"),
+  "POST /api/ai/policy/propose": "owner",
   "GET /api/ai/decision/report": "owner",
   "GET /api/code/:id/improve": RUN,
   "GET /api/quality": "owner",

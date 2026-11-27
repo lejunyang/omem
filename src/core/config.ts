@@ -202,6 +202,7 @@ export const roleNames = [
   "ingest",
   "archivist",
   "archive-rule-writer",
+  "ai-policy-writer",
   "wiki-planner",
   "wiki-writer",
   "wiki-linter",

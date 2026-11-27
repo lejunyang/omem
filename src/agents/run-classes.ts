@@ -6,7 +6,7 @@ export const runClasses = {
   writing: { name: "写作", description: "写作与组织知识，输出长", kinds: ["wiki-plan", "wiki-write", "wiki-organize", "wiki-resolve", "wiki-lint", "wiki-migrate", "wiki-sweep", "brief", "dream", "work-state"], roles: ["wiki-planner", "wiki-writer", "wiki-organizer", "wiki-checker", "wiki-linter", "brief", "dreamer", "work-state"] },
   coding: { name: "编码", description: "按编码角色的设置实现需求", kinds: ["code", "design", "req-split"], roles: ["coder", "designer", "req-splitter", "business-analyst"] },
   review: { name: "评审", description: "按评审角色的设置独立检查", kinds: ["review", "quality-audit", "outcome-review", "flow-review", "profile-review", "replay-judge", "speaking-review"], roles: ["reviewer", "review-business", "review-arch", "review-style", "review-history", "review-simplify", "review-lead", "replay-judge", "outcome-reviewer"] },
-  agents: { name: "调查与交办", description: "档案和其他设备承接的任务，内容差别大", kinds: ["agent", "agent-followup", "peer-agent", "peer-work", "rule-fire", "rule-script"], roles: [] },
+  agents: { name: "调查与交办", description: "档案和其他设备承接的任务，内容差别大", kinds: ["agent", "ai-policy-draft", "agent-followup", "peer-agent", "peer-work", "rule-fire", "rule-script"], roles: [] },
   flows: { name: "流程与研究", description: "按阶段推进，可以为每个阶段指定 AI", kinds: ["flow-stage", "flow-runner", "flow-reconcile", "flow-blocker-check", "study-trial", "peer-trial"], roles: ["flow-reconcile"] },
   supervise: { name: "监工", description: "长任务需要稳定、能力强的 AI", kinds: ["supervise"], roles: ["supervisor"] },
 } satisfies Record<string, { name: string; description: string; kinds: string[]; roles: string[] }>;

@@ -1,4 +1,5 @@
 import { classSchema, specAiSchema } from "../core/ai-policy-schema.ts";
+import { proposalArgs, startPolicyDraft, submitPolicyDraft } from "./ai-policy-proposal.ts";
 import { groupPick, policyScope } from "./ai-policy.ts";
 import { inlineStages } from "../flows/inline.ts";
 import { reconcileResultSchema } from "../flows/reconcile-schema.ts";
@@ -1094,6 +1095,21 @@ def({
     const spec = saveAgentSpec(ctx.app, { ...rest, status: draft ? "draft" : (findAgentSpec(ctx.app, a.name)?.status ?? "active") } as never, ctx.actor);
     noteBehavior(ctx, target, spec.name, before, { change_reason, owner_request });
     return `已保存 Agent 档案 ${spec.name}${spec.status === "draft" ? "（草稿，本人 /approve agent " + spec.name + " 后启用）" : ""}。`;
+  },
+});
+
+def({
+  name: "propose_ai_policy",
+  description: "本人要为某类任务设置长期 AI 规则时，传 text 原话交给强组起草。宿主向本人展示影响，确认后保存。规则起草角色用 draft 提交结构化改动。",
+  write: true,
+  schema: proposalArgs,
+  handler: (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以提出 AI 规则");
+    if (ctx.role === "ai-policy-writer" && ctx.runId && a.draft && !a.text)
+      return "已生成确认卡：" + submitPolicyDraft(ctx.app, ctx.runId, a.draft);
+    if (ctx.role === "ai-policy-writer" || !a.text || a.draft) throw new HttpError(400, "主助手传 text，强组起草角色传 draft");
+    const r = startPolicyDraft(ctx.app, a.text, ctx.runId);
+    return `已交给强组起草（运行 ${r.id}），生成预览后由本人确认。`;
   },
 });
 
