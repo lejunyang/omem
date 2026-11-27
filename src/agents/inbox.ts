@@ -140,6 +140,18 @@ export async function receive(app: App, inb: Inbound): Promise<Received> {
     }
   }
 
+  // Owner input belongs to this task even while a worker question is waiting for a card answer.
+  if (!inb.fromAsk && !inb.speaker && !inb.asker && thread.userId === userId) {
+    const { longTaskInThread, changeLongTask } = await import("./long-tasks.ts");
+    const task = longTaskInThread(app, thread.id);
+    if (task && !["ended", "done"].includes(task.status)) {
+      const messageId = addMessage(app, thread.id, "user", inb.text, null,
+        { ...ownerOrigin, ...(inb.externalMessageId ? { externalId: inb.externalMessageId } : {}) });
+      await changeLongTask(app, task.id, { action: "supplement", text: inb.text });
+      return { thread, messageId, runId: null, merged: false, reply: null, started };
+    }
+  }
+
   // The owner replying to a notification's card in Feishu has read it (channels/notify-read.ts).
   if (inb.quote?.messageId && userId === OWNER && !inb.speaker && !inb.asker) (await import("../channels/notify-read.ts")).markCardRead(app, inb.quote.messageId);
 

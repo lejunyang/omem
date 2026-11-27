@@ -1,9 +1,11 @@
 import type { Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { getLongTask, longTaskInThread } from "./long-tasks.ts";
+import { supervisorFacts, wakeSupervisor } from "./supervisor.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { now, truncate } from "../core/util.ts";
 import { addMessage, createThread, getThread } from "./threads.ts";
-import { createRun, runUser, queuedInLane, updateQueuedRun, type Run } from "./runs.ts";
+import { createRun, getRun, runUser, queuedInLane, updateQueuedRun, type Run } from "./runs.ts";
 
 /**
  * Multi-agent work handed off by the main assistant. It is one conversation (a Feishu topic, or
@@ -139,15 +141,33 @@ export type AgentRoundInput = {
   extraTools?: string[];
 };
 
+/** Keep a supervisor's handoffs in its confirmed work topic. Reports return through onWorkRunSettled. */
+export function queueSupervisedAgent(app: App, runId: string, round: AgentRoundInput) {
+  return withinTx(app.db, () => {
+    const parent = getRun(app, runId);
+    const task = getLongTask(app, String(parent.input.longTaskId));
+    if (task.status !== "active" || parent.output.supervisorReport) throw new Error("本轮当前不能派活");
+    if (Date.now() >= Date.parse(task.createdAt) + task.budget.hours * 3600_000 ||
+        supervisorFacts(app, task).rounds >= task.budget.codeRounds) throw new Error("工作已达任务书预算，请本人决定是否增加");
+    const thread = getThread(app, task.threadId);
+    const work: AgentWork = workOfRun(app, parent) ?? {
+      askRunId: runId, rootConversationId: thread.parentId ?? thread.id, workConversationId: thread.id,
+      larkKey: thread.key, larkMessageId: thread.settings.lastMessageId ?? null, title: task.goal,
+      rounds: [], awaitingUser: false, runs: 0,
+    };
+    return queueAgentRound(app, work, { ...round, spaceId: task.spaceId, queuedBy: runId }, task.id);
+  });
+}
+
 /** Queue the next agent round inside an existing work conversation. */
-export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput): string {
+export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput, longTaskId?: string): string {
   if (work.runs >= MAX_AGENT_WORK_RUNS) throw new Error(`多 Agent 循环已达上限 ${MAX_AGENT_WORK_RUNS} 轮`);
   const r = createRun(app, {
     kind: "agent",
     spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
     title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
     userId: a.assistantScope.userId,
-    input: { ...(a.boardDevice ? { boardDevice: a.boardDevice } : {}), ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
+    input: { ...(longTaskId ? { longTaskId } : {}), ...(a.boardDevice ? { boardDevice: a.boardDevice } : {}), ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
     parentId: work.askRunId,
   });
   const id = r.id;
@@ -238,6 +258,12 @@ export function onWorkRunSettled(app: App, run: Run): { work: AgentWork; coordin
   markRound(app, work, run.id, status);
   // Rounds of an older version's digest step are bookkeeping only; cancelled rounds wait for the owner.
   if ((run.input as { role?: string }).role || run.status === "cancelled") return { work };
+  const task = longTaskInThread(app, work.workConversationId);
+  if (task) {
+    const note = `工作运行 ${run.id} ${status === "done" ? "已完成" : "失败"}：${truncate(String(run.output.answer ?? run.error ?? ""), 2000)}`;
+    addWorkMessage(app, work, { role: "assistant", text: note, runId: run.id, meta: { record: true } });
+    return { work, coordinateRunId: wakeSupervisor(app, task.id, note) };
+  }
   return { work, coordinateRunId: queueCoordination(app, work, run) };
 }
 

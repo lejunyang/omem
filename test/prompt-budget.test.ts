@@ -12,6 +12,7 @@ import { testApp } from "./helpers.ts";
 // longer than MCP's. Allow each measurement up to 64 extra characters across all five blocks.
 // Re-measured affected roles after integrating quiet outcomes, change receipts and the new role sections.
 const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground: number, noneChat: number, noneBackground: number]> = {
+  supervisor: ["supervise", 5044, 5044, 2001, 2001],
   "commit-claim": ["commit-claim", 4630, 4735, 2206, 2206],
   // The item-follow role now classifies actual next steps and records their completion conditions.
   "item-follow": ["item-follow", 6004, 6109, 3602, 3602],

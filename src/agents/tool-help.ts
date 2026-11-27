@@ -32,6 +32,8 @@ export const WORK_BOARD_TOOLS = ["dispatch_work", "work_status", "work_review", 
 
 export const ROLE_TOOLS = ["name_work_branch", "claim_commits", "note_item_change", "submit_item_step", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest", "submit_playbook", "review_reply_outcomes", "submit_line_state", "propose_lines", "meeting_outcomes", "read_flow_object", "submit_flow_reconcile", "update_situation", "propose_situation", "sync_assigned_item", "first_look_outcome"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
+ROLE_TOOLS.push("supervise_report");
+CORE_TOOLS.add("supervise_report");
 ROLE_TOOLS.push("sync_branch");
 CORE_TOOLS.add("sync_branch");
 /**

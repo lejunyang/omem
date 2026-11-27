@@ -102,6 +102,7 @@ import { CODE_STARTERS, WORK_BOARD_TOOLS, helpText, MERGED_TOOLS, metaSchemas, R
 import { pluginStore } from "../plugins/store.ts";
 import { docEditDecision, docPreview, wikiWriteDecision, WIKI_WRITE_OPERATIONS, type DocEditScope, type WikiWriteOperation, type WikiWriteScope, type WikiWriteTarget } from "../channels/lark-doc-approval.ts";
 import { asOfContent, cached, filterHits, memoryWhere, sourceHidden, sourceRows, TIME_CUT_KINDS, visibleLines, visibleMemories, type RunView } from "./replay-view.ts";
+import { reportSchema as supervisorReportSchema } from "./supervisor-schema.ts";
 import type { SearchOptions } from "../search/search.ts";
 
 export type ToolContext = {
@@ -212,6 +213,15 @@ const tools: Tool[] = [];
 const def = <S extends z.ZodObject>(t: { name: string; description: string; schema: S; write?: boolean; handler: (ctx: ToolContext, args: z.infer<S>) => Promise<string> | string }) => {
   tools.push(t as unknown as Tool);
 };
+
+def({
+  name: "supervise_report", description: "长任务监工每轮最后提交任务书建议、目标核对、决定及依据、进度和本人问题。",
+  schema: supervisorReportSchema, write: true,
+  handler: async (ctx, report) => {
+    if (ctx.role !== "supervisor" || !ctx.runId) throw new HttpError(403, "只接受本轮监工的报告");
+    return (await import("./supervisor-report.ts")).submitSupervisorReport(ctx.app, ctx.runId, report);
+  },
+});
 
 function space(ctx: ToolContext, requested?: string | null) {
   const id = requested || ctx.spaceId;
@@ -1393,6 +1403,7 @@ def({
     "继续一个已经在独立工作会话里进行的工作（本人补充了要求，或你看了报告认为还要再推进）：传 work_id（或 own_topic=true 且不传 name，取本会话最近一个仍在进行的工作），在原工作会话里排下一轮，同一个 Agent 接着它上一轮的会话，name 不传沿用上一轮的 Agent；不要为同一件事新开一个工作会话。上一轮它回头找你代做的（缺工具），这一轮用 extra_tools 借给它，或你先做完那一步再交办。",
   schema: z.object({
     execution: executionSchema.optional(),
+    basis: z.string().trim().min(1).max(3000).optional().describe("监工派活的依据：任务书条目、本人补充或运行 ID"),
     name: z.string().optional().describe("Agent 档案名，或 assistant；继续已有工作时不传就沿用上一轮的 Agent"),
     task: z.string().describe("完整的任务说明：背景、目标、交付物、相关会话或原件 id；复杂任务写清怎样算完成、什么情况要请本人介入。继续已有工作时写这一轮要做什么：本人的新要求或你判断还需要推进的事"),
     space: z.string().optional(),
@@ -1401,6 +1412,7 @@ def({
     extra_tools: extraToolsSchema,
   }),
   handler: async (ctx, a) => {
+    if (ctx.role === "supervisor" && (a.work_id || !a.name)) throw new HttpError(400, "在本长任务的话题里用 name 和 task 派活");
     if (a.work_id || (a.own_topic && !a.name)) return continueAgentWork(ctx, a);
     if (!a.name) throw new HttpError(400, "要交给哪个 Agent：传 name（档案名或 assistant）；继续已有的工作传 work_id");
     const execution = validateExecution(ctx.app, a.execution, ctx.userId);
@@ -1416,6 +1428,13 @@ def({
     const origin = ctx.runId ? one<{ input: string }>(ctx.app.db, "select input from runs where id = ?", ctx.runId) : undefined;
     const conversationId = origin ? (JSON.parse(origin.input) as { conversationId?: string }).conversationId : undefined;
     if (!conversationId) throw new HttpError(400, "只能在一个会话里交办 Agent");
+    if (ctx.role === "supervisor" && ctx.runId) {
+      const { checkSupervisorBasis } = await import("./supervisor-code.ts");
+      checkSupervisorBasis(ctx.app, ctx.runId, ctx.runId, a.basis);
+      const { queueSupervisedAgent } = await import("./agent-work.ts");
+      const id = queueSupervisedAgent(ctx.app, ctx.runId, { agent: spec.name, task: a.task + "\n\n监工依据：" + a.basis, execution, assistantScope, extraTools });
+      return `已在长任务话题里派给 ${spec.name}，运行 ${id}；结束后由监工接手。`;
+    }
     if (a.own_topic) {
       const { startAgentWork, workInConversation, queueAgentRound } = await import("./agent-work.ts");
       // The owner may continue an existing work from a different conversation (a new Feishu topic):

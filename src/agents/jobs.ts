@@ -62,6 +62,7 @@ import "../designs/work.ts";
 import "../wiki/verify.ts";
 import "../wiki/migrate.ts";
 import "./wakes.ts";
+import "./supervisor-report.ts";
 import "./digest.ts";
 // The nightly write-up of the owner's work state and person cards (agents/work-state-job.ts).
 import "./work-state-job.ts";
@@ -78,6 +79,7 @@ import { handedToMentions, mentionTools, runMentionHandling, type MentionInfo } 
 import "../channels/lark-mentions.ts";
 import { helpedCounts, replayDreamText } from "./replay.ts";
 
+registerHandler("supervise", async ctx => (await import("./supervisor.ts")).runSupervisor(ctx));
 registerHandler("lark-resource-parse", async ctx => (await import("../channels/lark-resource-parse.ts")).parseLarkResource(ctx));
 
 /**

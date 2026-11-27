@@ -50,7 +50,7 @@ export function backendUsedOf(app: App, p: AgentProfile) {
   return [...state(app).slots].filter((s) => s.key.startsWith(src) && !s.waiting).length;
 }
 
-const hasRoom = (app: App, p: AgentProfile) => usedOf(app, p) < limitOf(app, p) && backendUsedOf(app, p) < (backendLimitOf(app, p) ?? Infinity);
+export const hasRoom = (app: App, p: AgentProfile) => usedOf(app, p) < limitOf(app, p) && backendUsedOf(app, p) < (backendLimitOf(app, p) ?? Infinity);
 
 function take(app: App, p: AgentProfile, runId: string | null) {
   const s = state(app);
@@ -297,7 +297,7 @@ export function quotaResetAt(message: string, at = new Date(), timeZone?: string
  * is nearly used (quota.ts quotaAvoid) goes after the others, and a backend that just broke down (markDown) after those. Excluded options (limit 0) are skipped; when every option is excluded — the run was pinned to one by the owner — the first
  * runs anyway, uncounted against anything else.
  */
-export async function acquire(app: App, options: AgentProfile[], opts: { runId: string | null; signal?: AbortSignal; onWait?: (text: string) => void }) {
+export async function acquire(app: App, options: AgentProfile[], opts: { runId: string | null; signal?: AbortSignal; onWait?: (text: string) => void; waitUntil?: number }) {
   const allowed = options.filter((p) => !excluded(app, p));
   // Healthy first, then accounts whose plan is nearly used, then backends that just broke down.
   const rank = (p: AgentProfile) => (downReason(app, p) ? 2 : quotaAvoid(app, p) ? 1 : 0);
@@ -315,6 +315,7 @@ export async function acquire(app: App, options: AgentProfile[], opts: { runId: 
       if (opts.signal?.aborted) throw new Error("CANCELLED");
       const free = usable.find((p) => hasRoom(app, p));
       if (free) return { index: options.indexOf(free), release: take(app, free, opts.runId) };
+      if (opts.waitUntil !== undefined && Date.now() >= opts.waitUntil) throw new Error("等待模型空位超时（排队）");
       if (!told) {
         s.slots.add(marker);
         opts.onWait?.(`等模型空位：${usable.map((p) => `${label(p)} ${usedOf(app, p)}/${limitOf(app, p)}${backendLimitOf(app, p) !== undefined ? `（${p.id} 共 ${backendUsedOf(app, p)}/${backendLimitOf(app, p)}）` : ""}`).join("，")}`);
@@ -323,7 +324,7 @@ export async function acquire(app: App, options: AgentProfile[], opts: { runId: 
       await new Promise<void>((resolve) => {
         const wake = () => { s.wake.delete(wake); clearTimeout(timer); opts.signal?.removeEventListener("abort", wake); resolve(); };
         // A periodic look as well: limits change in settings without any release.
-        const timer = setTimeout(wake, 30_000);
+        const timer = setTimeout(wake, opts.waitUntil === undefined ? 30_000 : Math.min(30_000, Math.max(0, opts.waitUntil - Date.now())));
         s.wake.add(wake);
         opts.signal?.addEventListener("abort", wake, { once: true });
       });

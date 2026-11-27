@@ -194,6 +194,7 @@ export const DEFAULT_FEEDBACK_EMOJI = {
 };
 
 export const roleNames = [
+  "supervisor",
   "commit-claim",
   "item-follow",
   "flow-reconcile",

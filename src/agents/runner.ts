@@ -299,6 +299,8 @@ export type RoleRunInput = {
   /** Tools the caller needs for delivery. An empty list explicitly permits a text-only answer. */
   requiredTools?: string[];
   execution?: Execution;
+  /** Deadline for acquiring the specified backend before an expensive task yields its slot. */
+  queueUntil?: number;
   /** Which choice setting applies when nothing pins the AI (choose-ai.ts): a rule's run, or any other task (the default). */
   choose?: ChooseScene;
   role: RoleName;
@@ -976,12 +978,12 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   }
   const borrowed = input.borrow;
   const raw = member ? resolveRunProfile(app, { ...input, actor }) : undefined;
-  const memberOptions = { userId: input.userId!, runId: input.runId, threadId: runInput.conversationId ?? runInput.threadId, pinned: specified || execution?.source === "user", ownOnly: runInput.ownAccountOnly, signal: input.signal };
+  const memberOptions = { userId: input.userId!, runId: input.runId, threadId: runInput.conversationId ?? runInput.threadId, pinned: specified || execution?.source === "user" || input.role === "supervisor", ownOnly: runInput.ownAccountOnly, signal: input.signal };
   const primary = borrowed ? peerProfile({
     id: `peer:${borrowed.device}:${borrowed.backend}`, peer: { id: borrowed.device, agent: borrowed.backend },
     transport: "acp", command: "omem", args: [], env: { OMEM_HOME: app.home }, idleTimeoutMs: 600000,
     model: input.execution?.model, effort: input.execution?.effort,
-  }) : member && raw ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, member).slice(1).filter(p => supports(p) && meetsFloor(p)) })
+  }) : member && raw ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: input.role === "supervisor" ? [] : failoverProfiles(app, actor, raw, own, member).slice(1).filter(p => supports(p) && meetsFloor(p)) })
     : accountProfile(app, { ...input, actor });
   const { artifactInbox, collectInbox, takenText } = await import("./artifacts.ts");
   const inbox = input.artifacts && input.runId && !input.shadow ? artifactInbox(app, input.runId) : undefined;
@@ -1119,7 +1121,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       }
       let slot;
       try {
-        slot = await acquire(app, retry || (coding || pinned) && i === 0 ? [chain[i]] : chain.slice(i), { runId: input.runId, signal: input.signal, onWait: (text) => emit({ type: "status", text }) });
+        slot = await acquire(app, retry || (coding || pinned) && i === 0 ? [chain[i]] : chain.slice(i), { runId: input.runId, signal: input.signal, waitUntil: input.queueUntil, onWait: (text) => emit({ type: "status", text }) });
       } catch (e) {
         if (i === 0) revokeToolToken(base.token);
         if (coding && !input.signal?.aborted && isBackendDown(e) && i < chain.length - 1) {
@@ -1180,7 +1182,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           extraMcp: prep.extraMcp,
           resumeSessionId,
           persistSession: input.persistSession ?? !!input.resumeSessionId,
-          queueTimeoutMs: app.config.agents.queueTimeoutMinutes * 60_000,
+          queueTimeoutMs: input.queueUntil === undefined ? app.config.agents.queueTimeoutMinutes * 60_000 : Math.max(1, input.queueUntil - Date.now()),
         };
         if (i > 0 && !retry) {
           const network = networkReason(app, chain[0]);
