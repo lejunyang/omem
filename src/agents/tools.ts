@@ -1389,7 +1389,7 @@ def({
 def({
   name: "run_agent",
   description:
-    "把一件事交给某个 Agent 档案去做（后台运行）。没有专门档案时 name=assistant 使用主助手角色完成这次任务，不新建档案。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；只是接着交办时你的回复留在工作会话里（话题里有一张原地更新的进度卡），做完、要本人决定或卡住时才发到话题里，报告折叠在下面。交办前看对方档案（list_agents）有没有做完这件事要用的工具：没有的，那一步你自己做，或用 extra_tools 借给它这一轮，不要让它每轮回头找你代做。简单一次性的事 own_topic 保持 false，结果直接发回本会话。" +
+    "把一件事交给某个 Agent 档案去做（后台运行）。没有专门档案时 name=assistant 使用主助手角色完成这次任务，不新建档案。多步/长任务（要调查、产出、可能再交办或需要本人定夺）用 own_topic=true：omem 为这件事单独建一个工作会话（飞书里是一条新话题）。每轮 Agent 交回报告后，你会在那个工作会话里接手：决定继续交办（可以换 Agent）、向本人汇报结论，或请本人决定；只是接着交办时你的回复留在工作会话里（话题里有一张原地更新的进度卡），做完、要本人决定或卡住时才发到话题里，报告折叠在下面。交办前看对方档案（list_agents）有没有做完这件事要用的工具：没有的，那一步你自己做，或用 extra_tools 借给它这一轮，不要让它每轮回头找你代做。简单一次性的事 own_topic 保持 false：报告只交回给你，不会原样发给本人或群里；这一轮结束后（你在这一轮里用 read_run 读过完成的报告就不再）omem 会在本会话再给你一轮，由你按报告写回复。要在这一轮就用到结果，用 ask_agent 同步等它，不要 run_agent 之后反复 read_run 轮询。" +
     "继续一个已经在独立工作会话里进行的工作（本人补充了要求，或你看了报告认为还要再推进）：传 work_id（或 own_topic=true 且不传 name，取本会话最近一个仍在进行的工作），在原工作会话里排下一轮，同一个 Agent 接着它上一轮的会话，name 不传沿用上一轮的 Agent；不要为同一件事新开一个工作会话。上一轮它回头找你代做的（缺工具），这一轮用 extra_tools 借给它，或你先做完那一步再交办。",
   schema: z.object({
     execution: executionSchema.optional(),
@@ -1444,7 +1444,7 @@ def({
       return `已在独立工作会话（飞书话题）把这件事交给 ${spec.name}，运行 ${w.runId}${lentNote}。它每轮交回报告后，你会在那个工作会话里接手推进，结论和需要本人决定的事发在那条话题里；这里回一句“已在话题里交给 ${spec.name}”就够了。`;
     }
     const r = createRun(ctx.app, { kind: "agent", spaceId: writeSpace(ctx, a.space ?? spec.space, "runs.operate"), title: `${spec.name}：${truncate(a.task, 50)}`, input: { spec: spec.name, task: a.task, execution, assistantScope, spaces: assistantScope.readScope, threadId: conversationId, ...(extraTools.length ? { extraTools } : {}) }, parentId: ctx.runId, userId: assistantScope.userId });
-    return `已交给 ${spec.name}，运行 ${r.id}${lentNote}，完成后结果会发回本会话。`;
+    return `已交给 ${spec.name}，运行 ${r.id}${lentNote}。它的报告只交回给你：这一轮结束后会在本会话再给你一轮按报告写回复，不要在这一轮反复 read_run 等它。`;
   },
 });
 

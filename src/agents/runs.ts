@@ -504,7 +504,7 @@ export function queueReason(app: App, r: Run): string | null {
   const row = one<Row>(app.db, "select * from runs where id = ?", r.id);
   if (!row) return null;
   const end = r.kind === "wake" ? (r.input as import("./wakes.ts").WakeInput).onRunEnd : undefined;
-  if (end && end.expiresAt > now() && one(app.db, "select 1 from runs where id = ? and status in ('queued','running')", end.runId)) return `等编码轮次 ${end.runId} 结束`;
+  if (end && end.expiresAt > now() && one(app.db, "select 1 from runs where id = ? and status in ('queued','running')", end.runId)) return (r.input as import("./wakes.ts").WakeInput).childReport ? `等交办它的那一轮 ${end.runId} 结束` : `等编码轮次 ${end.runId} 结束`;
   const login = r.input.aiLoginWait as import("./credential-wait.ts").AiLoginWait | undefined;
   if (login && !login.ready && row.not_before && row.not_before > now()) return "等待成员登录 " + login.name;
   if (row.not_before && row.not_before > now()) return `定时，${localStamp(row.not_before, app.config.timezone)} 开始`;

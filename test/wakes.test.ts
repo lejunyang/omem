@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { saveAgentSpec } from "../src/agents/specs.ts";
-import { __testHandlers, createRun, getRun, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
+import { __testHandlers, createRun, getRun, queueReason, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { addMessage, createThread, threadMessages } from "../src/agents/threads.ts";
-import { expireTemporaryRules, fireWake, pendingWakes, wakeTime, type WakeInput } from "../src/agents/wakes.ts";
+import { expireTemporaryRules, fireWake, pendingWakes, returnChildReport, wakeTime, type WakeInput } from "../src/agents/wakes.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { createSpace } from "../src/core/spaces.ts";
 import { dispatchRuleEvent } from "../src/rules/engine.ts";
@@ -32,6 +32,34 @@ const message = (text: string, sender: RuleEvent["sender"] = { name: "小王", k
 const inputOf = (app: ReturnType<typeof testApp>, id: string) => JSON.parse(one<{ input: string }>(app.db, "select input from runs where id = ?", id)!.input);
 
 describe("wake-ups", () => {
+  it("hands a run_agent report back to the assistant after the handing turn, unless that turn read it", async () => {
+    const { app, thread, runId } = working();
+    const wakeHandler = __testHandlers.get("wake")!;
+    const fire = (id: string) => wakeHandler({ app, run: getRun(app, id) } as never) as Promise<Record<string, unknown>>;
+    const child = createRun(app, { kind: "agent", title: "调查", spaceId: "personal", parentId: runId, input: { spec: "investigator", task: "查导出", threadId: thread.id } });
+    const back = returnChildReport(app, { id: child.id, parentId: runId }, thread.id, "investigator", "查导出", "导出用了旧模板。");
+    expect(inputOf(app, back.id)).toMatchObject({ childReport: { runId: child.id, parentId: runId }, onRunEnd: { runId } });
+    // Nothing goes to the conversation by itself; it waits for the handing turn.
+    expect(threadMessages(app, thread.id)).toHaveLength(0);
+    run(app.db, "update runs set status='done', finished_at=? where id=?", new Date().toISOString(), child.id);
+    expect(queueReason(app, getRun(app, back.id))).toContain(`等交办它的那一轮 ${runId} 结束`);
+    run(app.db, "update runs set status='done', finished_at=? where id=?", new Date().toISOString(), runId);
+    const fired = await fire(back.id);
+    expect(inputOf(app, String(fired.runId))).toMatchObject({ conversationId: thread.id, wake: true });
+    const note = threadMessages(app, thread.id).at(-1)!;
+    expect(note.text).toContain("导出用了旧模板。");
+    expect(note.text).toContain("stay_quiet");
+    expect(note.text).not.toContain("设的唤醒");
+
+    // The handing turn read the finished report itself: no extra turn.
+    const second = createRun(app, { kind: "agent", title: "调查二", spaceId: "personal", parentId: runId, input: { spec: "investigator", task: "再查", threadId: thread.id } });
+    run(app.db, "update runs set status='done', finished_at=? where id=?", new Date(Date.now() - 1000).toISOString(), second.id);
+    run(app.db, "insert into run_events(run_id,seq,at,type,data) values(?,?,?,?,?)", runId, 99, new Date().toISOString(), "tool", JSON.stringify({ type: "tool", title: "mcp.omem.read_run", status: "completed", input: { arguments: { run_id: second.id } } }));
+    const skipped = await fire(returnChildReport(app, { id: second.id, parentId: runId }, thread.id, "investigator", "再查", "没有新东西。").id);
+    expect(skipped.summary).toContain("已经读过");
+    expect(threadMessages(app, thread.id)).toHaveLength(1);
+  });
+
   it("waits for the exact coding round, deduplicates by purpose, and wakes on failure", async () => {
     const { app, thread, runId, ctx } = working();
     const code = createRun(app, { kind: "code", title: "项目 A", spaceId: "personal" });

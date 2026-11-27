@@ -6,7 +6,7 @@ import { larkOpenIdOf, OWNER } from "../core/users.ts";
 import { now, truncate } from "../core/util.ts";
 import { addRunEvent, getRun, setRunOutput, stopRun, type Run, type RunContext } from "../agents/runs.ts";
 import { eventSummary } from "./compile.ts";
-import { continuedMaterial, OWNER_CONTINUED, splitFirstLookText } from "./first-look-material.ts";
+import { continuedMaterial, evidenceLines, OWNER_CONTINUED, splitFirstLookText } from "./first-look-material.ts";
 import { fenced, probesText, runProbes, type ProbeResult } from "./probes.ts";
 import type { Rule, RuleAction, RuleEvent } from "./types.ts";
 
@@ -335,21 +335,26 @@ async function quoteBlock(input: FirstLookInput, messages: LookMessage[]) {
   return { markdown: `**${cardText(last.sender)}**：${cardText(truncate(last.text.replace(/\s+/g, " "), 300))}${messages.length > 1 ? `\n<font color='grey'>（连同前面 ${messages.length - 1} 条）</font>` : ""}` };
 }
 
-/** What goes to everyone when 发给大家 is pressed, or straight to the chat: the conclusion, then its grounds. */
+/**
+ * What goes to everyone when 发给大家 is pressed, or straight to the chat: the reply alone. The grounds
+ * (evidence) name case pages, source ids and how the look reasoned: they stay on the user's card and in the run.
+ */
 function shareText(o: Outcome) {
-  return [o.text, o.evidence ? `依据：${o.evidence}` : ""].filter(Boolean).join("\n\n");
+  return o.text.trim();
 }
 
 async function firstBody(app: App, input: FirstLookInput, messages: LookMessage[], o: Outcome): Promise<CardBody> {
   const { resolveCitationsSync } = await import("../channels/common.ts");
   const where = input.situation ? `持续跟进「${input.situation.name}」` : `${input.chat!.kind === "p2p" ? "私聊" : "群"}「${input.chat!.name}」${input.listen ? ` · 关注「${input.listen.name}」` : input.rule ? ` · 规则「${input.rule.name}」` : ""}`;
+  // The message, its background right under it (folded), then the reply: what 发给大家 sends is the part below the line.
   const blocks: Record<string, unknown>[] = messages.length ? [await quoteBlock(input, messages)] : [];
+  if (o.evidence) blocks.push({ fold: { title: "背景和依据", markdown: resolveCitationsSync(app, truncate(evidenceLines(o.evidence), 2000)) } });
+  if (blocks.length && (o.text || o.reason)) blocks.push({ hr: true });
   if (o.text) {
     const { lead, more } = splitFirstLookText(truncate(o.text, 3000));
     blocks.push({ markdown: resolveCitationsSync(app, lead) });
     if (more) blocks.push({ fold: { title: "展开", markdown: resolveCitationsSync(app, more) } });
   } else if (o.reason) blocks.push({ markdown: `先看一眼没有结论：${o.reason}` });
-  if (o.evidence) blocks.push({ fold: { title: "依据", markdown: resolveCitationsSync(app, truncate(o.evidence, 2000)) } });
   if (input.situation) blocks.push({ note: "这一次会照常跟进。" });
   else if (o.outcome === "escalate") blocks.push({ markdown: `**还在查**：${o.next || "交给深查接着看"}` });
   const title = o.outcome === "answered" ? "先看一眼" : o.outcome === "owner" ? "要你定" : "先看一眼：还在查";

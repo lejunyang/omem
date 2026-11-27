@@ -12,6 +12,14 @@ export function splitFirstLookText(text: string): { lead: string; more?: string 
   return more ? { lead: text.slice(0, end), more } : { lead: text };
 }
 
+/** Grounds written as one long paragraph: one sentence per line on the card, so it reads as a list. */
+export function evidenceLines(text: string) {
+  const t = text.trim();
+  if (t.length <= 80 || /[\r\n]/.test(t)) return t;
+  const parts = t.split(/(?<=[。；])/).map((part) => part.trim()).filter(Boolean);
+  return parts.length > 1 ? parts.map((part) => `- ${part}`).join("\n") : t;
+}
+
 export const OWNER_CONTINUED = "本人要求接着查";
 
 type ProbeSummary = Pick<ProbeResult, "name" | "ok" | "skipped" | "ms" | "timedOut" | "runId">;

@@ -13,7 +13,7 @@ import { handlingOf } from "../src/core/handling.ts";
 import { OWNER } from "../src/core/users.ts";
 import { now } from "../src/core/util.ts";
 import { runActions } from "../src/rules/actions.ts";
-import { splitFirstLookText } from "../src/rules/first-look-material.ts";
+import { evidenceLines, splitFirstLookText } from "../src/rules/first-look-material.ts";
 import { deliverFirst, type FirstLookInput, type Outcome } from "../src/rules/first-look.ts";
 import { saveRule } from "../src/rules/store.ts";
 import type { RuleEvent } from "../src/rules/types.ts";
@@ -103,7 +103,7 @@ it("关注被拿空的批次另起，结论只回个人卡片", async () => {
   expect(sent.at(-1)!.content).not.toContain("发给大家");
 });
 
-it("卡片只折叠能断句的长段，分享仍发送全文和依据", async () => {
+it("卡片只折叠能断句的长段，分享只发回复", async () => {
   const more = "先去任务页核对导出记录。".repeat(14);
   const text = `导出暂时不可用；${more}`;
   expect(splitFirstLookText(text)).toEqual({ lead: "导出暂时不可用；", more });
@@ -113,7 +113,19 @@ it("卡片只折叠能断句的长段，分享仍发送全文和依据", async (
   expect(sent[0].content).toContain("展开");
   expect((await click(delivered.messageId!, "share")).toast.content).toBe("已发到群里");
   expect(sent.at(-1)!.content).toContain(text);
-  expect(sent.at(-1)!.content).toContain(outcome.evidence);
+  expect(sent.at(-1)!.content).not.toContain(outcome.evidence);
+  expect(sent.at(-1)!.content).not.toContain("依据");
+});
+
+it("背景和依据紧跟触发的消息，长段拆成一行一条", async () => {
+  const evidence = "案例页写明要用主体超管操作。手机号只是登录凭证；权限看账号在主体下的角色。缺 11:21 之前的对话，还不知道说的是哪个账号，需要往前读几条消息，确认那个手机号登录的是哪个账号、从哪个入口进的详情页。";
+  expect(evidenceLines(evidence).split("\n")).toHaveLength(4);
+  expect(evidenceLines("短依据。两句")).toBe("短依据。两句");
+  await ruleLook("ephemeral", { ...outcome, evidence });
+  const card = sent[0].content;
+  expect(card.indexOf("小王")).toBeLessThan(card.indexOf("背景和依据"));
+  expect(card.indexOf("背景和依据")).toBeLessThan(card.indexOf(outcome.text));
+  expect(card).toContain("- 案例页写明要用主体超管操作。");
 });
 
 it("在群里公开答复或情境照常跟进时没有接着查", async () => {

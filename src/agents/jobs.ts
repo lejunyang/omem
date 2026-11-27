@@ -488,6 +488,10 @@ async function runAgentTask(ctx: RunContext) {
       await sendLark({ replyTo: replyAt.messageId, inThread: replyAt.inThread !== false, bot: lark?.bot, runId: ctx.run.id }, { markdown: await resolveCitations(ctx.app, answer, { runId: ctx.run.id, chatId: replyAt.chatId }) });
     }
     else notify(ctx.app, { title: `${name}（规则「${rule.name}」）`, body: truncate(answer, 3000), runId: ctx.run.id, link: `#/runs/${ctx.run.id}`, agentInitiated: true });
+  } else if (threadId && !agentWorkId && ctx.run.parentId && !(ctx.run.input as { wake?: boolean }).wake) {
+    // A plain run_agent from an assistant turn: the report is material for that assistant, not a message (wakes.ts).
+    // The owner's own "/as name task" has no parent turn and still answers in the thread.
+    (await import("./wakes.ts")).returnChildReport(ctx.app, { id: ctx.run.id, parentId: ctx.run.parentId ?? null }, threadId, name, task, answer);
   } else if (threadId && !agentWorkId) await deliverToThread(ctx.app, threadId, `**${name}** 完成了「${truncate(task, 40)}」：\n\n${answer}`, { runId: ctx.run.id, agent: name, ...topLevel });
   return { answer, ai: r.ai, ...(r.sessionId ? { sessionId: r.sessionId } : {}) };
 }

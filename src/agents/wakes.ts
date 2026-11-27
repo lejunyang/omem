@@ -13,7 +13,11 @@ import { cancelRun, createRun, getRun, queuedInLane, registerHandler, updateQueu
  * session continues), or an agent profile gets a run with the note as its task.
  */
 export type WakeTarget = { conversationId?: string; spec?: string; resumeRunId?: string };
-export type WakeInput = { note: string; target: WakeTarget; setBy: { runId: string | null; agent: string }; setAt: string; skipIfOwnerSpoke?: boolean; onRunEnd?: { runId: string; purpose: string; expiresAt: string } };
+export type WakeInput = {
+  note: string; target: WakeTarget; setBy: { runId: string | null; agent: string }; setAt: string; skipIfOwnerSpoke?: boolean; onRunEnd?: { runId: string; purpose: string; expiresAt: string };
+  /** A run_agent report handed back to the conversation's assistant (returnChildReport): skipped when the turn that handed it out read it. */
+  childReport?: { runId: string; parentId: string | null };
+};
 
 export const MAX_PENDING = 5;
 export const MAX_DAYS = 7;
@@ -106,7 +110,7 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
   const target = w.target.conversationId && !situation ? { ...w.target, conversationId: homeFor(app, w.setBy.runId, w.target.conversationId, w.setAt) } : w.target;
   if (target.conversationId && w.skipIfOwnerSpoke && ownerSpokeSince(app, target.conversationId, w.setAt)) return { skipped: "本人之后已经说过话" };
   const stamp = (iso: string) => new Date(iso).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-  const body = `${w.setBy.agent} 在 ${stamp(w.setAt)} 设的唤醒，现在（${stamp(now())}）到了${trigger ? `；触发它的事件：${trigger}` : ""}。备注：${w.note}`;
+  const body = w.childReport ? w.note : `${w.setBy.agent} 在 ${stamp(w.setAt)} 设的唤醒，现在（${stamp(now())}）到了${trigger ? `；触发它的事件：${trigger}` : ""}。备注：${w.note}`;
   if (!target.spec) {
     const conversationId = target.conversationId!;
     if (!findThread(app, conversationId)) return { skipped: "会话已不存在" };
@@ -153,10 +157,45 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
   return { runId: r.id };
 }
 
+/**
+ * A plain run_agent (no own topic) finished: its report goes back to the assistant of the conversation
+ * it was handed out from, never straight to the chat — the full report of an investigation is material
+ * for a reply, not the reply. While the turn that handed it out is still going, this waits for that
+ * turn to end (it may be reading the report with read_run); then the assistant gets one turn with the
+ * report, unless that turn already read it after it was done.
+ */
+export function returnChildReport(app: App, child: { id: string; parentId: string | null }, conversationId: string, agent: string, task: string, answer: string) {
+  const parentId = child.parentId;
+  const parentLive = !!parentId && !!one(app.db, "select 1 from runs where id = ? and status in ('queued','running')", parentId);
+  const note = [
+    `${agent} 交回了「${truncate(task.replace(/\s+/g, " "), 60)}」的报告（运行 ${child.id}）。这是交给你的材料，本人和提问的人都还没看到。`,
+    "按报告给本会话写回复：给结论和要紧的依据，不复述它的过程，不整段转贴；交办它的那一轮已经说过的不重复。报告里没有新东西、或已经回答过了，调用 stay_quiet。",
+    "",
+    truncate(answer, 8000),
+    ...(answer.length > 8000 ? ["", `（报告较长，全文用 read_run ${child.id} 看）`] : []),
+  ].join("\n");
+  const w: WakeInput = {
+    note, target: { conversationId }, setBy: { runId: parentId, agent }, setAt: now(),
+    childReport: { runId: child.id, parentId },
+    ...(parentLive ? { onRunEnd: { runId: parentId!, purpose: `report:${child.id}`, expiresAt: new Date(Date.now() + 86400_000).toISOString() } } : {}),
+  };
+  return createRun(app, { kind: "wake", title: truncate(`交回报告：${agent}`, 80), input: w, parentId: child.id });
+}
+
+/** The turn that handed a run_agent out read its report (read_run, directly or through omem_call) after it was done. */
+function reportReadBy(app: App, parentId: string, childId: string) {
+  const done = one<{ finished_at: string | null }>(app.db, "select finished_at from runs where id = ?", childId)?.finished_at;
+  if (!done) return false;
+  return !!one(app.db, `select 1 from run_events where run_id = ? and type = 'tool' and at >= ? and instr(data, ?) > 0 and instr(data, 'read_run') > 0
+    and json_extract(data, '$.status') = 'completed' limit 1`, parentId, done, childId);
+}
+
 registerHandler("wake", async (ctx) => {
   const w = ctx.run.input as WakeInput;
+  if (w.childReport?.parentId && reportReadBy(ctx.app, w.childReport.parentId, w.childReport.runId))
+    return { quiet: true, summary: `没有唤醒：交办它的那一轮（${w.childReport.parentId}）已经读过这份报告` };
   const code = w.onRunEnd && one<{ id: string; status: string }>(ctx.app.db, "select id, status from runs where id = ? and finished_at <= ? and status in ('done','failed','cancelled')", w.onRunEnd.runId, w.onRunEnd.expiresAt);
-  const r = w.onRunEnd && !code ? { skipped: "等待编码轮次结束已到期" } : fireWake(ctx.app, w, code ? `编码轮次 ${code.id} 已结束（${code.status}）` : undefined);
+  const r = w.onRunEnd && !code ? { skipped: "等待编码轮次结束已到期" } : fireWake(ctx.app, w, code && !w.childReport ? `编码轮次 ${code.id} 已结束（${code.status}）` : undefined);
   // Bookkeeping: the turn it starts is listed on its own.
   return { quiet: true, summary: r.skipped ? `没有唤醒：${r.skipped}` : `已唤醒，运行 ${r.runId}`, runId: r.runId };
 });
