@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { answerAsk, listAsks } from "../src/agents/asks.ts";
 import { changeLongTask, confirmLongTaskBrief, getLongTask, longTaskInThread, saveLongTaskReport, startLongTask } from "../src/agents/long-tasks.ts";
+import { submitSupervisorReport } from "../src/agents/supervisor-report.ts";
 import { reportSchema } from "../src/agents/supervisor-schema.ts";
 import { createThread, getThread, resolveThread, setChatSettings, updateThread } from "../src/agents/threads.ts";
 import type { App } from "../src/core/app.ts";
@@ -69,6 +71,26 @@ describe("长任务存储和授权", () => {
     expect((await change({ action: "end" })).status).toBe("ended");
     expect(getItem(app, task.itemId).status).toBe("cancelled");
     await expect(change({ action: "resume" })).rejects.toThrow();
+  });
+
+  it("暂停后在首版确认卡上修改任务书和预算，继续时沿用确认值", async () => {
+    const app = setup(), task = startLongTask(app, input);
+    const round = one<{ id: string }>(app.db, "select id from runs where lane=?", "supervisor:" + task.id)!;
+    run(app.db, "update runs set status='running' where id=?", round.id);
+    const proposed = { doneWhen: ["两处入口通过"], scope: ["docs"], outOfScope: ["发布"] };
+    await submitSupervisorReport(app, round.id, { stage: "起草", status: "on-track", brief: proposed,
+      goalCheck: [], decisions: [], actions: [], askOwner: [], progress: { done: [], doing: [], next: [] } });
+    const [card] = listAsks(app, { conversationId: task.threadId, status: "pending" });
+    await changeLongTask(app, task.id, { action: "pause" });
+    const budget = { hours: 2, codeRounds: 1, dailyWakes: 3 };
+    const mustAsk = [...task.brief.mustAsk, "移除旧入口"];
+    await answerAsk(app, card.id, { by: task.userId, value: {
+      doneWhen: "验收通过", scope: "docs", outOfScope: "发布", constraints: "只改说明", mustAsk: mustAsk.join("\n"), ...budget,
+    } });
+    const confirmed = { brief: { ...proposed, doneWhen: ["验收通过"], constraints: ["只改说明"], mustAsk }, budget };
+    expect(getLongTask(app, task.id)).toMatchObject({ ...confirmed, confirmedAt: expect.any(String), status: "paused" });
+    expect(getItem(app, task.itemId).status).toBe("snoozed");
+    expect(await changeLongTask(app, task.id, { action: "resume" })).toMatchObject({ ...confirmed, status: "active" });
   });
 
   it("每轮报告写入同一次运行和事项时间线，完成跟随事项一起关闭", () => {

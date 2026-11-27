@@ -165,7 +165,7 @@ function proposeBrief(app: App, task: LongTask, runId: string, proposed: Proposa
   const fields: UiField[] = entries.map(([key, values]) => ({
     type: "textarea", id: key, label: briefLabels[key], default: values.join("\n"), required: key === "doneWhen",
   }));
-  if (task.status === "draft") {
+  if (!task.confirmedAt) {
     fields.push({ type: "textarea", id: "mustAsk", label: "必须问本人的事", default: task.brief.mustAsk.join("\n"), required: true });
     if (!proposed.constraints) fields.push({ type: "textarea", id: "constraints", label: "约束", default: task.brief.constraints.join("\n"), required: false });
     fields.push({ type: "number", id: "hours", label: "总时长（小时）", required: true, min: 0.01, default: task.budget.hours },
@@ -188,7 +188,7 @@ registerAskHandler("supervisor-brief", async (app, ask, context) => {
     [key, String(ask.value?.[key] ?? "").split("\n").map(s => s.trim()).filter(Boolean)]));
   withinTx(app.db, () => {
     let budget: LongTask["budget"] | undefined;
-    if (task.status === "draft") {
+    if (!task.confirmedAt) {
       budget = { hours: Number(ask.value?.hours), codeRounds: Number(ask.value?.codeRounds), dailyWakes: Number(ask.value?.dailyWakes) };
       for (const key of ["constraints", "mustAsk"]) changes[key] = String(ask.value?.[key] ?? "").split("\n").map(s => s.trim()).filter(Boolean);
     }
