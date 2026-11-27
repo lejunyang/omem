@@ -5,9 +5,13 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 登录目录重合的凭据插件可注册（2026-11-28）
+
+从 `src/agents/credential-registry.ts` 读起。注册接受后端与命令的状态目录相同或互为父子。启用沙箱时，执行器按命令声明挂载状态，Agent 与本地后端共用的文件视图仍遮住命令登录。
+
 ## 按运行类型分批启用沙箱，分开后端与命令登录（2026-11-28）
 
-从 `src/agents/own-run.ts` 读起。非空的 `includeKinds` 只隔离列出的本人运行，`excludeKinds` 优先。飞书 CLI 在执行器里使用本账号的登录，常见浏览器资料加入默认隐藏清单。凭据插件需要为后端与命令分别供给状态，借用回声后端的例子见 `examples/plugins/acmeauth`。
+从 `src/agents/own-run.ts` 读起。非空的 `includeKinds` 只隔离列出的本人运行，`excludeKinds` 优先。飞书 CLI 在执行器里使用本账号的登录，常见浏览器资料加入默认隐藏清单。凭据插件分别供给后端与命令状态的例子见 `examples/plugins/acmeauth`。
 
 ## Git 远端与子模块更新使用本身份的登录（2026-11-28）
 

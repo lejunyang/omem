@@ -42,10 +42,13 @@ it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取
   const file = join(bin, "samplecli");
   writeFileSync(file, '#!/bin/sh\ncat "$HOME/.fixture/value" || exit 2\nprintf "\\n"\nif test "$1" = hold; then sleep 2; touch late; exit; fi\nread line\nprintf "%s" "$line" >&2\nexit 17\n', { mode: 0o755 });
   vi.stubEnv("HOME", home); vi.stubEnv("OMEM_DESKTOP_TOOLS", "off"); vi.stubEnv("PATH", bin + ":" + process.env.PATH);
-  const unregister = registerCredential("fixture", { id: "sample", name: "示例", login: async () => ({ user: "example" }), provides: { commands: [{ name: "samplecli", state: [".fixture"] }] } });
+  const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh",
+    account: { dirs: [".fixture", ".backend"], owns: [".fixture", ".backend"] } });
+  app.config.agents.profiles = [profile];
+  const unregister = registerCredential("fixture", { id: "sample", name: "示例", login: async () => ({ user: "example" }),
+    provides: { backends: [profile.id], commands: [{ name: "samplecli", state: [".fixture"] }] } }, undefined, app);
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
   app.config.agents.ownSandbox.mode = "require";
-  const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
   if (proxy) app.config.security.egress.mode = "all-sandboxed";
   const runId = createRun(app, { kind: "code", title: "示例" }).id;
   const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: "personal", runId, profile, cwd });
@@ -54,7 +57,7 @@ it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取
       launch("/bin/sh", ["-ec", command], { cwd, ownSandbox, env: prep.mcp.env }));
   }
   try {
-    const child = await invoke('test ! -e "$HOME/.fixture/value"; exec samplecli');
+    const child = await invoke('echo active > "$HOME/.backend/session"; test ! -e "$HOME/.fixture/value"; exec samplecli');
     let stderr = "";
     child.stderr.on("data", chunk => stderr += chunk);
     const closed = once(child, "close");
@@ -63,6 +66,7 @@ it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取
     child.stdin.end("from stdin\n");
     expect((await closed)[0]).toBe(17);
     expect(stderr).toBe("from stdin");
+    expect(readFileSync(join(home, ".backend/session"), "utf8")).toBe("active\n");
     const interrupted = await invoke('exec samplecli hold');
     const exit = once(interrupted, "close");
     await Promise.race([once(interrupted.stdout, "data"), exit.then(() => { throw new Error("未进入执行器"); })]);

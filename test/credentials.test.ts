@@ -372,12 +372,17 @@ posixIt("同种凭据从 A 改供 B，旧文件仍按持有退出，新后端要
   } finally { await server.close(); }
 });
 
-it.skipIf(process.platform !== "linux")("Linux 凭据插件须为后端与命令分别供给登录状态", () => {
+posixIt.each([".example", ".example/backend", ".example/backend/login"])("沙箱关闭时仍可注册并供给重合的凭据目录 %s", async path => {
   const profile = agentProfileSchema.parse({ id: "demo", transport: "acp", command: "fixture", account: { owns: [".example/backend"] } });
   app.config.agents.profiles = [profile];
-  for (const path of [".example", ".example/backend", ".example/backend/login"]) {
-    expect(() => add({ provides: { backends: ["demo"], commands: [{ name: "example-cli", state: [path] }] } })).toThrow(/后端 demo.*与命令登录目录重叠/);
-  }
+  app.config.agents.ownSandbox.mode = "off";
+  add({ provides: { backends: ["demo"], commands: [{ name: "example-cli", state: [path] }] },
+    async provide(ctx) { writeFileSync(join(ctx.home, path, "session"), "demo"); },
+  });
+  await startCredentialLogin(app, "ann", "sample:sso");
+  await until(() => loggedIn(app, "ann", "demo"));
+  expect(readFileSync(join(accountHome(app, "ann"), path, "session"), "utf8")).toBe("demo");
+  expect(selectedCredential(withAccount(app, "ann", profile))?.holder).toBe("ann");
 });
 
 it("登录排队时按该次请求拦截退出，即使插件再次重新登记", async () => {
