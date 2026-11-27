@@ -203,6 +203,22 @@ function confirm(app: App, root: Run, d: Design, note = "") {
 }
 
 function askOwner(app: App, root: Run, d: Design, chain: CodeChain | null, note: string): Ask {
+  return createAsk(app, {
+    runId: root.id,
+    conversationId: chain ? reportConversation(app, chain) : null,
+    userId: runUser(app, root.id),
+    ...designConfirmation(app, d, root.title, note),
+    context: { handler: "design-confirm", designId: d.id, rootId: root.id },
+  });
+}
+
+/**
+ * What the owner is asked when a design is written: the question as text (for agents and plain-text
+ * channels), the card's layout, and the answers (a form when some decisions are the owner's to make).
+ * Pure, so scripts/card-preview.ts draws the real card.
+ */
+export function designConfirmation(app: App, d: Pick<Design, "id" | "revision" | "body">, title: string, note: string): { question: string; ui: AskUi; options?: { label: string }[]; allowText?: boolean } {
+  const root = { title };
   const questions = d.body.decisions.filter((x) => x.question && !x.question.answer);
   const lines = d.body.decisions.map((x) => `- ${x.id} [${KIND_LABELS[x.kind]}] ${x.title}${x.question && !x.question.answer ? "（要你定）" : ""}`);
   const question = [
@@ -240,14 +256,7 @@ function askOwner(app: App, root: Run, d: Design, chain: CodeChain | null, note:
     ],
     ...(/^https?:/.test(full) ? { links: [{ text: "看方案全文", url: full }] } : {}),
   };
-  return createAsk(app, {
-    runId: root.id,
-    conversationId: chain ? reportConversation(app, chain) : null,
-    userId: runUser(app, root.id),
-    question,
-    ...(fields ? { ui: { ...display, fields, submitLabel: "提交" } } : { ui: display, options: ACTIONS.map((a) => ({ label: a.label })), allowText: true }),
-    context: { handler: "design-confirm", designId: d.id, rootId: root.id },
-  });
+  return { question, ...(fields ? { ui: { ...display, fields, submitLabel: "提交" } } : { ui: display, options: ACTIONS.map((a) => ({ label: a.label })), allowText: true }) };
 }
 
 /** The assistant that delegated confirms (settle_design), in the conversation the work reports to. */

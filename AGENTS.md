@@ -59,6 +59,7 @@
 - 列表和长文本可能很大：超过几百行的用 `components/VirtualList`（动态行高，跟随最近的滚动容器）；加载中用 `components/Skeleton`，不要让“加载中”看起来像“没有数据”。
 - 不用原生 select / checkbox / radio / datetime-local / confirm / prompt：用 `components/UiSelect`、`UiCheckbox`（含 switch）、`UiSegmented`、`UiDateTime` 和 `lib/dialog` 的 `confirmDialog` / `promptDialog`。
 - 改界面后用 `node scripts/screens.ts <url> <dir>` 截 1440 与 390 宽度检查（对着 `node scripts/doc-screens.ts --serve` 的演示数据，`ROUTES` 指定页面）：它会列出超出视口、伸出自己的框、被裁掉又不是省略号的元素（选择器路径和像素），有就失败；`OVERFLOW_REPORT_ONLY=1` 只报告。长内容按 `omem-design` 的三种办法处理：换行、折叠、省略。
+- 改飞书卡片（`buildCard`、`lark-ui.ts`、`lark-asks.ts` 的版式）后用 `node scripts/card-preview.ts [目录]` 看：用真实的卡片代码生成样例，按电脑和手机宽度截图（open-feishu-card 画，和客户端的差别写在脚本开头）；文档站的卡片截图（`lark-card-*`）用 `--site` 重画。
 
 ## 运行与依赖
 
