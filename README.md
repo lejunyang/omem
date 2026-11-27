@@ -406,6 +406,7 @@ npm install -g @omem-ai/cli
 /space <id>  /agent <后端>  /as <档案> [任务]   切空间 / 换后端 / 让某个 Agent 档案接管或做一件事
 /codex astra xhigh         切换本会话的 AI；加“帮我查一下”只给这一轮用，也可换行写任务
 /强                        选择“强”组当前可用的 AI；自建组可用组名或 id
+/谷歌                      若后端的 aliases 配了“谷歌”，用这个词选择它
 /ai off                    清除本会话选择；/ai save codex astra xhigh 保存默认
 /model [模型] [effort=low|medium|high]   本会话临时换模型或思考强度；off 恢复；成员用 /agent save 或 /model save 保存个人默认
 /agents  /skills  /approve agent|skill <名称>

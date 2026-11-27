@@ -7,13 +7,14 @@ import { getRun } from "../src/agents/runs.ts";
 import { saveProbe } from "../src/agents/probe.ts";
 import { createThread, getThread, updateThread } from "../src/agents/threads.ts";
 import { createUser } from "../src/core/users.ts";
+import { savePeers } from "../src/core/peers.ts";
 import { memberAi } from "../src/agents/member-ai.ts";
 import { takeSteering } from "../src/agents/steer.ts";
 import { testApp } from "./helpers.ts";
 
 vi.mock("../src/agents/availability.ts", async load => ({
   ...await load<typeof import("../src/agents/availability.ts")>(),
-  backendAvailable: (p: { command: string; id: string }) => p.command === process.execPath || p.id === "codex@ark",
+  backendAvailable: (p: { command: string; id: string }) => p.command === process.execPath || p.command === "sample/bin/agy.cmd" || p.id === "codex@ark",
 }));
 
 let app: ReturnType<typeof testApp>;
@@ -119,6 +120,8 @@ it("组名和后端名同样检查成员账号", () => {
     expect(pick.ai).toBeUndefined();
     expect(pick.unknown).toBeTruthy();
   }
+  app.config.agents.groups.find(g => g.id === "strong")!.items.push({ profile: "claude" });
+  expect(parseAiSpec(app, "/强", { userId: "member" }).ai?.profile).toBe("claude");
 });
 it("访客和材料不能替本人点名；话题只修改新话题", async () => {
   const guest = await receive(app, { conversationId, asker: "访客", text: "/claude opus5.5" });
@@ -140,3 +143,46 @@ it("保存校验覆盖省略的模型和强度，实际保存的组合与校验�
   expect((await send("/model save new")).reply).toContain("不用 ai:codex · new · high");
   expect(app.config.agents.roleModels.assistant.codex.model).toBe("allowed");
 });
+
+it("自定义编号按启动命令文件名、目录程序和中文别名解析；不可用时返回安装说明", async () => {
+  const p = app.config.agents.profiles.find(p => p.id === "antigravity")!;
+  Object.assign(p, { id: "antigravity-acp", name: "写作后端", command: "sample/bin/agy.cmd", aliases: ["谷歌"] });
+  for (const token of ["agy", "antigravity", "gemini", "谷歌", "写作后端"]) {
+    expect(parseAiSpec(app, "/" + token).ai?.profile).toBe(p.id);
+  }
+  p.command = "unavailable";
+  p.source = "antigravity";
+  const result = await send("/谷歌");
+  expect(result.reply).toMatch(/没装或现在不可用.*agy acp --login/);
+  expect(result.runId).toBeFalsy();
+});
+
+it("本机和设备同用 Claude 时给出其他入口，并可按设备名限定", () => {
+  const p = app.config.agents.profiles.find(p => p.id === "claude")!;
+  app.config.agents.profiles.push({ ...p, id: "remote-writer", peer: { id: "device-a", agent: "claude" } });
+  savePeers(app, [{ id: "device-a", url: "https://example.test", addedAt: "2026-01-01", token: "", back: { token: "", since: "2026-01-01", name: "设备甲" } }]);
+  expect(parseAiSpec(app, "/claude")).toMatchObject({ ai: { profile: "claude" }, notes: [expect.stringContaining("/claude 设备甲")] });
+  for (const word of ["设备甲", "device-a"]) expect(parseAiSpec(app, "/claude " + word).ai?.profile).toBe("remote-writer");
+});
+
+it("设置保存别名和组名时检查命令、组与其他后端，拒绝后仍保留上次配置", async () => {
+  const { startServer } = await import("../src/server/http.ts");
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const setAlias = (alias: string) => server.inject({ method: "PUT", url: "/api/settings", payload: { agents: {
+      profiles: app.config.agents.profiles.map(p => p.id === "antigravity" ? { ...p, aliases: [alias] } : p) } } });
+    expect((await setAlias("谷歌")).statusCode).toBe(200);
+    for (const [name, conflict] of [["help", "命令 /help"], ["强", "组 strong"], ["CC", "后端 claude"]]) {
+      const res = await setAlias(name);
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain(conflict);
+    }
+    for (const name of ["谷歌", "agy", "help"]) {
+      const res = await server.inject({ method: "PUT", url: "/api/ai/groups",
+        payload: [...app.config.agents.groups, { id: "new-group", name, items: [] }] });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain("重名");
+    }
+    expect(parseAiSpec(app, "/谷歌").ai?.profile).toBe("antigravity");
+  } finally { await server.close(); }
+}, 60000);

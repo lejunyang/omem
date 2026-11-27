@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-27
 ---
 
+## 用后端别名或设备名换 AI（2026-11-27）
+
+从 `src/agents/ai-spec.ts` 读起。命令与规则共用程序识别；后端配置的 `aliases` 可增加中文命令，保存组和后端设置时检查重名。同程序的本机登录优先，可按提示指定 key 或设备。
+
 ## 自定义后端按实际程序匹配规则（2026-11-27）
 
 `src/agents/backend-names.ts` 统一识别本地、密钥和远端后端的程序。后端换了编号仍受同一条规则约束；没有给出型号时，只对 Codex、Claude、Gemini 和 Antigravity 采用已知的默认模型族。

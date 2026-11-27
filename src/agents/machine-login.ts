@@ -52,6 +52,10 @@ function startCli(app: App, entry: AccountEntry, args: string[], backend: string
   return launch(cliOf(entry), args, { cwd: slot?.loginDir ?? app.home, env: { ...slot?.env, ...entry.account.cliEnv } });
 }
 
+export function cachedMachineLoginState(app: App, backend: string): MachineLogin["state"] {
+  return known.get(key(app, backend))?.state ?? "unknown";
+}
+
 export function machineLogin(app: App, backend: string): MachineLogin {
   const e = entryOf(app, backend);
   const p = pending.get(key(app, backend));

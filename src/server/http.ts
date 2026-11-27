@@ -3741,6 +3741,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       ...(visible("security") && { approvalTools: toolList().map(t => ({ name: t.name, description: t.description, always: toolAlwaysApproves(t.name) })) }),
     };
   });
+  const { validateCommandNames } = await import("../agents/ai-spec.ts");
+  const { commandNames } = await import("../agents/commands.ts");
   server.put("/api/settings", async (req, reply) => {
     const zone = (req.body as { timezone?: unknown } | null)?.timezone;
     if (zone !== undefined && !validZone(zone)) throw new HttpError(400, `不认识的时区：${String(zone)}（填 IANA 名称，如 Asia/Shanghai、UTC）`);
@@ -3771,6 +3773,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     next.agents.networkPolicies = app.config.agents.networkPolicies;
     const save = prepareConfigSave(next, app.home);
     const candidate = save.candidate;
+    if (proposed.ai?.some(path => ["agents.groups", "agents.profiles", "ai.providers", "ai"].includes(path))) validateCommandNames(candidate, app.home, commandNames);
     if (proposed.ai?.some(path => path === "agents.groups" || path === "agents.policy")) validatePolicy({ config: candidate }, candidate.agents.policy);
     // Which cloud backends may call tools over HTTP is the owner's, signed in as themselves (not a request trusted only for coming from this machine).
     if (JSON.stringify(candidate.agents.cloudTools) !== JSON.stringify(app.config.agents.cloudTools) && (who(req) !== OWNER || authOf(req)?.via === "local"))
@@ -3862,6 +3865,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     }
     const save = prepareConfigSave(next, app.home);
     validatePolicy({ config: save.candidate }, save.candidate.agents.policy);
+    if (field === "groups") validateCommandNames(save.candidate, app.home, commandNames);
     save.write();
     Object.assign(app.config, save.candidate);
     audit(app, who(req), "settings.update", "settings", { changes: { ai: ["agents." + field] } });

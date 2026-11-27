@@ -20,3 +20,13 @@ export function backendProgram(p: ProgramProfile): string {
 export const defaultModelFamilies: Readonly<Record<string, string>> = {
   antigravity: "google", gemini: "google", claude: "anthropic", codex: "openai",
 };
+
+/** The same names are offered as commands and reserved when settings are saved. */
+export function automaticNames(p: AgentProfile, device?: string) {
+  const program = backendProgram(p);
+  const command = commandName(p.command);
+  const catalogId = acpCatalog.find(e => commandName(e.command) === command)?.id;
+  const names = [p.id, p.name, program, catalogId, command, p.source, p.peer?.agent, p.peer?.id, device,
+    ...Object.keys(commonBackendAliases).filter(k => commonBackendAliases[k] === program)];
+  return [...new Set(names.filter((value): value is string => !!value).map(value => value.toLowerCase()))];
+}

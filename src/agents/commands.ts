@@ -55,9 +55,9 @@ const commands: Record<string, Command> = {
     help: "列出命令",
     run: ({ args }) => args.toLowerCase() !== "all" ? [
       line("topic"), "/<后端> [模型] [强度] [任务] — 换 AI，带任务只用一轮；也可用组名",
-      "/监工 — 长任务监工", line("stop"), line("new"), "完整清单见 /help all。",
+      "/监工 — 长任务监工", line("stop"), line("new"), "后端名、启动命令名、你加的别名都能当命令。完整清单见 /help all。",
     ].join("\n") : [
-        "/<后端或组名> [模型] [强度] [任务] — 换 AI",
+        "/<后端或组名> [模型] [强度] [任务] — 换 AI。后端名、启动命令名、你加的别名都能当命令。",
         "**会话**",
         ...["new", "topic", "status", "stop", "sessions", "resume", "link", "summary", "compact"].map(line),
         "",

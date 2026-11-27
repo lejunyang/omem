@@ -138,6 +138,7 @@ export const accountSpecSchema = z
 
 export const agentProfileSchema = z.object({
   id: z.string().min(1),
+  aliases: z.array(z.string().trim().min(1).max(120).regex(/^[^/\s]+$/, "命令别名须是一个不带斜杠的词")).max(100).optional(),
   name: z.string().optional(),
   /**
    * acp: Agent Client Protocol over stdio. claude-cli / codex-cli: one-shot fallbacks. doubao: Doubao OpenAPI (cloud, no omem tools).
@@ -1839,7 +1840,7 @@ export function keyedProfiles(config: Config): AgentProfile[] {
         if (!relayed) env.OMEM_AI_BASE_URL = at.url;
         env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ model: `omem-key/${name}`, provider: { "omem-key": { npm, name: pr.name || pr.id, options: { baseURL, apiKey: "{env:OMEM_AI_KEY}" }, models: { [name]: {} } } } });
       }
-      out.push({ ...base, id: `${b}@${pr.id}`, name: label, args, model: profileModel, effort: saved?.effort ?? base.effort, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, ...(relayed ? { keyRelay: true } : {}), ...(keyModels ? { keyModels } : {}), source: `key:${pr.id}` });
+      out.push({ ...base, id: `${b}@${pr.id}`, name: label, aliases: saved?.aliases, args, model: profileModel, effort: saved?.effort ?? base.effort, env: { ...base.env, ...env }, keyRef: pr.id, keyVars, ...(relayed ? { keyRelay: true } : {}), ...(keyModels ? { keyModels } : {}), source: `key:${pr.id}` });
     }
   }
   return out;

@@ -71,9 +71,9 @@ export function profilesFor(app: App, items: AiGroup["items"], profiles: AgentPr
     return [{ p, item, available, rank: available ? Number(delayed) : 2 }];
   }).sort((a, b) => a.rank - b.rank);
 }
-export function groupPick(app: App, id: string, scope?: PolicyScope, includeUnavailable = false): PickAI | undefined {
+export function groupPick(app: App, id: string, scope?: PolicyScope, includeUnavailable = false, accepts?: (profile: AgentProfile) => boolean): PickAI | undefined {
   const group = app.config.agents.groups.find(g => g.name === id || g.id === id);
-  const found = profilesFor(app, groupItems(app, group?.id ?? id), allProfiles(app.config)).find(x => (x.available || includeUnavailable) && !policyReason(scope, x.p));
+  const found = profilesFor(app, groupItems(app, group?.id ?? id), allProfiles(app.config)).find(x => (x.available || includeUnavailable) && !policyReason(scope, x.p) && (!accepts || accepts(x.p)));
   return found && pickOf(found.p);
 }
 export type PolicyScope = {
