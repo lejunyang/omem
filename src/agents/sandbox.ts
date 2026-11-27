@@ -151,11 +151,11 @@ export function bwrapArgs(plan: SandboxPlan, snapshotSources?: Set<string>): str
   const credentials = [...new Set(plan.masked)].filter(path => !plan.masked?.some(parent => parent !== path && inside(path, parent)));
   const snapshots = new Map<string, "ro" | "rw">();
   const snapshotLinks: string[] = [];
-  if (!plan.minimalRoot) for (const path of credentials) {
+  for (const path of credentials) {
     let parent = dirname(path);
     while (!existsSync(parent)) parent = dirname(parent);
     const mount = [...ops.values()].filter(op => inside(parent, op.path)).sort((a, b) => b.path.length - a.path.length)[0];
-    if (mount ? mount.kind !== "ro" && mount.kind !== "rw" : plan.network) continue;
+    if (mount ? mount.kind !== "ro" && mount.kind !== "rw" : plan.network || plan.minimalRoot) continue;
     if (parent === "/") throw new Error("根目录下的隐藏登录路径需要已存在的父目录");
     snapshots.set(parent, mount?.kind === "rw" ? "rw" : "ro");
   }

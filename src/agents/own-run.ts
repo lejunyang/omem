@@ -55,7 +55,7 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   const home = canonical(homedir());
   const data = canonical(app.home);
   const { dirs, existing, mounts } = backendState(profile);
-  const config = normalizeSandbox({ ...settings, writable: [...settings.writable, ...existing] }, home, data);
+  const config = normalizeSandbox(settings, home, data);
   const declared = credentialStatePaths(app);
   // The existing lending executor works in a host-created empty directory and receives only this declaration.
   const grant = (context.credentialState ?? []).map(rel => canonical(join(home, rel))).filter(path => declared.includes(path));
@@ -78,7 +78,7 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   const isolatedNetwork = !!profile && egressRequested(app.config, profile, true);
   const dependencies = join(omemInstallDir(), "node_modules");
   if (isolatedNetwork && existsSync(dependencies)) runtime.push(canonical(dependencies));
-  const box = { home, data, masked, isolatedNetwork, state: checked.writable, writable: config.writable, hidden: config.hidden, runtime,
+  const box = { home, data, masked, isolatedNetwork, state: checked.writable, stateFiles: normalizeSandbox({ ...settings, writable: existing }, home, data).writable, writable: config.writable, hidden: config.hidden, runtime,
     artifactDir: runId ? join(data, "artifacts", "inbox", runId) : undefined,
     runDir: runId ? join(canonical(app.runsDir), runId, "scratch") : undefined,
     readOnly, snapshot: runId ? join(canonical(app.runsDir), runId, "snap") : undefined,

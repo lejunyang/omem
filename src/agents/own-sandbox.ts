@@ -53,7 +53,7 @@ export const cachePaths = [
 ];
 
 export type OwnMountConfig = {
-  data: string; home: string; state: string[]; writable: string[]; hidden: string[];
+  data: string; home: string; state: string[]; stateFiles?: string[]; writable: string[]; hidden: string[];
   isolatedNetwork?: boolean; network?: SandboxNetwork; masked?: string[]; runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
 };
 type Program = { file: string; prefix: string[] };
@@ -70,17 +70,20 @@ export function selectOwnSandbox(mode: Settings["mode"], local: boolean, memberA
 }
 
 /** Inputs are host-selected canonical paths. Extra hidden directories take precedence over every grant. */
-export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: WorkspaceMounts, artifacts?: string, program?: Program | null): WorkspaceMounts & { hide: string[]; masked?: string[] } {
+export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: WorkspaceMounts, artifacts?: string, program?: Program | null): WorkspaceMounts & { hide: string[]; masked?: string[]; work: WorkspaceMounts } {
   const hide = [box.data, ...box.hidden, "/tmp"];
   const ro = [...(workspace?.ro ?? [])];
-  const rw = [...box.state, ...box.writable];
-  if (box.runDir) rw.push(box.runDir);
-  if (artifacts && canonical(artifacts) === box.artifactDir) rw.push(box.artifactDir);
-  if (workspace) rw.push(...workspace.rw);
+  const workRw = [...box.writable];
+  if (box.runDir) workRw.push(box.runDir);
+  if (artifacts && canonical(artifacts) === box.artifactDir) workRw.push(box.artifactDir);
+  if (workspace) workRw.push(...workspace.rw);
   if (!workspace || box.snapshot && under(cwd, box.snapshot)) {
-    const dest = box.readOnly && !(box.snapshot && under(cwd, box.snapshot)) ? ro : rw;
+    const dest = box.readOnly && !(box.snapshot && under(cwd, box.snapshot)) ? ro : workRw;
     if (cwd !== box.data) dest.push(cwd);
   }
+  const state = [...box.state, ...(box.stateFiles ?? [])];
+  const rw = [...state, ...workRw];
+  const roots = [...ro, ...workRw].filter(path => ![box.data, box.home, "/tmp"].some(dir => under(dir, path)));
   const protectedPaths = [...box.hidden, ...(box.masked ?? [])];
   const visible = (path: string) => !protectedPaths.some(h => under(path, h));
   const executable = program && canonical(program.file);
@@ -91,12 +94,15 @@ export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: Workspac
   // /tmp itself is private tmpfs, including when it is the working directory.
   const bindable = (path: string) => path !== "/tmp" && visible(path);
   const readOnly = ro.filter(bindable);
-  return { hide, masked: box.masked, ro: readOnly, rw: [...new Set(rw)].filter(p => bindable(p) && !readOnly.some(r => under(p, r))),
-    links: [
-      ...(workspace?.links ?? []).filter(link => visible(link.path) && visible(link.target)),
-      ...(box.isolatedNetwork && homedir() !== box.home ? [{ path: homedir(), target: box.home }] : []),
-    ],
-    pointers: workspace?.pointers?.filter(pointer => visible(pointer.path)) };
+  const writable = [...new Set(rw)].filter(p => bindable(p) && !readOnly.some(r => under(p, r)));
+  const links = (workspace?.links ?? []).filter(link => visible(link.path) && visible(link.target));
+  const pointers = workspace?.pointers?.filter(pointer => visible(pointer.path));
+  const workRoots = roots.filter(path => bindable(path) && !state.some(dir => under(path, dir)));
+  const shared = (path: string) => workRoots.some(root => under(path, root)) && !state.some(dir => under(path, dir));
+  const sharedRo = [...readOnly.filter(shared), ...workRoots.filter(path => readOnly.some(root => under(path, root)))];
+  const work = { rw: writable.filter(shared), ro: [...new Set(sharedRo)], links, pointers };
+  return { hide, masked: box.masked, ro: readOnly, rw: writable, work, pointers,
+    links: box.isolatedNetwork && homedir() !== box.home ? [...links, { path: homedir(), target: box.home }] : links };
 }
 
 export function ownSandboxEnv(base: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv, secretEnv: string[]) {

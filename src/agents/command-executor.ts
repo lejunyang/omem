@@ -91,7 +91,8 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
   if (git) env.GIT_TERMINAL_PROMPT = "0";
   // The root is empty outside the explicit mounts. A login's parent need not be masked
   // if the only visible directory inside it is the selected login itself.
-  const masked = [...(scope.own?.hidden ?? []), ...(scope.own?.masked ?? []).filter(path =>
+  const privatePaths = [...(scope.own?.masked ?? []), ...(scope.own?.state ?? []), ...(scope.own?.stateFiles ?? [])];
+  const masked = [...(scope.own?.hidden ?? []), ...privatePaths.filter(path =>
     !granted.has(path) && [...ro, ...rw].some(root => under(path, root)))];
   const links = [...(scope.workspace.links ?? [])];
   if (user === OWNER && home !== homedir() && !links.some(link => link.path === homedir()))

@@ -325,6 +325,8 @@
 
 18. 临时 HOME 的 `~/.npmrc` 分别写入纯源设置、源设置带模拟认证行；在沙箱里核对源、作用域、代理、CA 设置和换行保留，认证行被移除，文件只读。宿主原文件保持原样。
 
+19. 在可写清单中添加一个含模拟仓库的额外目录。从该仓库运行 `git fetch`，再从启动目录运行 `git -C <仓库> fetch`。两次都能更新仓库，执行器内看不到同级被隐藏的文件和后端状态。
+
 自动验证见 `test/command-executor.test.ts`、`test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 插件凭据第三期

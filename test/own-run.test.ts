@@ -184,6 +184,36 @@ it.skipIf(process.platform !== "linux")("reports exactly the writable plan used 
   }
 });
 
+const support = sandboxSupport();
+it.skipIf(!support.ok)("获准的 Git 命令能从额外目录启动，也能通过 -C 访问它 " + (support.reason ?? ""), async () => {
+  const app = testApp();
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "command-work-")));
+  const home = join(root, "home"), cwd = join(root, "work"), bin = join(root, "bin");
+  const extra = join(home, "extra"), repo = join(extra, "repo"), hidden = join(extra, "hidden"), state = join(extra, "state");
+  for (const path of [cwd, bin, repo, hidden, state]) mkdirSync(path, { recursive: true });
+  for (const path of [hidden, state]) writeFileSync(join(path, "private"), "fixture");
+  writeFileSync(join(repo, "marker"), "work");
+  writeFileSync(join(bin, "git"), '#!/bin/sh\nif test "$1" = -C; then cd "$2" || exit 2; fi\ntest -f marker && test ! -e ../hidden/private && test ! -e ../state/private && echo approved >> result\n', { mode: 0o755 });
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("PATH", bin + ":" + process.env.PATH);
+  vi.stubEnv("CODEX_HOME", state);
+  app.config.agents.ownSandbox = { mode: "require", writable: [extra], hidden: [hidden] };
+  const profile = agentProfileSchema.parse({ id: "codex", command: "/bin/sh", transport: "acp" });
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
+  const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: "personal", runId: null, profile, cwd });
+  try {
+    const child = launch("/bin/sh", ["-ec", '(cd "$1" && git fetch); git -C "$1" fetch', "sh", repo],
+      { cwd, ownSandbox: prep.isolation.box, env: prep.mcp.env });
+    let err = "";
+    child.stderr.on("data", chunk => err += chunk);
+    expect((await once(child, "close"))[0], err).toBe(0);
+    expect(readFileSync(join(repo, "result"), "utf8")).toBe("approved\napproved\n");
+  } finally {
+    revokeToolToken(prep.token); await server.close(); app.db.close();
+    rmSync(app.home, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private while mounting an allowed child", async () => {
   const app = testApp();
   const home = mkdtempSync(join(tmpdir(), "tmp-cwd-"));
