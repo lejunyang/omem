@@ -1,5 +1,5 @@
 import { groupsSchema, policySchema } from "../core/ai-policy-schema.ts";
-import { policyUsage, validatePolicy } from "../agents/ai-policy.ts";
+import { policyBackends, policyUsage, validatePolicy } from "../agents/ai-policy.ts";
 import { classIds, runClasses } from "../agents/run-classes.ts";
 import { embeddingId, modelChange, replaceIndex, retainedIndexPreview } from "../search/embedding-index.ts";
 import { testEmbedding, resumeEmbedding } from "../search/embeddings.ts";
@@ -3853,7 +3853,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return aiView();
   });
   server.get("/api/ai/policy", async () => ({
-    classes: Object.fromEntries(classIds.map(id => [id, { ...runClasses[id], order: app.config.agents.policy.classes[id]?.order ?? (id === "coding" || id === "review" ? "fixed" : "choose") }])), groups: app.config.agents.groups, policy: app.config.agents.policy, usage: policyUsage(app),
+    classes: Object.fromEntries(classIds.map(id => [id, { ...runClasses[id], order: app.config.agents.policy.classes[id]?.order ?? (id === "coding" || id === "review" ? "fixed" : "choose") }])), groups: app.config.agents.groups, policy: app.config.agents.policy, usage: policyUsage(app), backends: policyBackends(app),
   }));
   const putAiSettings = (field: "groups" | "policy", req: FastifyRequest) => {
     const next = structuredClone(app.config);

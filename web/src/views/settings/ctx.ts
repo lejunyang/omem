@@ -21,6 +21,9 @@ export type ModelSource = { via: "local" | "osdk" | "hub"; path?: string; syncin
 /** `rerank` of `GET /api/settings` (src/search/rerank.ts `rerankStatus`); for a cloud API `state` and `error` are its last call's. */
 export type RerankStatus = { enabled: boolean; model: string | null; state: "idle" | "loading" | "ready" | "failed"; error: string; calls: number; timeouts: number; lastMs: number; source?: ModelSource | null; provider?: string | null; kind?: string; lastError?: string | null };
 
+/** What `PUT /api/settings` answers: the configuration, what waits for a restart, a warning about the routing guidance. */
+export type SaveResult = { config: any; restart?: string[]; guidanceWarning?: string };
+
 export type SettingsCtx = {
   config: Ref<any>;
   profiles: Ref<Profile[]>;
@@ -33,7 +36,8 @@ export type SettingsCtx = {
   loadSections: () => Promise<void>;
   /** The owner's display name, for “只有 ×× 能改” (`ownerName` in `/api/me`, lib/owner-name.ts). */
   ownerName: Readonly<Ref<string>>;
-  saveConfig: (partial: Record<string, unknown>, note?: string) => Promise<void>;
+  /** The server's answer (null when refused, already said in a toast): `guidanceWarning` and the like ride on it. */
+  saveConfig: (partial: Record<string, unknown>, note?: string) => Promise<SaveResult | null>;
 };
 
 const KEY: InjectionKey<SettingsCtx> = Symbol("settings");
@@ -63,12 +67,14 @@ export function provideSettings(): SettingsCtx {
   }
   async function saveConfig(partial: Record<string, unknown>, note = "已保存") {
     try {
-      const r = await put<{ config: any; restart?: string[] }>("/api/settings", partial);
+      const r = await put<SaveResult>("/api/settings", partial);
       config.value = r.config;
       if (r.restart?.length) toast(`${note}。${r.restart.join("、")}要重启服务后才生效（omem service restart）`, "info");
       else toast(note, "ok");
+      return r;
     } catch (e) {
       toast(saveRefusal((e as Error).message, settingsSections(), ownerName.value), "error");
+      return null;
     }
   }
   const ctx = { config, profiles, unavailableBackends, home, rerank, embeddingSource, load, loadSections, ownerName, saveConfig };

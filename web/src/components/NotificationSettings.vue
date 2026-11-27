@@ -6,7 +6,7 @@ import Icon from "./Icon.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 
 /** 设置 → 通知与打扰 → 通知时间: quiet hours, when the not-urgent ones go out together, learning from negative reactions. */
-const props = defineProps<{ config: any; save: (patch: Record<string, unknown>) => Promise<void> }>();
+const props = defineProps<{ config: any; save: (patch: Record<string, unknown>) => Promise<unknown> }>();
 function saveNotify(change: Record<string, unknown>) { return props.save({ notify: { ...props.config.notify, ...change } }); }
 function times(next: string[]) { return saveNotify({ laterTimes: [...new Set(next)].sort() }); }
 function editTime(index: number, event: Event) {

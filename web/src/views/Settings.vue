@@ -94,7 +94,7 @@ const CARDS: Record<string, Tab> = {
   "notify-times": "notify", "notify-outlets": "notify", progress: "notify",
   "auto-advance": "advance", "flow-follow": "advance", "gate-ladder": "advance", "commit-claim": "advance", design: "advance", "study-envs": "advance", "item-expiry": "advance", "item-sync": "advance",
   audit: "review", replay: "review",
-  backends: "agents", tiers: "agents", fallback: "agents",
+  backends: "agents", "default-ai": "agents", fallback: "agents", "ai-say": "agents", "ai-rules": "agents", "ai-groups": "agents",
   "memory-quality": "search", rerank: "search", embeddings: "search", "passive-memory": "search", "search-providers": "search",
   "agent-accounts": "members", "credential-holds": "members", desktop: "peers", "web-url": "peers", "accept-work": "peers",
   "lark-docs": "connect", "lark-recent-docs": "connect", "lark-capture": "connect", platforms: "connect", "source-parsers": "connect",
@@ -102,7 +102,7 @@ const CARDS: Record<string, Tab> = {
   "operation-rules": "security", "rule-packs": "security", sandbox: "security", "full-access": "security", "tool-approvals": "security", egress: "security", "cloud-tools": "security", credentials: "security", trail: "security",
 };
 /** Cards that were renamed: the old link lands on the new card. */
-const RENAMED: Record<string, string> = { "network-conditions": "backends", "command-rules": "operation-rules" };
+const RENAMED: Record<string, string> = { "network-conditions": "backends", "command-rules": "operation-rules", tiers: "ai-groups" };
 const route = useRoute();
 const router = useRouter();
 /** Where a link points: its tab, and the card to scroll to (from `card`, or an old link's `focus`). */

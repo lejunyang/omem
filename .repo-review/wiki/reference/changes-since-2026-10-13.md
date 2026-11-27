@@ -5,6 +5,15 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## AI 规则和组有了网页（2026-11-28）
+
+- 设置 → 后端与模型 多一个子页“规则”（`web/src/components/AiRules.vue`）：顶上“用一句话改”（`AiPolicyPropose.vue`，起草运行好了在原处出确认卡，运行 id 存在标签页里，回来接着跟）；“任务类别”（`AiClassRules.vue`）一类一行，点开改能用的组或 AI、排除、先后、只用这些，看规则来源、近 7 天用量和被排除的角色默认 AI，整份 `PUT /api/ai/policy`；“AI 组”（`AiGroups.vue`）整份 `PUT /api/ai/groups`。
+- 规则里的写法（`backend:` / `model:` / `ai:` / `key:`）在页面上一律换成人话、用下拉选（`web/src/lib/ai-policy.ts` 的 `selectorText`、`AiDenyPicker.vue`）；冲突标记按服务端 `policyReason` 的读法在前端算一遍（`scopeReason`）。
+- 原来“默认 AI 与档位”的三档编辑和后端里的“适合做什么”（任务选型候选）去掉，改由 AI 组编辑：第一次保存前编辑器从旧档位和候选预填（`effectiveGroups`），保存后服务端清掉旧的两处。通用页只列各组并链过去；旧链接 `?card=tiers` 落到 AI 组。
+- 后端点开后多了“命令别名”（自动命令词灰色只读，自定义的存在 ACP 那份配置的 `aliases`）和“在哪些 AI 组里”。保存任务选型后有 `guidanceWarning` 时提示并可“转成规则”。
+- Agent 页：档案的“默认 AI”换成“能用的 AI”（`AgentAiScope.vue`：`class`、先用的 AI、`ai.use` / `deny` / `strict`）；内置角色的默认 AI 下写它那一类的范围和冲突。决策页加“按类别选 AI 的结果”（报告的 `routes`）。
+- 服务端只加了一处：`GET /api/ai/policy` 带 `backends`（每个后端的程序、key、不用问后端就知道的模型、自动命令词，`policyBackends`）。
+
 ## “先看一眼”改名“帮你回复”；关注里触发得更多；有人找你也能先帮你回复（2026-11-28）
 
 - 快速通道的第二层改名“帮你回复”（卡片标题、运行标题、角色名、设置页、文档）；运行种类 `first-look`、角色 `first-look`、设置键 `firstLook` 不变。
