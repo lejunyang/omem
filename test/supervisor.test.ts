@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { getRun, setRunOutput } from "../src/agents/runs.ts";
-import { listAsks, answerAsk } from "../src/agents/asks.ts";
+import { listAsks } from "../src/agents/asks.ts";
+import { setLarkClient } from "../src/channels/lark-send.ts";
+import { reattachThread, updateThread } from "../src/agents/threads.ts";
 import { type LongTask, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
 import { wakeSupervisor, checkSupervisorTimer, patchSupervisorState, runSupervisor } from "../src/agents/supervisor.ts";
 import { submitSupervisorReport } from "../src/agents/supervisor-report.ts";
@@ -70,6 +72,29 @@ describe("长任务监工", () => {
     expect(card).toBeDefined();
     expect(latest.status).toBe("draft");
     expect(card.ui?.fields?.some(f => f.type === "textarea")).toBe(true);
+  });
+
+  it("任务书只发一张确认卡，后续汇报直接更新话题内已有的进度卡", async () => {
+    const { app, task } = await setup();
+    const ctx = turn(app, task);
+    reattachThread(app, task.threadId, "lark", "oc_example#topic");
+    updateThread(app, task.threadId, { settings: { lastMessageId: "om_anchor" } });
+    const reply = vi.fn(async () => ({ code: 0, data: { message_id: "om_progress" } }));
+    const patch = vi.fn(async () => ({ code: 0, data: {} }));
+    setLarkClient({ im: { message: { reply, patch } } });
+    try {
+      const redundant = { question: "是否确认草案？", options: ["确认","调整"], prefer: "确认", why: "已覆盖目标" };
+      await expect(submitSupervisorReport(app, ctx.run.id, { ...draftReport, askOwner: [redundant] })).rejects.toThrow(/确认卡/);
+      await submitSupervisorReport(app, ctx.run.id, draftReport);
+      expect(reply).toHaveBeenCalledWith(expect.objectContaining({ path: { message_id: "om_anchor" }, data: expect.objectContaining({ reply_in_thread: true }) }));
+      expect(listAsks(app, { conversationId: task.threadId, status: "pending" })).toHaveLength(1);
+      run(app.db, "update long_tasks set status='active' where id=?", task.id);
+      const next = turn(app, task);
+      const text = await submitSupervisorReport(app, next.run.id, { ...draftReport, brief: undefined, stage: "验收" });
+      expect(patch).toHaveBeenCalledWith(expect.objectContaining({ path: { message_id: "om_progress" }, data: { content: expect.stringContaining("验收") } }));
+      expect(reply).toHaveBeenCalledTimes(1);
+      expect(getRun(app, next.run.id).output.progressText).toBe(text);
+    } finally { setLarkClient(null); }
   });
 
   it("同阶段续用会话，阶段变化或上下文到限时从任务书接手，信号原文置顶", async () => {

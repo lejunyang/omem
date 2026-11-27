@@ -1,11 +1,11 @@
 import type { SupervisorReport as Report } from "./supervisor-schema.ts";
 import type { App } from "../core/app.ts";
-import { withinTx } from "../core/db.ts";
+import { one, withinTx } from "../core/db.ts";
 import { deliveryPlan, notify } from "../core/notify.ts";
 import { HttpError, now, truncate } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler } from "./asks.ts";
 import { confirmLongTaskBrief, changeLongTask, getLongTask, saveLongTaskReport, type LongTask } from "./long-tasks.ts";
-import { getRun } from "./runs.ts";
+import { addRunEvent, getRun } from "./runs.ts";
 import { patchSupervisorState, scheduleSupervisorTimer, supervisorFacts, supervisorUsage, supervisorState } from "./supervisor.ts";
 import { getThread } from "./threads.ts";
 import type { UiField } from "./ui-blocks.ts";
@@ -104,10 +104,13 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
   if (round.output.supervisorReport) throw new HttpError(409, "本轮已经交过报告");
   if (["paused","ended","done"].includes(task.status)) throw new HttpError(409, "本人已暂停或结束长任务");
   if (task.status === "draft" && !report.brief) throw new HttpError(400, "起草轮请在 brief 中交任务书，待本人确认");
+  if (task.status === "draft" && report.askOwner.length)
+    throw new HttpError(400, "起草轮由宿主发一张任务书确认卡。把需要本人调整的条目写入 brief，askOwner 留空。");
   if (task.status !== "draft" && report.brief?.constraints) throw new HttpError(400, "约束仅由本人修改");
   if (report.status === "done") {
     const facts = supervisorFacts(app, task);
-    if (report.askOwner.length || report.brief || facts.active || facts.openItems || supervisorState(app, task.id).briefAsk)
+    const pending = one(app.db, "select 1 from asks where conversation_id=? and status='pending' and json_extract(context,'$.handler') in ('supervisor-questions','supervisor-brief') limit 1", task.threadId);
+    if (report.askOwner.length || report.brief || facts.active || facts.openItems || pending)
       throw new HttpError(409, "仍有运行、修改项、任务书提案或本人问题待处理");
   }
   const { answerWorkerQuestion, checkSupervisorBasis } = await import("./supervisor-code.ts");
@@ -124,7 +127,7 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
     if (report.askOwner.length) offerOwnerQuestions(app, task, runId, report.askOwner);
   });
   const next = getLongTask(app, task.id);
-  await updateCard(app, next, text);
+  await updateCard(app, next, text).catch(error => addRunEvent(app, runId, "warning", { message: `更新长任务飞书进度卡失败：${String(error)}` }));
   const prefs = task.notifications;
   if (prefs.summaryHours && next.status === "active") scheduleSupervisorTimer(app, next, "summary", new Date(Date.now() + prefs.summaryHours * 3600_000).toISOString());
   if ((prefs.milestones && (prior.stage !== report.stage || report.status === "done")) ||
