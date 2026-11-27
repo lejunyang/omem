@@ -1,4 +1,5 @@
 import { groupItems, groupPick, policyScope } from "../agents/ai-policy.ts";
+import { hasHostTools } from "../agents/capabilities.ts";
 import { continuedUpstream, finishStage, overrideStageGate } from "./plugin-gates.ts";
 import { pollFlowSignal } from "./plugin-signals.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
@@ -393,6 +394,9 @@ async function stageTask(app: App, item: Item, f: ItemFlow, d: FlowStage, feedba
   ].filter(Boolean).join("\n\n");
 }
 
+const localStage = (d: FlowStage) => typeof d.by === "object" &&
+  ("run" in d.by ? d.by.run.local === true : "object" in d.by && ["trials", "fixes", "code-work"].includes(d.by.object));
+
 async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Date) {
   const choice = s.control.escalated && d.escalate ? d.escalate.to : d.ai;
   if (!choice) return { s, execution: undefined, waitUntil: null };
@@ -401,8 +405,10 @@ async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Dat
   const spec = role ? null : findAgentSpec(app, name);
   if (!role && !spec) throw new HttpError(400, `没有 Agent 档案 ${name}`);
   const scope = policyScope(app, "flow-stage", name, spec ?? undefined);
-  const pick = typeof choice === "string" ? groupPick(app, choice, scope, true) : choice;
-  if (!pick && typeof choice === "string" && groupItems(app, choice).length) throw new HttpError(400, "流程指定的组 " + choice + " 没有符合规则的后端");
+  const needsHost = localStage(d) || !!(spec?.cwd || spec?.writes);
+  const pick = typeof choice === "string" ? groupPick(app, choice, scope, true, needsHost ? hasHostTools : undefined) : choice;
+  if (!pick && typeof choice === "string" && groupItems(app, choice).length)
+    throw new HttpError(400, "流程指定的组 " + choice + (needsHost ? " 没有符合规则的本机后端" : " 没有符合规则的后端"));
   if (choice && !pick && !s.control.tierFallback?.includes(String(choice))) {
     s = changeStage(app, f.itemId, d.id, s.state, { control: { ...s.control, tierFallback: [...s.control.tierFallback ?? [], String(choice)] } }, host, `档位 ${choice} 没有配置，用了默认的 AI`);
   }
@@ -410,6 +416,7 @@ async function stageAI(app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Dat
   const execution = validateExecution(app, { ...pick, source: "flow", reason: `流程「${f.definition.name}」的「${d.name}」阶段指定` }, undefined, false, scope)!;
   const { resolveRunProfile } = await import("../agents/runner.ts");
   const profile = resolveRunProfile(app, { actor: spec ? { spec } : { role: role! }, ...executionArgs(execution) });
+  if (needsHost && !hasHostTools(profile)) throw new HttpError(400, `这一段需要本机工作区或本机命令，请把指定的后端 ${profile.id} 换成本机后端`);
   const actual = validateExecution(app, { ...execution, model: profile.model, effort: profile.effort }, undefined, false, scope)!;
   const until = outOfQuotaUntil(app, profile, at);
   const daily = dailyCapReached(app, profile, at.getTime());
@@ -1629,7 +1636,7 @@ async function runStageAgent(ctx: Parameters<Parameters<typeof registerHandler>[
   // the role's own tools) are welcome but optional, so a backend that reaches only a few tools (a cloud one
   // over HTTP, cloud-tools.ts) can still take the stage.
   const requiredTools = [ctx.run.kind === "study-trial" ? "trial_report" : planner ? "propose_directions" : "stage_report"];
-  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, requiredTools, spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: ctx.run.kind === "study-trial" ? input.cwd as string | undefined : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push", "revise_study_finding", "queue_study_fixes"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
+  const result = await runRole(ctx.app, { role, spec: spec ?? undefined, execution: input.execution as Execution | undefined, ownAI: input.ownAI === true, spaceId: item.spaceId, requiredTools, requiresLocal: localStage(d), spaces: ctx.run.kind === "study-trial" ? input.spaces as string[] : stageSpaces, cwd: typeof input.cwd === "string" ? input.cwd : undefined, task, runId: ctx.run.id, userId: item.userId, signal: ctx.signal, addTools, denyTools: planner ? ["study_push", "read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report"] : ctx.run.kind === "study-trial" ? ["read_ledger", "record_finding", "revise_study_finding", "queue_study_fixes", "close_direction", "read_item", "read_run", "list_runs", "stage_report", "delegate_code", ...(canPush ? [] : ["study_push"])] : ["study_push", "revise_study_finding", "queue_study_fixes"], artifacts: true, onEvent: (e) => ctx.event(e.type, e) });
   return { text: result.text, ai: result.ai, sessionId: result.sessionId };
 }
 registerHandler("flow-stage", runFlowStage);

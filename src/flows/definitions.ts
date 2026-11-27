@@ -31,7 +31,7 @@ const weekdays = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 const objectName = z.union([z.enum(["code-work", "design"]), z.templateLiteral([z.string(), ":", z.string()], { error: "这种内置对象在后续阶段实现" })]);
 const carrier = z.union([
   z.object({ runner: providerId, with: providerParams }).strict(),
-  z.object({ run: z.object({ agent: slug.optional(), skill: slug.optional() }).strict() }).strict(),
+  z.object({ run: z.object({ agent: slug.optional(), skill: slug.optional(), local: z.boolean().optional().describe("这一段需要本机工作区或本机命令") }).strict() }).strict(),
   z.object({ object: z.enum(["trials", "fixes"]), agent: slug.optional(), skill: slug.optional() }).strict(),
   z.object({ object: objectName }).strict(),
   z.enum(["owner", "wait"]),

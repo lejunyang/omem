@@ -16,6 +16,7 @@ import { truncate, localStamp, now } from "../core/util.ts";
 import { turnSpaceFor, userName } from "../core/users.ts";
 import { openAcp, runAcp, type AcpHandle } from "./acp.ts";
 import { retireSession, runBackend } from "./dispatch.ts";
+import { hasHostTools } from "./capabilities.ts";
 import { actorScope, distinctProfiles, failoverProfiles, isBackendDown, isRetryableAgentError, noteBreakdown, noteQuota, prepareRun, turnHeader, quietAfterAll, quietSet, recordIsolation, recordRunAI, resolveRunProfile, type Actor } from "./runner.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { focusBlock } from "./turn-focus.ts";
@@ -397,6 +398,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const login = aiLoginWait(app, ctx.run.id);
   if (login && (!member || login.userId !== userId)) throw new Error("等待登录的成员已不可用");
   const scope = actorScope(app, actor, ctx.run.kind);
+  const needsHost = "spec" in actor && !!(actor.spec.cwd || actor.spec.writes);
+  const accepts = (profile: AgentProfile) => !needsHost || hasHostTools(profile);
   const personal = member ? memberThreadAi(app, t, userId) : {};
   // An explicit switch_run_ai replaces a command that was already in the lane.
   const turnAi = !ctx.run.input.ai ? ctx.run.input.turnAi as import("./ai-spec.ts").AiPick | undefined : undefined;
@@ -414,7 +417,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const otherSender = member && t.agentProfile?.split("|")[5] !== userId;
   if (!pinned && ((!t.agentSession || t.agentTurns >= app.config.sessions.maxTurns) && !live.has(threadId) || otherSender)) {
     const current = resolveRunProfile(app, { actor });
-    chosen = await chooseAI(app, { scope, runId: ctx.run.id, scene: "conversation", userId, task: messages.map((m) => m.text).join("\n"), who: label, current, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }), onRecord: (r) => ctx.event("status", choiceEvent(r)) });
+    chosen = await chooseAI(app, { scope, runId: ctx.run.id, scene: "conversation", userId, task: messages.map((m) => m.text).join("\n"), who: label, current, accepts, signal: ctx.signal, onStatus: (text) => ctx.event("status", { text }), onRecord: (r) => ctx.event("status", choiceEvent(r)) });
     const pick = chosen?.pick;
     auto = pick ? { profile: pick.profile, model: pick.model, effort: pick.effort } : null;
     if (JSON.stringify(auto) !== JSON.stringify(previousAuto ?? null)) saveAuto(auto);
@@ -435,16 +438,17 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const conflict = policyReason(scope, raw);
   const named = pinned && !member && userId === "owner" && !guestTurn && !ctx.run.input.ai && (turnAi || t.settings.ownerNamedAi) && !messages.some(m => m.meta.speaker);
   if (conflict && named) ctx.event("status", { text: "本人点名，越过了「" + conflict + "」" });
-  if (conflict && !named) {
-    if (specified || login) throw new Error(conflict);
-    const next = scopedProfiles(app, scope, failoverProfiles(app, actor, raw, own, userId, scope ?? null), true)[0];
+  if ((conflict && !named) || !accepts(raw)) {
+    const reason = accepts(raw) ? conflict! : "这个档案需要能访问本机工作区和命令的后端";
+    if (specified || login || (!accepts(raw) && pinned && app.config.agents.routing.pinnedFallback === "never")) throw new Error(reason);
+    const next = scopedProfiles(app, scope, failoverProfiles(app, actor, raw, own, userId, scope ?? null).filter(accepts), true).find(accepts);
     if (!next && scope?.strict) await waitForPolicy(app, scope, ctx.run.id);
-    if (!next) throw new Error(conflict);
+    if (!next) throw new Error(reason);
     raw = next;
     Object.assign(profileArgs, { profileId: raw.id, model: raw.model, effort: raw.effort });
   }
   if (scope?.strict && !named && (!hasRoom(app, raw) || excluded(app, raw) || !backendAvailable(raw, app.home))) {
-    const next = scopedProfiles(app, scope, []).find(p => hasRoom(app, p) && !excluded(app, p) && backendAvailable(p, app.home));
+    const next = scopedProfiles(app, scope, []).find(p => accepts(p) && hasRoom(app, p) && !excluded(app, p) && backendAvailable(p, app.home));
     if (!next) await waitForPolicy(app, scope, ctx.run.id);
     if (next) {
       raw = next;
@@ -452,7 +456,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
     }
   }
   const memberOptions = { userId, runId: ctx.run.id, threadId, messages, pinned: specified, signal: ctx.signal, revising: !!promptOverride };
-  const profile = member ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, userId, scope ?? null).filter(p => p.id !== raw.id || p.model !== raw.model) }) : undefined;
+  const profile = member ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, userId, scope ?? null).filter(p => accepts(p) && (p.id !== raw.id || p.model !== raw.model)) }) : undefined;
   const prep = prepareRun(app, { ...profileArgs, profile, scene, spaceId: space, runId: ctx.run.id, userId, lark, denyTools, addTools, fullAccess, guestTurn });
   // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
   const limitFor = { profile: prep.profile };
@@ -607,7 +611,7 @@ ${WAKE_NOTE}`
   const fallback = failoverProfiles(app, actor, prep.profile, own, member ? userId : undefined, scope ?? null);
   const chain = distinctProfiles([prep.profile, ...(chosen?.order ?? []), ...fallback]).flatMap((p, i) => {
     if (i === 0) return [p];
-    if (policyReason(scope, p)) return [];
+    if (!accepts(p) || policyReason(scope, p)) return [];
     if (!member) return !excluded(app, p) && !accountBlocked(app, userId, p) ? [accountFor(app, userId, p)] : [];
     const plan = memberAccountPlan(app, userId, p, !!login && p.id === login.pick.profile);
     return plan.kind === "ready" && !excluded(app, plan.profile) ? [plan.profile] : [];

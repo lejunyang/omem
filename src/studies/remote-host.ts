@@ -1,4 +1,5 @@
 import { groupPick, policyScope } from "../agents/ai-policy.ts";
+import { hasHostTools } from "../agents/capabilities.ts";
 import { existsSync, readFileSync } from "node:fs";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -195,7 +196,7 @@ async function runPeerTrial(ctx: RunContext) {
         else notes.push(`这台的技能 ${req.skill} 没有启用，照任务做。`);
       } catch { notes.push(`这台没有技能 ${req.skill}，照任务做。`); }
     }
-    const pick = req.tier ? groupPick(app, req.tier, policyScope(app, "study-trial")) : undefined;
+    const pick = req.tier ? groupPick(app, req.tier, policyScope(app, "study-trial"), false, hasHostTools) : undefined;
     const execution = pick ? validateExecution(app, { ...pick, source: "flow", reason: `${req.from.node} 派来的试验写了档位 ${req.tier}` }, undefined, false, policyScope(app, "study-trial")) : undefined;
     const task = trialTask({
       header: `## ${req.from.node} 上的研究派来的一个试验：${req.from.title}`,

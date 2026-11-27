@@ -33,7 +33,7 @@ import { aiLabel, candidateProfiles, routingCandidates, candidateWhen, choiceEve
 import { quotaAvoid, quotaPressure } from "./quota.ts";
 import { catalogEntry, installHint, PluginBackendUnavailable, pluginBackendStatus, referencedPluginProfiles } from "./catalog.ts";
 import { cloudAccess } from "./cloud-probe.ts";
-import { backendCapabilities, type BackendCapabilities } from "./capabilities.ts";
+import { backendCapabilities, hasHostTools, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE, doubaoFeatures } from "./doubao-cli.ts";
 import { dropUnavailable, issueToolToken, revokeToolToken } from "./tools.ts";
 import { aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
@@ -297,6 +297,8 @@ export type RoleRunInput = {
   /** Host-assigned trees for this invocation (helpers carry their own leases). */
   worktrees?: WorktreeRef[];
   worktreeAccess?: "read" | "commit";
+  /** This run needs the host's filesystem or commands, even without an assigned cwd. */
+  requiresLocal?: boolean;
   /** Tools the caller needs for delivery. An empty list explicitly permits a text-only answer. */
   requiredTools?: string[];
   execution?: Execution;
@@ -899,6 +901,9 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   await refreshForRun(app);
   const row = input.runId ? one<{ kind: RunKind; input: string }>(app.db, "select kind, input from runs where id = ?", input.runId) : undefined;
   const runKind = row?.kind;
+  const needsHost = !!(input.requiresLocal || input.cwd || input.spec?.cwd || input.spec?.writes || input.worktrees ||
+    input.worktreeAccess || input.reviewCheck || input.reviewLead || input.preCheck || input.role === "coder" ||
+    runKind === "code" || runKind === "review" || runKind === "study-trial" || runKind === "peer-trial");
   const actor: Actor = input.spec ? { spec: input.spec } : { role: input.role };
   const scope = actorScope(app, actor, input.reviewCheck || input.reviewLead ? "review" : runKind);
   const runInput = json<{ ai?: Execution; turnContext?: unknown; conversationId?: string; threadId?: string; ownAccountOnly?: boolean }>(row?.input ?? "{}", {});
@@ -939,7 +944,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   // every tool this run must hand its result in with is among the tools the owner lets a cloud backend call.
   const overHttp = (profile: AgentProfile) => required.length > 0 && !!input.runId && backendCapabilities(profile).where === "cloud"
     && !!cloudAccess(app, profile).mode && required.every(t => app.config.agents.cloudTools.tools.some(name => name === t));
-  const supports = (profile: AgentProfile) => !needsAccess || ["mcp", "shell-bridge"].includes(backendCapabilities(profile).omemAccess) || overHttp(profile);
+  const supports = (profile: AgentProfile) => (!needsHost || hasHostTools(profile))
+    && (!needsAccess || ["mcp", "shell-bridge"].includes(backendCapabilities(profile).omemAccess) || overHttp(profile));
   const told = await lessonsOfTask(app, input);
   const lessons = told.text;
   // Nothing pins the AI (no execution, no caller's pick, not a session being continued, not a coding
@@ -1019,7 +1025,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const single = !!input.boardAccess || !!input.shadow || execution?.source === "flow" || ((execution || specified || login) && app.config.agents.routing.pinnedFallback === "never");
   const fallbacks = single ? [] : [...failoverProfiles(app, actor, primary, own, member, scope ?? null), ...tierProfiles.filter((p): p is AgentProfile => !!p && backendAvailable(p, app.home))];
   const list = distinctProfiles([primary, ...(single ? [] : chosen?.order ?? []), ...fallbacks]);
-  const allowed = scopedProfiles(app, scope, list, !single);
+  const allowed = scopedProfiles(app, scope, needsHost && !single ? list.filter(hasHostTools) : list, !single);
   const options = chosen && !single ? distinctProfiles([...list.filter(p => !policyReason(scope, p)), ...allowed]) : allowed;
   // An explicit choice (including the chooser's first group) leads the allowed alternatives.
   const primaryIndex = options.findIndex(p => p.id === primary.id && p.model === primary.model && p.effort === primary.effort);
@@ -1049,7 +1055,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       return false;
     }
     if (supports(p)) return true;
-    say(`跳过后端 ${p.id}：本次运行需要 ${requirement}，该后端没有 omem 工具通道`);
+    say(needsHost && !hasHostTools(p) ? `跳过后端 ${p.id}：本次运行需要本机工作区或本机命令`
+      : `跳过后端 ${p.id}：本次运行需要 ${requirement}，该后端没有 omem 工具通道`);
     return false;
   });
   if (scope?.strict && (!chain.length || chain.every(p => !backendAvailable(p, app.home) || excluded(app, p) || !!downReason(app, p) || !hasRoom(app, p)))) {
@@ -1065,7 +1072,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
     });
   }
   if (!chain.length && scope?.deny.length) throw new Error(policyReason(scope, primary) ?? "范围内没有可用后端");
-  if (!chain.length) throw new Error(`没有可交付这次任务的后端：需要 ${requirement}${codeReview && app.config.review.excludedModels?.length ? "，且模型须符合编码评审的限制" : ""}`);
+  if (!chain.length) throw new Error(`没有可交付这次任务的后端：需要 ${[needsHost && "能访问本机工作区或本机命令的后端", needsAccess && requirement].filter(Boolean).join("、")}${codeReview && app.config.review.excludedModels?.length ? "，且模型须符合编码评审的限制" : ""}`);
   const primaryKept = primary === chain[0];
   const pinned = !!(execution || specified || login) && primaryKept;
   const base = prepare(chain[0]);
