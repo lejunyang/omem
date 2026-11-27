@@ -200,6 +200,7 @@ describe("长任务跟进", () => {
       }
       await send("/whoami");
       await send("/codex");
+      await send("/claude");
       expect(reply).toHaveBeenCalledTimes(repliesBefore);
       expect(getLongTask(app, task.id).supplements).toEqual([]);
       addMember(app, "docs", "editor", "reader");
@@ -212,6 +213,7 @@ describe("长任务跟进", () => {
       const supplements = [
         "  补充：先只改说明文件。\n    保留  示例格式。  ",
         "/api/long-tasks 先保留这个接口，下轮再改",
+        "/claude/settings.json 先保留这个配置文件",
         "/fixtures 下的示例也要保留",
       ];
       for (const [i, supplement] of supplements.entries()) {
