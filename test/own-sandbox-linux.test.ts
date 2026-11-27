@@ -130,3 +130,34 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
     finally { child.stdin.end(); await closed; }
   } finally { revokeToolToken(prep.token); await server.close(); app.db.close(); rmSync(root, { recursive: true, force: true }); rmSync(app.home, { recursive: true, force: true }); }
 }, 30000);
+
+it.skipIf(!support.ok)("默认登录文件和插件状态不会随工作区挂回 " + (support.reason ?? ""), async () => {
+  const home = mkdtempSync(join(tmpdir(), "fixture-home-"));
+  vi.stubEnv("HOME", home);
+  const app = testApp();
+  const { registerCredential } = await import("../src/agents/credential-registry.ts");
+  const unregister = registerCredential("fixture", { id: "login", name: "示例", login: async () => ({ user: "example" }),
+    provides: { commands: [{ name: "sample", state: [".cache/sample"] }] } });
+  try {
+    const cwd = join(home, "project");
+    mkdirSync(cwd);
+    mkdirSync(join(home, ".ssh"));
+    mkdirSync(join(home, ".cache/sample"), { recursive: true });
+    writeFileSync(join(home, ".ssh/example"), "fixture");
+    writeFileSync(join(home, ".git-credentials"), "fixture");
+    writeFileSync(join(home, ".cache/sample/login"), "fixture");
+    app.config.agents.ownSandbox = { mode: "prefer", writable: [], hidden: [], excludeKinds: ["fixture"] };
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+    expect(ownRun(app, profile, cwd, false, null, { kind: "fixture" }).box).toBeUndefined();
+    const box = ownRun(app, profile, cwd, false).box!;
+    box.plan.ro.push(home);
+    const child = launch("/bin/sh", ["-ec", 'test ! -e "$HOME/.ssh/example"; test ! -s "$HOME/.git-credentials"; test ! -e "$HOME/.cache/sample/login"; test -d "$HOME/project"'],
+      { cwd, ownSandbox: box });
+    let errors = "";
+    child.stderr.on("data", chunk => errors += chunk);
+    expect((await once(child, "close"))[0], errors).toBe(0);
+  } finally {
+    unregister(); vi.unstubAllEnvs(); app.db.close();
+    rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+  }
+});

@@ -28,8 +28,15 @@ export function normalizeSandbox(settings: Settings, home: string, data: string,
       return path;
     }))];
   }
-  return { mode: settings.mode, writable: paths(settings.writable, true), hidden: paths(settings.hidden, false) };
+  return { ...settings, writable: paths(settings.writable, true), hidden: paths(settings.hidden, false),
+    ...(settings.loginPaths && { loginPaths: paths(settings.loginPaths, false) }) };
 }
+
+export const defaultLoginPaths = [
+  "~/.ssh", "~/.gnupg", "~/.git-credentials", "~/.config/git/credentials", "~/.netrc", "~/.authinfo",
+  "~/.config/gh", "~/.config/glab-cli", "~/.docker/config.json", "~/.aws", "~/.azure",
+  "~/.config/gcloud", "~/.kube", "~/.terraform.d/credentials.tfrc.json", "~/.npmrc", "~/.pypirc",
+];
 
 export const cachePaths = [
   ".cache", // XDG tool and build caches.
@@ -39,7 +46,7 @@ export const cachePaths = [
 
 export type OwnMountConfig = {
   data: string; home: string; state: string[]; writable: string[]; hidden: string[];
-  runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
+  masked?: string[]; runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
 };
 type Program = { file: string; prefix: string[] };
 export type OwnSandbox = OwnMountConfig & { plan: ReturnType<typeof ownMounts> };
@@ -55,7 +62,7 @@ export function selectOwnSandbox(mode: Settings["mode"], local: boolean, memberA
 }
 
 /** Inputs are host-selected canonical paths. Extra hidden directories take precedence over every grant. */
-export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: WorkspaceMounts, artifacts?: string, program?: Program | null): WorkspaceMounts & { hide: string[] } {
+export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: WorkspaceMounts, artifacts?: string, program?: Program | null): WorkspaceMounts & { hide: string[]; masked?: string[] } {
   const hide = [box.data, ...box.hidden, "/tmp"];
   const ro = [...(workspace?.ro ?? [])];
   const rw = [...box.state, ...box.writable];
@@ -66,14 +73,15 @@ export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: Workspac
     const dest = box.readOnly && !(box.snapshot && under(cwd, box.snapshot)) ? ro : rw;
     if (cwd !== box.data) dest.push(cwd);
   }
-  const visible = (path: string) => !box.hidden.some(h => under(path, h));
+  const protectedPaths = [...box.hidden, ...(box.masked ?? [])];
+  const visible = (path: string) => !protectedPaths.some(h => under(path, h));
   const executable = program && canonical(program.file);
   const runtime = [...box.runtime, ...(program && executable ? [program.file, executable, installRoot(executable), ...program.prefix.filter(isAbsolute)] : [])];
   ro.push(...runtime.filter(path => [box.data, "/tmp"].some(root => path !== root && under(path, root)) || rw.some(dir => under(path, dir))));
   // /tmp itself is private tmpfs, including when it is the working directory.
   const bindable = (path: string) => path !== "/tmp" && visible(path);
   const readOnly = ro.filter(bindable);
-  return { hide, ro: readOnly, rw: [...new Set(rw)].filter(p => bindable(p) && !readOnly.some(r => under(p, r))),
+  return { hide, masked: box.masked, ro: readOnly, rw: [...new Set(rw)].filter(p => bindable(p) && !readOnly.some(r => under(p, r))),
     links: workspace?.links?.filter(link => visible(link.path) && visible(link.target)),
     pointers: workspace?.pointers?.filter(pointer => visible(pointer.path)) };
 }
@@ -83,7 +91,7 @@ export function ownSandboxEnv(base: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv, s
   for (const key of Object.keys(out)) if (/^OMEM_/i.test(key)) delete out[key];
   Object.assign(out, run);
   const runKeys = ["OMEM_TOKEN", "OMEM_URL", "OMEM_ARTIFACTS", "OMEM_RUN_DIR", "OMEM_COMMAND_GATE", "OMEM_DESKTOP_TOOLS", "OMEM_BROWSER_PROFILES", "OMEM_BROWSER_PROXY"];
-  for (const key of Object.keys(out)) if (secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
+  for (const key of Object.keys(out)) if (/^(SSH_AUTH_SOCK|SSH_AGENT_PID|GIT_ASKPASS|SSH_ASKPASS|GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|NPM_TOKEN|NODE_AUTH_TOKEN|DOCKER_AUTH_CONFIG|AWS_.+|AZURE_.+|CLOUDSDK_.+|GOOGLE_APPLICATION_CREDENTIALS|KUBECONFIG)$/i.test(key) || secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
   out.TMPDIR = "/tmp";
   return out;
 }

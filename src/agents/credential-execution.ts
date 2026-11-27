@@ -84,10 +84,10 @@ async function runWith(ctx: ToolContext & { runId: string }, entry: Entry, args:
   if (!owner && !sandboxSupport().ok) return "unavailable";
   const cwd = mkdtempSync(join(tmpdir(), "omem-credential-"));
   try {
-    const account = owner ? undefined : { ...localAccount(app, holder, method.kind), env: credentialMemberEnv(app, holder, method),
+    const account = owner ? undefined : { ...localAccount(app, holder, method.kind), masked: [], env: credentialMemberEnv(app, holder, method),
       borrowed: { state: command.state ?? [], dirs: [] } };
     const profile = { ...catalogProfile({ id: method.kind, name: method.name, command: command.name }), ownAccount: account };
-    const ownBox = owner && app.config.agents.ownSandbox.mode !== "off" ? ownRun(app, profile, cwd, false).box : undefined;
+    const ownBox = owner && app.config.agents.ownSandbox.mode !== "off" ? ownRun(app, profile, cwd, false, undefined, { credentialState: command.state }).box : undefined;
     if (owner && app.config.agents.ownSandbox.mode !== "off" && !ownBox) return "unavailable";
     const op = { kind: "command" as const, executable: command.name, argv: args, cwd };
     const signal = AbortSignal.any([runSignal, method.signal, AbortSignal.timeout(COMMAND_TIMEOUT_SEC * 1000)]);

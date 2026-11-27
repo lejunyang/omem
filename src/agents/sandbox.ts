@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; re
 export type SandboxAccount = {
   /** In a borrowed HOME, bind only shared state and create the other required directories privately. */
   borrowed?: { state: string[]; dirs: string[] };
+  masked?: string[];
   network?: SandboxNetwork;
   userId: string;
   /** The account backend (catalog id): codex, claude, traex, doubao-cli. */
@@ -99,6 +100,7 @@ const depth = (p: string) => p.split("/").filter(Boolean).length;
 const inside = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
 
 export type SandboxPlan = {
+  masked?: string[];
   network?: SandboxNetwork;
   /** Empty directories created in the sandbox with mode 0700. */
   privateDirs?: string[];
@@ -143,12 +145,18 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
   });
   const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
   const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
+  // Apply credential masks last, including inside writable caches or a mounted account HOME.
+  const masks = (plan.masked ?? []).flatMap(path => {
+    const stat = statSync(path, { throwIfNoEntry: false });
+    if (!stat) return [];
+    return stat.isDirectory() ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path];
+  });
   const n = plan.network;
   const relay = n ? [process.execPath, fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)), String(n.callbackPort ?? 0)] : [];
   // A read-only host root still exposes live filesystem sockets. Networked runs start with
   // the runtime directories and explicit run mounts, leaving host service sockets outside.
   const root = n ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
-  return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links,
+  return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, ...masks,
     ...(n ? ["--unshare-net", "--tmpfs", "/run", ...(n.secrets && existsSync(n.secrets) ? ["--tmpfs", n.secrets] : []), "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
     "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
 }
@@ -262,7 +270,7 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
+    args: bwrapArgs({ masked: acct.masked, network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
     env: sandboxEnv(baseEnv, runEnv, acct, hide, nodeBin),
   };
 }

@@ -168,7 +168,8 @@ export function accountEnv(app: App, userId: string, entry: AccountEntry): Recor
 }
 
 export function localAccount(app: App, userId: string, backend: string): SandboxAccount {
-  return { userId, backend, home: accountHome(app, userId), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
+  const home = accountHome(app, userId);
+  return { userId, backend, home, masked: credentialStateRels(app).map(rel => join(home, rel)), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
 }
 
 /** What a run (or a login) with this user's account of this backend carries (agents/sandbox.ts). */

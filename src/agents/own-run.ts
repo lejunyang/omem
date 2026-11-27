@@ -15,7 +15,7 @@ import { backendCapabilities } from "./capabilities.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 import { resolveCommand } from "./spawn.ts";
 import { doubaoExecutable } from "./doubao-cli.ts";
-import { cachePaths, canonical, normalizeSandbox, ownMounts, selectOwnSandbox, shortPath, under, type OwnSandbox } from "./own-sandbox.ts";
+import { cachePaths, defaultLoginPaths, canonical, normalizeSandbox, ownMounts, selectOwnSandbox, shortPath, under, type OwnSandbox } from "./own-sandbox.ts";
 
 function backendState(profile?: AgentProfile) {
   const layout = profile && (profile.stateLayout ?? sourceOf(profile));
@@ -38,11 +38,13 @@ function checkStateDirectory(path: string) {
     throw new Error("沙箱状态路径需要目录：" + dir);
 }
 
-type MountContext = { workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv };
+type MountContext = { workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv; kind?: string; credentialState?: string[] };
 
 export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: boolean, runId?: string | null, context: MountContext = {}): { box?: OwnSandbox; note?: string } {
   const settings = app.config.agents.ownSandbox;
   const local = !profile.peer && backendCapabilities(profile).where === "local";
+  if (local && !accountOf(profile) && settings.mode !== "off" && context.kind && settings.excludeKinds?.includes(context.kind))
+    return { note: "按运行类型排除本人沙箱：" + context.kind };
   const selected = selectOwnSandbox(settings.mode, local, !!accountOf(profile), sandboxSupport);
   if (!selected.active) return { note: selected.reason };
   const box = planRun(app, profile, cwd, readOnly, runId, context, settings);
@@ -54,7 +56,14 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   const data = canonical(app.home);
   const { dirs, existing, mounts } = backendState(profile);
   const config = normalizeSandbox({ ...settings, writable: [...settings.writable, ...existing] }, home, data);
-  const state = [...dirs, ...cachePaths.map(p => join(home, p)), ...credentialStatePaths(app)];
+  const declared = credentialStatePaths(app);
+  // The existing lending executor works in a host-created empty directory and receives only this declaration.
+  const grant = (context.credentialState ?? []).map(rel => canonical(join(home, rel))).filter(path => declared.includes(path));
+  const state = [...dirs, ...cachePaths.map(p => join(home, p)), ...grant];
+  const authSocket = (context.env?.SSH_AUTH_SOCK ?? process.env.SSH_AUTH_SOCK);
+  const login = normalizeSandbox({ ...settings, writable: [], hidden: [...(settings.loginPaths ?? defaultLoginPaths),
+    ...(authSocket ? [authSocket] : [])] }, home, data).hidden;
+  const masked = [...new Set([...login, ...declared.filter(path => !grant.includes(path))])];
   const checked = normalizeSandbox({ ...config, writable: state }, home, data);
   for (const dir of checked.writable) checkStateDirectory(dir);
   for (const file of existing) {
@@ -62,7 +71,7 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   }
   const runtime = [join(data, "bin"), join(data, "library", "_skills"), omemInstallDir(), dirname(dirname(process.execPath)),
     ...mounts.map(p => expandPath(p))].map(canonical);
-  const box = { home, data, state: checked.writable, writable: config.writable, hidden: config.hidden, runtime,
+  const box = { home, data, masked, state: checked.writable, writable: config.writable, hidden: config.hidden, runtime,
     artifactDir: runId ? join(data, "artifacts", "inbox", runId) : undefined,
     runDir: runId ? join(canonical(app.runsDir), runId, "scratch") : undefined,
     readOnly, snapshot: runId ? join(canonical(app.runsDir), runId, "snap") : undefined,
@@ -96,7 +105,7 @@ export function sandboxStatus(app: App, config = app.config) {
       where instr(json(actions), '"fullAccess":true') > 0 order by id`),
   };
   return { ...config.agents.ownSandbox, home, fullAccessGrants, fullAccess: config.agents.fullAccess, support: sandboxSupport(), backends,
-    defaults: { exampleBackend: example?.id, writable, hidden: [data] },
-    visibility: "默认只管住写。本人 HOME 中的文件可读，要隐藏的目录请加到 hidden。成员自有账号另行隔离，云端和其他设备不在这台的沙箱里。",
+    defaults: { exampleBackend: example?.id, writable, hidden: [data], loginPaths: defaultLoginPaths },
+    visibility: "默认遮住常用登录文件和凭据插件的状态目录，其他 HOME 文件只读，额外隐藏目录可加到 hidden。成员自有账号另行隔离，云端和其他设备不在这台的沙箱里。",
     warning: config.agents.fullAccess === "all" ? "没进沙箱的运行不受任何限制（指后端的沙箱和审批）。omem 工具授权与命令垫片照常检查。" : undefined };
 }
