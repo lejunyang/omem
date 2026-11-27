@@ -228,8 +228,6 @@ const commandLogin = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVAT
 
 export const commandCredentialVariable = (key: string) => !backendLogin.test(key) && commandLogin.test(key);
 
-export { sandboxGate };
-
 export function stripCommandLogin(env: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv) {
   for (const key of Object.keys(env)) if (commandCredentialVariable(key)) delete env[key];
   const gate = run.OMEM_COMMAND_GATE;
