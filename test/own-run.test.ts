@@ -200,7 +200,7 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
     const box = prep.isolation.box!;
     expect(box.readOnly).toBe(true);
     const args = bwrapArgs({ ...box.plan, cwd: prep.cwd, command: profile.command, args: [] });
-    expect(args.slice(args.indexOf("--tmpfs"), args.indexOf("--tmpfs") + 2)).toEqual(["--tmpfs", "/tmp"]);
+    expect(args.some((arg, i) => arg === "--tmpfs" && args[i + 1] === "/tmp")).toBe(true);
     expect([...box.plan.ro, ...box.plan.rw]).not.toContain("/tmp");
     expect(box.plan.rw).toContain(allowed);
     const name = "private-" + app.home.split("/").at(-1);

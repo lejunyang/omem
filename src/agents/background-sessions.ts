@@ -5,7 +5,7 @@ import type { PreparedRun } from "./runner.ts";
 import { issueToolToken, retargetToolToken, revokeToolToken, toolContextForToken } from "./tools.ts";
 import { sessionPrompt, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { sessionCleanup } from "./session-cleanup.ts";
-import { accountOf, egressRequested } from "./sandbox.ts";
+import { accountOf } from "./sandbox.ts";
 import { afterTurn, quotaEvents } from "./quota.ts";
 import { NetworkUnavailableError, networkEnvironment, withNetworkPolicy } from "./network-policy.ts";
 
@@ -55,7 +55,7 @@ export async function backgroundTurn(app: App, prep: PreparedRun, req: AgentRequ
 async function pooledTurn(app: App, prep: PreparedRun, req: AgentRequest, task: string, runId: string | null, emit: (e: AgentEvent) => void): Promise<AgentResult> {
   req = { ...req, cleanup: await sessionCleanup(app, prep.profile, req, emit) };
   const config = app.config.sessions.background;
-  if (req.ownSandbox || egressRequested(app.config,prep.profile) || !config.enabled || config.maxLive === 0 || config.liveMinutes === 0) return runAcp(prep.profile, { ...req, app }, emit);
+  if (req.ownSandbox || accountOf(prep.profile) || !config.enabled || config.maxLive === 0 || config.liveMinutes === 0) return runAcp(prep.profile, { ...req, app }, emit);
   const ctx = toolContextForToken(app, prep.token);
   if (!ctx) throw new Error("后台会话的工具权限已失效");
   const { app: _app, runId: _run, ...scope } = ctx;

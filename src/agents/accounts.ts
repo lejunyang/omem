@@ -15,7 +15,7 @@ import { backendAvailable } from "./availability.ts";
 import { outOfQuotaUntil, sourceOf } from "./capacity.ts";
 import { accountCatalog, type AccountSpec, type CatalogEntry } from "./catalog.ts";
 import { forgetQuota, quotaKind, quotaPressure, quotaView, refreshQuota } from "./quota.ts";
-import { canonical } from "./own-sandbox.ts";
+import { canonical, defaultLoginPaths } from "./own-sandbox.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
 import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
@@ -169,7 +169,9 @@ export function accountEnv(app: App, userId: string, entry: AccountEntry): Recor
 
 export function localAccount(app: App, userId: string, backend: string): SandboxAccount {
   const home = accountHome(app, userId);
-  return { userId, backend, home, masked: credentialStateRels(app).map(rel => join(home, rel)), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
+  const masked = [...credentialStateRels(app).map(rel => join(home, rel)), ...defaultLoginPaths.map(path => path.startsWith("~/") ? join(home, path.slice(2)) : path),
+    ...(process.env.SSH_AUTH_SOCK ? [process.env.SSH_AUTH_SOCK] : [])];
+  return { userId, backend, home, masked, env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
 }
 
 /** What a run (or a login) with this user's account of this backend carries (agents/sandbox.ts). */

@@ -7,7 +7,7 @@ updated: 2026-11-28
 
 ## 本人沙箱的登录路径与运行类型（2026-11-28）
 
-从 `src/agents/own-run.ts` 读起。挂载工作区后再遮住登录文件、SSH agent 套接字和插件状态，设置可替换内置路径或排除指定类型的本人运行。`src/agents/egress-run.ts` 将本人沙箱接入已有的 all-sandboxed 出网模式。
+从 `src/agents/own-run.ts` 读起。挂载工作区后再遮住登录文件、SSH agent 套接字和插件状态，设置可替换内置路径或排除指定类型的本人运行。`src/agents/egress-run.ts` 将本人沙箱接入已有的 all-sandboxed 出网模式。命令启动从 `src/agents/command-executor.ts` 读起，同身份的命令使用独立沙箱和流式管道，原有借用流程保留。
 
 ## 进度块的任务行对齐（2026-11-28）
 

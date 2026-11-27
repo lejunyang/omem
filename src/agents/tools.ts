@@ -112,6 +112,7 @@ export type ToolContext = {
   commandTurn?: string;
   /** Account whose HOME the local process sees. Defaults to the machine login. */
   commandHomeUser?: string | null;
+  commandSandbox?: import("./command-executor.ts").CommandSandbox;
   /** Host-selected directory for browsers opened locally by this run. */
   browserProfilesRoot?: string;
   app: App;

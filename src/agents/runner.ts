@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { waitForPolicy, groupPick, policyScope, policyReason, scopedProfiles, pickOf, type PolicyScope } from "./ai-policy.ts";
 import { guardUrlNow } from "../remote/browser-guard.ts";
 import { audit } from "../auth/permissions.ts";
@@ -60,7 +61,7 @@ import { ownRun } from "./own-run.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 import { runAccount } from "./run-account.ts";
-import { accountOf, egressRequested, egressSupport } from "./sandbox.ts";
+import { accountOf, egressRequested, egressSupport, type WorkspaceMounts } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -599,7 +600,7 @@ export function prepareRun(
   const account = accountOf(profile);
   const base = new URL(app.baseUrl);
   if (egressRequested(app.config,profile) && egressSupport().ok) base.hostname = "127.0.0.1";
-  const toolBase = base.origin;
+  let toolBase = base.origin;
   const reconciling = roleName === "flow-reconcile";
   const browserProfilesRoot = !reconciling && (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.investigationTools && !input.itemTakeoverRead && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
@@ -612,14 +613,16 @@ export function prepareRun(
   const legacyFull = !readOnly && !input.shadow && (input.fullAccess ?? ownDefault);
   const allowWrites = !readOnly && (spec ? spec.writes : role!.writes);
   const guestTurn = !!input.guestTurn || (!spec && GUEST_ROLES.includes(roleName));
+  let assigned: WorkspaceMounts | undefined;
   const mounts = (readOnly: boolean) => {
     const trees = input.worktrees ?? (readOnly ? input.reviewTrees : undefined);
-    return trees && (trees.length || input.worktreeAccess === "read") ? workspaceMounts(app, trees,
+    return assigned = trees && (trees.length || input.worktreeAccess === "read") ? workspaceMounts(app, trees,
       input.worktreeAccess === "commit" ? input.runId ?? undefined : undefined,
       input.worktreeAccess === "read" || readOnly ? "read" : "write") : undefined;
   };
   const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId,
     { workspace: mounts, kind: userId === OWNER && !guestTurn && !input.shadow ? input.scene?.kind : undefined, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
+  if (isolation.box?.isolatedNetwork) { base.hostname = "127.0.0.1"; toolBase = base.origin; }
   const workspace = isolation.box?.plan ?? (account ? mounts(false) : undefined);
   // An overlapping check can write its host-created detached snapshot, alongside the read-only originals.
   if (account && workspace && input.worktreeAccess === "read" && input.runId) {
@@ -680,7 +683,26 @@ export function prepareRun(
   const textOnly = !!inputs && !inputs.includes("image") ? "\n- 这次用的模型只读文字、看不了图片：遇到图片（飞书消息里的、附件里的）不要用图片工具打开，直接说明这个模型看不了图，需要的话请对方用文字描述，或换一个能看图的模型再问" : "";
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}${capabilities.localTools ? commandLoginNote(app, userId) : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${textOnly}${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, tools.size > 0)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
-  const token = issueToolToken({ commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const commandWork = () => {
+    const read = guestTurn || !allowWrites || !!input.shadow;
+
+    const dir = canonical(cwd);
+    const plan = isolation.box?.plan;
+    if (!assigned && [canonical(app.home), canonical(account?.home ?? homedir()), "/tmp", "/"].some(root => under(root, dir))) return { ro: [], rw: [] };
+    if (!assigned) return {
+      ro: read && (!plan || plan.ro.includes(dir)) ? [dir] : [],
+      rw: (!read || plan?.rw.includes(dir)) && (!plan || plan.rw.includes(dir)) ? [dir] : [],
+    };
+    return plan ? { ...assigned, ro: assigned.ro.filter(p => plan.ro.includes(p)), rw: assigned.rw.filter(p => plan.rw.includes(p)), links: plan.links, pointers: plan.pointers } : assigned;
+  };
+  const commandSandbox = isolation.box || account ? { profile, own: isolation.box, workspace: commandWork() } : undefined;
+  if (commandSandbox) {
+    const box = isolation.box;
+    const extra = box ? [box.runDir, box.artifactDir].filter((p): p is string => !!p && box.plan.rw.includes(p)) :
+      input.inbox ? [canonical(input.inbox)] : [];
+    commandSandbox.workspace.rw = [...new Set([...commandSandbox.workspace.rw, ...extra])];
+  }
+  const token = issueToolToken({ commandSandbox, commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   return {
     isolation,
     workspace,
@@ -695,7 +717,8 @@ export function prepareRun(
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
     mcp: { url: `${toolBase}/mcp`, baseUrl: toolBase, token, stdio: mcpBridge(), env: {
-      ...agentToolEnv(app.home, toolBase, token, commandGateDir(app)),
+      ...agentToolEnv(app.home, toolBase, token, commandGateDir(app, !!commandSandbox)),
+      ...(commandSandbox ? { GIT_ASKPASS: join(app.home, "bin", "sandbox", "bin", "git-askpass"), GIT_TERMINAL_PROMPT: "0" } : {}),
       ...(input.inbox ? { OMEM_ARTIFACTS: input.inbox } : {}),
       ...(browserProfilesRoot ? { OMEM_BROWSER_PROFILES: browserProfilesRoot } : {}),
       // Someone else's run: the browsers it opens go through the guard that keeps them off this machine (remote/browser-guard.ts).

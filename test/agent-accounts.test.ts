@@ -112,7 +112,7 @@ describe("whether this machine can sandbox", () => {
     const seen: string[][] = [];
     const ok = detectSandbox("linux", { OMEM_BWRAP: "/opt/bwrap" }, (_f, a) => {
       seen.push(a);
-      return { status: 0, stdout: a[0] === "--version" ? "bubblewrap 0.9.0" : "", stderr: "" };
+      return { status: 0, stdout: a[0] === "--version" ? "bubblewrap 0.9.0" : a[0] === "--help" ? "--bind-fd --ro-bind-fd" : "", stderr: "" };
     });
     expect(ok).toEqual({ ok: true, bwrap: "/opt/bwrap", version: "0.9.0" });
     expect(seen).toContainEqual(PROBE_ARGS);

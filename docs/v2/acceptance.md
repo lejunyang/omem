@@ -304,7 +304,9 @@
 
 16. 用临时 HOME 保存模拟的 Git 凭据文件、SSH 目录和插件状态。在本人沙箱验证空文件、空目录以及数据目录遮挡。添加一个排除类型，用两种类型启动并核对沙箱状态。
 
-自动验证见 `test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
+17. 在模拟安装目录中以 PATH、绝对路径和脚本入口调用被拒绝的命令。用测试登录验证工作区内的副本读不到登录，成员命令只能读本账号的状态。让允许的命令先输出再读 stdin，检查 stderr、退出码及断开后的子进程清理。
+
+自动验证见 `test/command-executor.test.ts`、`test/own-sandbox.test.ts`、`test/own-sandbox-linux.test.ts`、`test/own-run.test.ts`、`test/workspace-mounts.test.ts`、`test/doubao-cli.test.ts`、`test/full-access.test.ts` 和 `test/agent-accounts.test.ts`。
 
 ## 插件凭据第三期
 

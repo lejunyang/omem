@@ -35,7 +35,7 @@ import { memberThreadAi } from "./member-ai.ts";
 import { selectMemberRunAccount } from "./member-run-ai.ts";
 import { aiLoginWait } from "./credential-wait.ts";
 import { SandboxStartError } from "./spawn.ts";
-import { accountTag, egressRequested } from "./sandbox.ts";
+import { accountTag, accountOf } from "./sandbox.ts";
 import { afterTurn, noteRateLimit, quotaPressure } from "./quota.ts";
 import { peopleInChat, workStateBrief, workStateStamp } from "./work-state.ts";
 import { awarenessNote } from "./awareness.ts";
@@ -782,7 +782,7 @@ ${WAKE_NOTE}`
         }
       };
       let l = step === 0 ? live.get(threadId) : undefined;
-      if (l && (curPrep.isolation.box || egressRequested(app.config, used) || l.key !== liveKey(curPrep) || !l.handle.alive() || tooLong)) {
+      if (l && (curPrep.isolation.box || accountOf(used) || l.key !== liveKey(curPrep) || !l.handle.alive() || tooLong)) {
         release(threadId);
         l = undefined;
       }
@@ -853,7 +853,7 @@ ${WAKE_NOTE}`
         const cur = live.get(threadId);
         if (cur) {
           cur.busy = false;
-          if (curPrep.isolation.box || egressRequested(app.config, curPrep.profile)) release(threadId);
+          if (curPrep.isolation.box || accountOf(curPrep.profile)) release(threadId);
           else if (done) keepAlive(app, cur);
         }
       }

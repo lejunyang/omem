@@ -75,6 +75,7 @@ import { all, one, run } from "../core/db.ts";
 import { forgetRelayErrors, keyPaused, relayRequest, relayStats } from "../core/ai-relay.ts";
 import { useRelayBase } from "../core/ai-relay-addr.ts";
 import { allProfiles, keyBackendsOf, keyedProfiles, providerFormats, providerModels, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
+import { executionPermit, pendingExecution } from "../agents/command-executor.ts";
 import { credentialExecution, memberExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
@@ -350,13 +351,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (viaProxy(req.raw) || !(loopbackIp(req.ip ?? "") || (!!s.remoteAddress && s.remoteAddress === s.localAddress))) throw new HttpError(403, "命令拦截只接受本机的请求");
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
-    const b = q(z.object({ credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
+    const b = q(z.object({ stream: z.boolean().optional(), credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
     const burst = gateBurst([ctx.runId ?? digest(bearer(req)), b.command, digest(b.args)].join("\n"));
     if (burst) {
       if (ctx.runId && burst === "first") addRunEvent(app, ctx.runId, "status", { text: `命令 ${b.command} 一分钟内以同样的参数请求了 60 次以上，疑似进程在循环启动自己，已拒绝。` });
       return { decision: "deny", message: "同一条命令一分钟内重复了 60 次以上，疑似在循环启动自己，omem 拒绝执行。" };
     }
     const decision = await commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+    const allowed = () => decision.decision === "allow" && b.stream ? executionPermit(ctx, bearer(req), b) : undefined;
     // A rule's run switched to a member who agreed (rules/run-as.ts): declared commands run on their login.
     const runAs = ctx.runId && b.credentialExecution && decision.decision === "allow" ? await import("../rules/run-as.ts") : null;
     const member = runAs?.actingAs(ctx.runId);
@@ -392,13 +394,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         try {
           const loan = await credentialExecution(ctx, entry, b.args, live, controller.signal);
           if (!live()) return { decision: "deny", message: "运行或操作规则已变化，请重新执行" };
+          if (loan && "decision" in loan && loan.decision === "deny") return loan;
           // Outcomes are reported only for the requester's own environment (the owner's HOME is not theirs).
-          return { ...decision, report: reports, ...loan };
+          return { ...decision, report: reports, ...loan, permit: loan?.execution ? undefined : allowed() };
         } finally { s.off("close", cancel); unsubscribe(); }
       }
-      if (entry) return { ...decision, report: reports };
+      if (entry) return { ...decision, report: reports, permit: allowed() };
     }
-    return decision;
+    return { ...decision, permit: allowed() };
   });
   // A request a page is about to send in a browser an agent drives (agents/http-gate.ts): the same
   // callers as the command gate — this machine, a run's token. GET says which requests to ask about.
@@ -409,6 +412,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     return ctx;
   };
+  server.addContentTypeParser("application/x-omem-stdin", (_req, payload, done) => done(null, payload));
+  server.post("/api/command-gate/stream/:permit", async (req, reply) => {
+    gateCaller(req);
+    const execute = pendingExecution(bearer(req), (req.params as { permit: string }).permit);
+    if (!execute || req.headers["content-type"] !== "application/x-omem-stdin") throw new HttpError(403, "需要本轮未使用的命令授权");
+    reply.hijack();
+    try { await execute(req.raw, reply.raw); }
+    catch (e) {
+      if (!reply.raw.headersSent) reply.raw.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+      reply.raw.end((e as Error).message);
+    }
+  });
   server.post("/api/credentials/outcome", async req => {
     const ctx = gateCaller(req);
     if (!ctx.runId || !reportable(ctx)) throw new HttpError(403, "需要发起人自己账号的本机运行");

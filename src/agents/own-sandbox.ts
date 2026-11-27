@@ -32,11 +32,19 @@ export function normalizeSandbox(settings: Settings, home: string, data: string,
     ...(settings.loginPaths && { loginPaths: paths(settings.loginPaths, false) }) };
 }
 
-export const defaultLoginPaths = [
-  "~/.ssh", "~/.gnupg", "~/.git-credentials", "~/.config/git/credentials", "~/.netrc", "~/.authinfo",
-  "~/.config/gh", "~/.config/glab-cli", "~/.docker/config.json", "~/.aws", "~/.azure",
-  "~/.config/gcloud", "~/.kube", "~/.terraform.d/credentials.tfrc.json", "~/.npmrc", "~/.pypirc",
-];
+// Standard logins with an unambiguous CLI owner. Other commands can declare their state through a plugin.
+const sshLogin = [".ssh"];
+export const standardCommandLogins: ReadonlyMap<string, readonly string[]> = new Map([
+  ["ssh", sshLogin], ["scp", sshLogin], ["sftp", sshLogin],
+  ["gh", [".config/gh"]], ["glab", [".config/glab-cli"]],
+  ["aws", [".aws"]], ["az", [".azure"]], ["gcloud", [".config/gcloud"]], ["kubectl", [".kube"]],
+  ["docker", [".docker/config.json"]],
+]);
+export const gitLoginPaths = [".ssh", ".gitconfig", ".config/git/config", ".git-credentials", ".config/git/credentials", ".netrc", ".config/gh"];
+export const defaultLoginPaths = [...new Set([
+  ...gitLoginPaths, ...[...standardCommandLogins.values()].flat(), ".gnupg", ".authinfo",
+  ".terraform.d/credentials.tfrc.json", ".npmrc", ".pypirc",
+])].map(path => "~/" + path).concat(["/run/docker.sock", "/run/podman/podman.sock", "/run/systemd/private", "/run/dbus/system_bus_socket"]);
 
 export const cachePaths = [
   ".cache", // XDG tool and build caches.
@@ -49,7 +57,7 @@ export type OwnMountConfig = {
   isolatedNetwork?: boolean; network?: SandboxNetwork; masked?: string[]; runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
 };
 type Program = { file: string; prefix: string[] };
-export type OwnSandbox = OwnMountConfig & { plan: ReturnType<typeof ownMounts> };
+export type OwnSandbox = OwnMountConfig & { guarded?: string; plan: ReturnType<typeof ownMounts> };
 
 export function selectOwnSandbox(mode: Settings["mode"], local: boolean, memberAccount: boolean, probe: () => SandboxSupport) {
   if (mode === "off" || memberAccount) return { active: false };
@@ -91,12 +99,18 @@ export function ownMounts(box: OwnMountConfig, cwd: string, workspace?: Workspac
     pointers: workspace?.pointers?.filter(pointer => visible(pointer.path)) };
 }
 
+// Backend API keys and the per-run tool token are needed by the backend itself.
+const backendLogin = /^(?:OPENAI|ANTHROPIC|CLAUDE|CODEX|TRAE|DOUBAO|GEMINI)_|^OMEM_TOKEN$/i;
+const commandLogin = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE_KEY|ACCESS_KEY|API_KEY)(?:_|$)|^(?:SSH_AUTH_SOCK|SSH_AGENT_PID|SSH_ASKPASS|GIT_ASKPASS|GIT_CONFIG_.+|GH_.+|GITHUB_.+|GITLAB_.+|GLAB_.+|DOCKER_AUTH_CONFIG|AWS_.+|AZURE_.+|CLOUDSDK_.+|GOOGLE_APPLICATION_CREDENTIALS|KUBECONFIG)$/i;
+
 export function ownSandboxEnv(base: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv, secretEnv: string[]) {
   const out = { ...base };
   for (const key of Object.keys(out)) if (/^OMEM_/i.test(key)) delete out[key];
   Object.assign(out, run);
+  const gitHint = run.GIT_ASKPASS;
   const runKeys = ["OMEM_TOKEN", "OMEM_URL", "OMEM_ARTIFACTS", "OMEM_RUN_DIR", "OMEM_COMMAND_GATE", "OMEM_DESKTOP_TOOLS", "OMEM_BROWSER_PROFILES", "OMEM_BROWSER_PROXY"];
-  for (const key of Object.keys(out)) if (/^(SSH_AUTH_SOCK|SSH_AGENT_PID|GIT_ASKPASS|SSH_ASKPASS|GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|NPM_TOKEN|NODE_AUTH_TOKEN|DOCKER_AUTH_CONFIG|AWS_.+|AZURE_.+|CLOUDSDK_.+|GOOGLE_APPLICATION_CREDENTIALS|KUBECONFIG)$/i.test(key) || secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
+  for (const key of Object.keys(out)) if ((!backendLogin.test(key) && commandLogin.test(key)) || secretEnv.includes(key) || (/^OMEM_/i.test(key) && !runKeys.includes(key))) delete out[key];
+  if (run.OMEM_COMMAND_GATE?.endsWith("/bin/sandbox/bin/guarded") && gitHint === posix.join(posix.dirname(run.OMEM_COMMAND_GATE), "git-askpass")) out.GIT_ASKPASS = gitHint;
   out.TMPDIR = "/tmp";
   return out;
 }

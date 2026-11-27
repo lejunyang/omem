@@ -161,3 +161,28 @@ it.skipIf(!support.ok)("默认登录文件和插件状态不会随工作区挂�
     rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
   }
 });
+
+it.skipIf(!support.ok)("运行开始后新建的登录文件在只读 HOME 里仍不可用 " + (support.reason ?? ""), async () => {
+  const home = mkdtempSync(join(tmpdir(), "future-login-"));
+  vi.stubEnv("HOME", home);
+  const app = testApp();
+  try {
+    const cwd = join(home, "project");
+    mkdirSync(cwd);
+    app.config.agents.ownSandbox = { mode: "require", loginPaths: ["~/.netrc"], hidden: [], writable: [] };
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+    const box = ownRun(app, profile, cwd, false).box!;
+    box.plan.ro.push(home);
+    const child = launch("/bin/sh", ["-ec", 'echo ready; read line; test ! -s "$HOME/.netrc"'], { cwd, ownSandbox: box });
+    let errors = "";
+    child.stderr.on("data", chunk => errors += chunk);
+    const closed = once(child, "close");
+    expect(await Promise.race([once(child.stdout, "data").then(([b]) => String(b).trim()), closed.then(() => errors)])).toBe("ready");
+    expect(existsSync(join(home, ".netrc"))).toBe(false);
+    writeFileSync(join(home, ".netrc"), "fixture");
+    child.stdin.end("check\n");
+    expect((await closed)[0], errors).toBe(0);
+  } finally {
+    vi.unstubAllEnvs(); app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+  }
+});

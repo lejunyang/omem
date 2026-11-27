@@ -60,10 +60,14 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   // The existing lending executor works in a host-created empty directory and receives only this declaration.
   const grant = (context.credentialState ?? []).map(rel => canonical(join(home, rel))).filter(path => declared.includes(path));
   const state = [...dirs, ...cachePaths.map(p => join(home, p)), ...grant];
-  const authSocket = (context.env?.SSH_AUTH_SOCK ?? process.env.SSH_AUTH_SOCK);
+  const env = { ...process.env, ...profile?.env, ...context.env };
+  const loginFiles = ["SSH_AUTH_SOCK", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "GOOGLE_APPLICATION_CREDENTIALS",
+    "CLOUDSDK_CONFIG", "AZURE_CONFIG_DIR", "DOCKER_CONFIG", "GH_CONFIG_DIR", "GIT_CONFIG_GLOBAL", "GNUPGHOME"]
+    .flatMap(key => env[key] || []);
+  if (env.KUBECONFIG) loginFiles.push(...env.KUBECONFIG.split(":").filter(Boolean));
   const login = normalizeSandbox({ ...settings, writable: [], hidden: [...(settings.loginPaths ?? defaultLoginPaths),
-    ...(authSocket ? [authSocket] : [])] }, home, data).hidden;
-  const masked = [...new Set([...login, ...declared.filter(path => !grant.includes(path))])];
+    ...loginFiles.filter(p => p.startsWith("/") && !p.startsWith("/dev/"))] }, home, data).hidden;
+  const masked = [...new Set([...login, ...declared])].filter(path => !grant.includes(path));
   const checked = normalizeSandbox({ ...config, writable: state }, home, data);
   for (const dir of checked.writable) checkStateDirectory(dir);
   for (const file of existing) {

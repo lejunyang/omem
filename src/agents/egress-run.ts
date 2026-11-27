@@ -1,7 +1,7 @@
 import type { OwnSandbox } from "./own-sandbox.ts";
 import { OWNER } from "../core/users.ts";
 import { commandExists } from "./spawn.ts";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
@@ -59,6 +59,30 @@ export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: A
   req: { app?: App; ownSandbox?: OwnSandbox; context?: ToolContext; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount, ownSandbox?: OwnSandbox) => T) {
   const account = accountOf(profile);
   const app = req.app;
+  if (app && !req.context && !req.mcp && (account || req.ownSandbox)) {
+    // Tool-less model calls have no token. Their protected entry points must fail closed.
+    const { commandGateDir } = await import("./command-gate.ts");
+    const guarded = commandGateDir(app, true)!;
+    const launch = start;
+    start = (acct, box) => launch(acct && { ...acct, guarded }, box && { ...box, guarded });
+  }
+  const scope = app && req.mcp && toolContextForToken(app, req.mcp.token)?.commandSandbox;
+  if (scope && req.mcp && (account || req.ownSandbox)) {
+    // The Agent and approved commands share this turn's files, including an explicitly
+    // requested cwd inside /tmp. The executor has a separate TMPDIR for its own scratch.
+    const token = req.mcp.token;
+    if (!scope.workspace.privateTmp) {
+      const dir = realpathSync(mkdtempSync("/tmp/omem-command-"));
+      scope.workspace.privateTmp = dir;
+      const off = onToolTokenRevoked(token, () => {
+        off();
+        void rm(dir, { recursive: true, force: true }).catch(() => {});
+      });
+    }
+    const privateTmp = scope.workspace.privateTmp;
+    const launch = start;
+    start = (acct, box) => launch(acct && { ...acct, privateTmp }, box && { ...box, plan: { ...box.plan, privateTmp } });
+  }
   if (!app || !egressRequested(app.config, profile, !!req.ownSandbox)) return start(account, req.ownSandbox);
   const support = egressSupport();
   if (!support.ok) {

@@ -1,3 +1,5 @@
+import { withPinnedBinds } from "./bwrap-spawn.ts";
+import { commandMounts } from "./command-mounts.ts";
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
@@ -57,10 +59,14 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" | "ignore" | number }) {
   // Agents get tools osdk installed (desktop control) on PATH without the owner putting osdk shims there.
   const base = opts.baseEnv ?? process.env;
-  const env = withAgentPath({ ...base, ...opts.env });
+  const guarded = opts.ownSandbox?.guarded ?? opts.sandbox?.guarded;
+  const runEnv = guarded ? { ...opts.env, OMEM_COMMAND_GATE: guarded } : opts.env;
+  const env = withAgentPath({ ...base, ...runEnv });
+  if (guarded) env.PATH = guarded + delimiter + (env.PATH ?? "");
   const resolved = resolveCommand(command, env);
   if (!resolved) throw new Error(`找不到命令 ${command}。请安装对应 Agent CLI 或在设置中修改命令。`);
   if (opts.directOnly && resolved.prefix.includes("/c")) throw new Error("命令需要经过 shell 才能启动");
+  const snapshotSources = new Set<string>();
   let boxed;
   if (opts.ownSandbox) {
     const box = opts.ownSandbox;
@@ -71,17 +77,18 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
       if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
-    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...opts.env, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-      args: bwrapArgs({ ...plan, network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }) };
-  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...opts.env, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base) : null;
-  const child = spawn(boxed?.file ?? resolved.file, boxed?.args ?? [...resolved.prefix, ...args], {
+    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
+      args: bwrapArgs({ ...plan, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources) };
+  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, snapshotSources) : null;
+  const start = (argv: string[], fds: number[]) => spawn(boxed?.file ?? resolved.file, argv, {
     cwd: opts.cwd,
     env: boxed?.env ?? env,
-    stdio: [opts.stdin ?? "pipe", "pipe", "pipe"],
+    stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...fds],
     shell: false,
     windowsHide: true,
     detached: process.platform !== "win32",
   });
+  const child = boxed && snapshotSources.size ? withPinnedBinds(boxed.args, snapshotSources, start) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
   child.stdin?.on("error", () => {});
   return child;
 }

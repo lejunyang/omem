@@ -1,5 +1,6 @@
+import { commandMounts } from "./command-mounts.ts";
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +22,8 @@ export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; re
 
 /** What a run for one user's own account carries on its profile (accounts.ts sets it in prepareRun). */
 export type SandboxAccount = {
+  guarded?: string;
+  privateTmp?: string;
   /** In a borrowed HOME, bind only shared state and create the other required directories privately. */
   borrowed?: { state: string[]; dirs: string[] };
   masked?: string[];
@@ -93,6 +96,9 @@ export function detectSandbox(platform: NodeJS.Platform = process.platform, env:
     const why = (p.error?.message ?? p.stderr.trim()).slice(0, 200) || `退出码 ${p.status}`;
     return { ok: false, bwrap, version, reason: `bubblewrap 起不来（多半是系统没有允许非特权用户命名空间）：${why}` };
   }
+  const help = run(bwrap, ["--help"]);
+  if (!["--bind-fd", "--ro-bind-fd"].every(flag => (help.stdout + help.stderr).includes(flag)))
+    return { ok: false, bwrap, version, reason: "bubblewrap 缺少按文件描述符挂载的能力，需要 --bind-fd 和 --ro-bind-fd" };
   return { ok: true, bwrap, version };
 }
 
@@ -100,6 +106,9 @@ const depth = (p: string) => p.split("/").filter(Boolean).length;
 const inside = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
 
 export type SandboxPlan = {
+  privateTmp?: string;
+  minimalRoot?: boolean;
+  commandMounts?: string[];
   masked?: string[];
   network?: SandboxNetwork;
   /** Empty directories created in the sandbox with mode 0700. */
@@ -116,7 +125,7 @@ export type SandboxPlan = {
   args: string[];
 };
 
-export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointers">;
+export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointers" | "privateTmp">;
 
 /**
  * bubblewrap's arguments for a plan. Pure. Mounts go from the shallowest path to the deepest, so a
@@ -124,7 +133,7 @@ export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointer
  * (omem's data folder inside its checkout) stays hidden; at the same path writable wins. /tmp is
  * always private.
  */
-export function bwrapArgs(plan: SandboxPlan): string[] {
+export function bwrapArgs(plan: SandboxPlan, snapshotSources?: Set<string>): string[] {
   const rank = { dir: 0, tmpfs: 1, ro: 2, rw: 3 } as const;
   const ops = new Map<string, { path: string; kind: keyof typeof rank }>();
   const add = (path: string, kind: keyof typeof rank) => {
@@ -137,16 +146,44 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
   for (const p of [...plan.hide, "/tmp"]) add(p, "tmpfs");
   for (const p of plan.ro) add(p, "ro");
   for (const p of plan.rw) add(p, "rw");
+  // Project the existing names in a read-only parent. Newly created host logins stay
+  // outside the run, and no mountpoint has to be created in the real HOME.
+  const credentials = [...new Set(plan.masked)].filter(path => !plan.masked?.some(parent => parent !== path && inside(path, parent)));
+  const snapshots = new Map<string, "ro" | "rw">();
+  const snapshotLinks: string[] = [];
+  if (!plan.minimalRoot) for (const path of credentials) {
+    let parent = dirname(path);
+    while (!existsSync(parent)) parent = dirname(parent);
+    const mount = [...ops.values()].filter(op => inside(parent, op.path)).sort((a, b) => b.path.length - a.path.length)[0];
+    if (mount ? mount.kind !== "ro" && mount.kind !== "rw" : plan.network) continue;
+    if (parent === "/") throw new Error("根目录下的隐藏登录路径需要已存在的父目录");
+    snapshots.set(parent, mount?.kind === "rw" ? "rw" : "ro");
+  }
+  for (const [parent, access] of [...snapshots].sort(([a], [b]) => depth(a) - depth(b))) {
+    ops.set(parent, { path: parent, kind: "tmpfs" });
+    const dir = opendirSync(parent);
+    try {
+      let count = 0;
+      for (let entry; (entry = dir.readSync());) {
+        if (++count > 4096) throw new Error("登录路径父目录条目过多，请指定专用的登录目录");
+        const path = join(parent, entry.name);
+        if (ops.has(path) || credentials.includes(path)) continue;
+        if (entry.isSymbolicLink()) snapshotLinks.push("--symlink", readlinkSync(path), path);
+        else { add(path, access); snapshotSources?.add(path); }
+      }
+    } finally { dir.closeSync(); }
+  }
   const sorted = [...ops.values()].sort((a, b) => depth(a.path) - depth(b.path) || rank[a.kind] - rank[b.kind] || a.path.localeCompare(b.path));
   const mounts = sorted.flatMap(({ kind, path }) => {
     if (kind === "dir") return ["--perms", "0700", "--dir", path];
+    if (kind === "tmpfs" && path === "/tmp" && plan.privateTmp) return ["--bind", plan.privateTmp, path];
     if (kind === "tmpfs") return ["--tmpfs", path];
     return [kind === "ro" ? "--ro-bind-try" : "--bind", path, path];
   });
   const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
   const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
   // Apply credential masks last, including inside writable caches or a mounted account HOME.
-  const masks = (plan.masked ?? []).flatMap(path => {
+  const masks = credentials.flatMap(path => {
     const stat = statSync(path, { throwIfNoEntry: false });
     if (!stat) return [];
     return stat.isDirectory() ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path];
@@ -157,8 +194,9 @@ export function bwrapArgs(plan: SandboxPlan): string[] {
   const relay = n ? [process.execPath, fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./egress-relay.ts" : "./egress-relay.js", import.meta.url)), String(n.callbackPort ?? 0)] : [];
   // A read-only host root still exposes live filesystem sockets. Networked runs start with
   // the runtime directories and explicit run mounts, leaving host service sockets outside.
-  const root = n ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
-  return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, ...masks,
+  const root = n || plan.minimalRoot ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
+  return ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, ...snapshotLinks, ...masks, ...(plan.commandMounts ?? []),
+    ...[...snapshots].flatMap(([p, access]) => access === "ro" ? ["--remount-ro", p] : []),
     ...(n ? ["--unshare-net", "--tmpfs", "/run", ...(n.secrets && existsSync(n.secrets) ? ["--tmpfs", n.secrets] : []), "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
     ...ca, "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
 }
@@ -234,7 +272,7 @@ export function omemInstallDir() {
  * What `launch` starts instead of the command, for a run of one user's own account: bwrap with
  * the mounts worked out from where the command really lives.
  */
-export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env): { file: string; args: string[]; env: Record<string, string> } {
+export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, snapshotSources?: Set<string>): { file: string; args: string[]; env: Record<string, string> } {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
   const hide = [...new Set([...acct.hide, homedir(), "/tmp"].filter((p) => isAbsolute(p) && existsSync(p)).map(real))];
@@ -273,7 +311,7 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    args: bwrapArgs({ masked: acct.masked, network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }),
+    args: bwrapArgs({ privateTmp: acct.privateTmp ?? workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: [...new Set(acct.masked?.flatMap(path => [path, real(path)]))], network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, snapshotSources),
     env: sandboxEnv(baseEnv, runEnv, acct, hide, nodeBin),
   };
 }
