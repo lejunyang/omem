@@ -24,6 +24,8 @@ export type ThreadSettings = {
   /** Temporary model/effort override for this thread (set with /model); cleared with /model off. */
   model?: string | null;
   effort?: string | null;
+  /** The authenticated owner selected this conversation AI in a command or model card. */
+  ownerNamedAi?: true;
   /** Member commands affect only that member's turns even when the conversation is shared. */
   memberAi?: Record<string, import("./member-ai.ts").MemberAiPick>;
   /** The AI chosen when the thread's current agent session started (agents/choose-ai.ts), or the one a failed-over turn moved to; used while nothing above pins one. */
@@ -273,10 +275,14 @@ export function updateThread(
   patch: Partial<{ title: string; spaceId: string; settings: ThreadSettings; summary: string; summaryAt: string; agentProfile: string | null; agentSession: string | null; agentCwd: string | null; agentTurns: number }>,
 ) {
   const t = getThread(app, id);
+  const settings = { ...t.settings, ...patch.settings };
+  // A tool or routing change must not inherit the previous selection's owner exception.
+  if (patch.settings && !Object.hasOwn(patch.settings, "ownerNamedAi") &&
+      (["profile", "model", "effort"] as const).some(k => settings[k] !== t.settings[k])) delete settings.ownerNamedAi;
   const next = {
     title: patch.title ?? t.title,
     space_id: patch.spaceId ?? t.spaceId,
-    settings: JSON.stringify(patch.settings ? { ...t.settings, ...patch.settings } : t.settings),
+    settings: JSON.stringify(settings),
     summary: patch.summary ?? t.summary,
     summary_at: patch.summaryAt ?? t.summaryAt,
     agent_profile: patch.agentProfile === undefined ? t.agentProfile : patch.agentProfile,

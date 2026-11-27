@@ -72,6 +72,7 @@ Agent 自己也能发卡片：按钮、下拉、输入框、表单（每题一�
 
 - `/new 任务` 开新会话，`/topic 任务` 在飞书里开话题
 - `/as 档案 任务` 交给某个 Agent 档案
+- `/topic codex astra xhigh 整理方案` 开一个使用该 AI 的话题。`/claudeopus5.5high` 和 `/claude opus5.5 high` 写法相同。多个不同模型都符合时，在卡片上选择。
 - `/agent 后端id` 指定本会话的后端，`/model 模型名 [effort=…]` 指定模型和思考强度。成员的命令只影响自己的运行。
 - 成员用 `/agent save 后端id` 或 `/model save 模型名` 保存个人默认。用 `/agent default` 或 `/model off` 清除会话选择，用 `/agent save default` 清除个人默认 AI。
 - `/watch 档案 …` 让一个档案长期处理这个群（见 [群里的协作](./lark-groups)）

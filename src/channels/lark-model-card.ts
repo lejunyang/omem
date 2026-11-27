@@ -90,7 +90,7 @@ export function applyModelCard(app: App, threadId: string, action: ModelAction):
   if (!t) throw new Error("会话不存在");
   const value = typeof action.value === "string" ? safe(action.value) : (action.value as Record<string, unknown>);
   if (value && (value as { action?: string }).action === "model:off") {
-    updateThread(app, threadId, { settings: { model: null, effort: null } });
+    updateThread(app, threadId, { settings: { model: null, effort: null, ownerNamedAi: t.settings.profile ? t.settings.ownerNamedAi : undefined } });
     releaseThreadSession(threadId);
     return { card: modelCard(app, threadId), toast: "已恢复默认模型" };
   }
@@ -111,6 +111,7 @@ export function applyModelCard(app: App, threadId: string, action: ModelAction):
   updateThread(app, threadId, {
     settings: {
       profile: form.profile || undefined,
+      ownerNamedAi: form.profile || model || form.effort ? true : undefined,
       model: model || null,
       effort: form.effort || null,
     },

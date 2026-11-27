@@ -214,6 +214,8 @@ async function runAsk(ctx: RunContext) {
     // A reply that says nothing (only what it is about to do, a bare “收到”, only ways out): back to it once (reply-check.ts).
     answer = await reviseHollow(ctx, answer, async (prompt) => (await threadTurn(ctx, input.conversationId, msgs, input.userId ?? runUser(ctx.app, ctx.run.id), prompt)).text);
   }
+  const notes = ctx.run.input.commandNotes as string[] | undefined;
+  if (notes?.length) answer = notes.join("\n") + "\n\n" + answer;
   // It said it has nothing to say (stay_quiet, only where nobody waits on the turn): nothing is posted.
   const quiet = quietReason(ctx.app, ctx.run.id);
   // Woken by a wake-up it set: nobody waits on it either.

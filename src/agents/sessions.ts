@@ -398,8 +398,10 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   if (login && (!member || login.userId !== userId)) throw new Error("等待登录的成员已不可用");
   const scope = actorScope(app, actor, ctx.run.kind);
   const personal = member ? memberThreadAi(app, t, userId) : {};
-  const specified = !!(personal.profile || personal.model || personal.effort);
-  const choice = login?.pick ?? (specified ? { ...personal, profile: personal.profile ?? t.settings.profile } : { profile: t.settings.profile, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
+  // An explicit switch_run_ai replaces a command that was already in the lane.
+  const turnAi = !ctx.run.input.ai ? ctx.run.input.turnAi as import("./ai-spec.ts").AiPick | undefined : undefined;
+  const specified = !!((member && turnAi) || personal.profile || personal.model || personal.effort);
+  const choice = login?.pick ?? turnAi ?? (specified ? { ...personal, profile: personal.profile ?? t.settings.profile } : { profile: t.settings.profile, model: t.settings.model ?? undefined, effort: t.settings.effort ?? undefined });
   const pinned = !!(choice.profile || choice.model || choice.effort);
   const previousAuto = member ? t.settings.memberAuto?.[userId] : t.settings.auto;
   let auto = pinned ? null : (previousAuto ?? null);
@@ -417,9 +419,9 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
     auto = pick ? { profile: pick.profile, model: pick.model, effort: pick.effort } : null;
     if (JSON.stringify(auto) !== JSON.stringify(previousAuto ?? null)) saveAuto(auto);
     if (pick) own = current;
-  } else if (pinned && !promptOverride && (!t.agentSession || specified)) {
+  } else if (pinned && !promptOverride && (!t.agentSession || specified || turnAi)) {
     const p = resolveRunProfile(app, { actor, profileId: choice.profile, model: choice.model, effort: choice.effort });
-    ctx.event("status", choiceEvent({ ai: pickOf(p), class: scope?.classId, scope: scope?.groups.map(g => g.name), scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: login ? "继续等待登录前的 AI 选择" : specified ? "成员指定了 AI" : "这个会话用 /model 或会话设置指定了 AI" }));
+    ctx.event("status", choiceEvent({ ai: pickOf(p), class: scope?.classId, scope: scope?.groups.map(g => g.name), scene: "conversation", outcome: "skipped", current: aiLabel({ profile: p.id, model: p.model, effort: p.effort }), reason: login ? "继续等待登录前的 AI 选择" : specified ? "成员指定了 AI" : turnAi ? "本人为这一轮指定了 AI" : "这个会话用 /model 或会话设置指定了 AI" }));
   } else if (auto) own = resolveRunProfile(app, { actor });
   const watched = messages.some((m) => typeof m.meta.speaker === "string");
   const coordinate = (ctx.run.input as { coordinate?: { workId: string } }).coordinate;
@@ -431,7 +433,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const profileArgs = { actor, profileId: choice.profile ?? auto?.profile, model: choice.model ?? auto?.model, effort: choice.effort ?? auto?.effort };
   let raw = resolveRunProfile(app, profileArgs);
   const conflict = policyReason(scope, raw);
-  const named = pinned && !member && userId === "owner" && !guestTurn && !ctx.run.input.ai;
+  const named = pinned && !member && userId === "owner" && !guestTurn && !ctx.run.input.ai && (turnAi || t.settings.ownerNamedAi) && !messages.some(m => m.meta.speaker);
   if (conflict && named) ctx.event("status", { text: "本人点名，越过了「" + conflict + "」" });
   if (conflict && !named) {
     if (specified || login) throw new Error(conflict);

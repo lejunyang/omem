@@ -398,12 +398,15 @@ npm install -g @omem-ai/cli
 命令由宿主直接解析；带任务的 `/new`、`/topic` 和 `/as` 会继续启动 AI，整理摘要也会调用模型。除标明飞书专用的命令外，各渠道通用：
 
 ```
-/help                      全部命令
+/help  /help all           五个常用命令 / 完整清单
 /new [任务]  /resume <id>   开新会话并执行任务（不带任务只开空白会话）/ 回到旧会话
-/topic <任务>               从飞书群聊或机器人私聊以本条消息开话题并执行任务，话题内拒绝
+/topic [AI] <任务>          从飞书群聊或机器人私聊开话题；如 /topic codex astra xhigh 整理方案
 /status  /stop  /sessions  当前状态 / 停止 / 最近的会话
 /link <id>  /summary  /compact   关联会话 / 查看摘要 / 从摘要重开 Agent 会话
 /space <id>  /agent <后端>  /as <档案> [任务]   切空间 / 换后端 / 让某个 Agent 档案接管或做一件事
+/codex astra xhigh         切换本会话的 AI；加“帮我查一下”只给这一轮用，也可换行写任务
+/强                        选择“强”组当前可用的 AI；自建组可用组名或 id
+/ai off                    清除本会话选择；/ai save codex astra xhigh 保存默认
 /model [模型] [effort=low|medium|high]   本会话临时换模型或思考强度；off 恢复；成员用 /agent save 或 /model save 保存个人默认
 /agents  /skills  /approve agent|skill <名称>
 /mode chat|topic  /idle <小时>
