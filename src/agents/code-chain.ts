@@ -1,3 +1,4 @@
+import { codeBudgetStop, createCodeRound, longTaskForRun, signalCodeWork } from "./supervisor-code.ts";
 import type { Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -46,7 +47,7 @@ export function codeChainFor(app: App, run: Run): CodeChain | null {
   if (!run.parentId) return null;
   const parent = one<{ input: string; output: string | null }>(app.db, "select input, output from runs where id = ?", run.parentId);
   if (!parent) return null;
-  const conversationId = (JSON.parse(parent.input) as { conversationId?: string }).conversationId;
+  const conversationId = (JSON.parse(parent.input) as { conversationId?: string }).conversationId ?? (run.input.longTaskId ? longTaskForRun(app, run.id)?.threadId : undefined);
   const prev = parent.output ? (JSON.parse(parent.output) as { codeChain?: CodeChain }).codeChain : undefined;
   if (!conversationId && !prev) return null;
   const larkKey = prev?.larkKey ?? (() => {
@@ -54,7 +55,7 @@ export function codeChainFor(app: App, run: Run): CodeChain | null {
     return t?.channel === "lark" || t?.channel.startsWith("lark:") ? (t.settings.lastTopicId && t.key ? `${t.key.split("#")[0]}#${t.settings.lastTopicId}` : t.key ?? null) : null;
   })();
   const chain: CodeChain = {
-    askRunId: run.parentId,
+    askRunId: run.input.longTaskId ? run.id : run.parentId,
     conversationId: conversationId ?? prev!.conversationId,
     larkKey,
     larkMessageId: prev?.larkMessageId ?? null,
@@ -63,7 +64,7 @@ export function codeChainFor(app: App, run: Run): CodeChain | null {
     lastCodeRunId: run.id,
     awaitingUser: false,
   };
-  saveCodeChain(app, chain, run.id, run.parentId);
+  saveCodeChain(app, chain, run.id, chain.askRunId);
   return chain;
 }
 
@@ -114,6 +115,14 @@ export function queueNextCodeRound(
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
     const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; contextItemId?: string; fromReview?: string; taskMode?: boolean };
+    if (!opts.manual && current.input.longTaskId) {
+      const task = longTaskForRun(app, current.id)!;
+      const stop = codeBudgetStop(app, task, root);
+      if (stop) {
+        signalCodeWork(app, root, stop);
+        return null;
+      }
+    }
     // What the owner added while the last round ran and nobody delivered yet goes with this round's task.
     const notes = pendingNotes(app, chain.lastCodeRunId!);
     const roundNotes = notes.length ? notesText(notes, app.config.timezone) : null;
@@ -122,7 +131,7 @@ export function queueNextCodeRound(
       markNotesDelivered(app, chain.lastCodeRunId!, notes);
     }
     const next: CodeChain = { ...chain, round: chain.round + 1, awaitingUser: false, waitReason: undefined, rounds: [...chain.rounds] };
-    const r = createRun(app, {
+    const r = createCodeRound(app, {
       kind: "code",
       spaceId: last.space_id,
       title: `交办第 ${next.round} 轮：${task.split("\n")[0].slice(0, 60)}`,
@@ -175,6 +184,9 @@ export function setChainAwaitingUser(app: App, chain: CodeChain, waiting: boolea
 
 /** Coding runs of one chain in order. */
 export function codeChainRounds(app: App, askRunId: string): Run[] {
+  const bound = one<{ rounds: string | null }>(app.db, `select json_extract(output,'$.codeChain.rounds') rounds
+    from runs where id=? and kind='code' and json_extract(input,'$.longTaskId') is not null`, askRunId);
+  if (bound?.rounds) return (JSON.parse(bound.rounds) as string[]).map(id => getRun(app, id));
   const out: Run[] = [];
   const walk = (id: string, seen: Set<string>) => {
     if (seen.has(id)) return;
@@ -324,7 +336,11 @@ export function wakeAssistantForTasks(app: App, rootId: string): string | null {
   if (!last) return null;
   const r = getRun(app, last.id);
   const chain = r.output.codeChain as CodeChain | undefined;
-  if (!chain || !listTasks(app, rootId).some((t) => t.state === "assistant")) return null;
+  const waiting = listTasks(app, rootId).filter(t => t.state === "assistant");
+  if (!waiting.length) return null;
+  // Each transition to "assistant" has already notified the supervisor, including the question id.
+  if (longTaskForRun(app, rootId)) return null;
+  if (!chain) return null;
   if (assistantTurnFor(app, rootId)) return null;
   const conversationId = reportConversation(app, chain, r);
   const messageId = newId("msg");
@@ -355,7 +371,9 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   if (r.output.stoppedByOwner) return;
   // An automatic next round is already queued: nothing to tell yet.
   if (r.status === "done" && r.output.verdict === "changes-requested" && chain.round < maxCodeRounds(app, chain) && !chain.awaitingUser) return;
+  const supervised = signalCodeWork(app, runId, `第 ${chain.round} 轮结束：${r.status}，${r.output.reviewStop ?? r.output.verdict ?? r.error ?? ""}`, ["not-converging", "stalemate", "polishing"].includes(String(r.output.reviewStop)));
   setRunOutput(app, runId, { codeResultHandedOff: true });
+  if (supervised) return;
   // The owner moved this work to another conversation (new Feishu topic): the handoff goes there.
   const conversationId = reportConversation(app, chain, r);
   let movedMessageId = messageId;

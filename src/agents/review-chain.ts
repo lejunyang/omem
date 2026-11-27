@@ -1,3 +1,4 @@
+import { createWorkerAsk } from "./supervisor-code.ts";
 import { lessonsText, previousLessonMaterial } from "./code-lessons.ts";
 import type { ViewComponent } from "./ui-blocks.ts";
 import type { App } from "../core/app.ts";
@@ -800,7 +801,7 @@ function escalate(app: App, run: Run, chain: CodeChain, lead: LeadResult, digest
     { label: "接受现在的改动" },
     { label: "先停下，我来调整" },
   ];
-  return createAsk(app, {
+  return createWorkerAsk(app, {
     runId: run.id,
     conversationId: reportConversation(app, chain),
     question: [
@@ -920,15 +921,16 @@ async function onEscalationAnswer(app: App, ask: Ask, ctx: { codeRunId: string; 
   const picked = ask.choice !== null ? ctx.labels[ask.choice] : null;
   if (!chain) return;
   if (picked === "接受现在的改动") {
-    setRunOutput(app, run.id, { verdict: "approved", acceptedByOwner: true, reviewStop: null });
+    setRunOutput(app, run.id, { verdict: "approved", ...(ask.answeredBy === "supervisor" ? { acceptedBySupervisor: true } : { acceptedByOwner: true }), reviewStop: null });
     saveCodeChain(app, { ...chain, awaitingUser: false, waitReason: undefined }, chain.askRunId, ...chain.rounds);
     return;
   }
   if (picked === "先停下，我来调整") return;
+  const who = ask.answeredBy === "supervisor" ? "监工" : "本人";
   // Another round: the lead's change request, the option the owner picked, or the owner's own words.
   const task = picked === "按修改单再改一轮" || picked === null && !ask.answer
-    ? `评审要求修改（第 ${lead?.round ?? 1} 轮评审，本人确认继续）：\n\n${lead?.changeRequest ?? ""}`
-    : `本人决定：${ask.answer ?? picked}\n\n${lead?.changeRequest ? `评审负责人的修改单（按本人的决定取舍）：\n\n${lead.changeRequest}` : ""}`;
+    ? `评审要求修改（第 ${lead?.round ?? 1} 轮评审，${who}确认继续）：\n\n${lead?.changeRequest ?? ""}`
+    : `${who}决定：${ask.answer ?? picked}\n\n${lead?.changeRequest ? `评审负责人的修改单（按本人的决定取舍）：\n\n${lead.changeRequest}` : ""}`;
   queueNextCodeRound(app, chain, task, { manual: true, resumeSessionId: (run.output as Out).coderSessionId });
 }
 

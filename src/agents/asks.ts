@@ -580,6 +580,26 @@ export function describeAnswer(a: Ask): string {
 
 /** An answer nobody waited for: a message in the conversation, so the next turn has it. */
 async function deliverAnswer(app: App, ask: Ask) {
+  if (ask.answeredBy === "supervisor" && ask.runId) {
+    const { getRun, createRun } = await import("./runs.ts");
+    const worker = getRun(app, ask.runId);
+    const code = worker.input.helperOf ?? worker.input.codeRunId ?? (worker.kind === "code" ? worker.id : null);
+    if (typeof code === "string" || worker.kind === "agent") {
+      const { workNote } = await import("./code-loop.ts");
+      if (!run(app.db, "update asks set consumed=1 where id=? and consumed=0", ask.id).changes) return;
+      try {
+        if (typeof code === "string") workNote(app, code, describeAnswer(ask), "supervisor");
+        else createRun(app, {
+          kind: "agent", title: "按监工的回答继续", spaceId: worker.spaceId, parentId: worker.parentId, userId: ask.userId, lane: worker.lane,
+          input: { ...worker.input, resumeFromRun: worker.id, task: `${worker.input.task ?? ""}\n\n${describeAnswer(ask)}` },
+        });
+      } catch (e) {
+        run(app.db, "update asks set consumed=0 where id=?", ask.id);
+        throw e;
+      }
+      return;
+    }
+  }
   if (ask.askedBy && ask.askedBy !== ask.userId) ask = getAsk(app, ask.id, ask.askedBy);
   run(app.db, "update asks set consumed = 1 where id = ?", ask.id);
   if (!ask.conversationId) {

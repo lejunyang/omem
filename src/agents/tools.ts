@@ -1,3 +1,4 @@
+import { checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "./supervisor-code.ts";
 import { inlineStages } from "../flows/inline.ts";
 import { reconcileResultSchema } from "../flows/reconcile-schema.ts";
 import { beforeBehavior, changeWords, noteBehavior } from "./behavior-changes.ts";
@@ -4255,7 +4256,12 @@ def({
       target = who.id;
       context = { askedBy: me, toName: who.name };
     }
-    const ask = createAsk(ctx.app, { runId: ctx.runId, userId: target, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true, ui, ...(context ? { context } : {}) });
+    const askQuestion = !a.to && ctx.role !== "supervisor" ? createWorkerAsk : createAsk;
+    const ask = askQuestion(ctx.app, { runId: ctx.runId, userId: target, kind: "question", question: a.question, options: toOptions(a.options), allowText: a.allow_text ?? true, ui, ...(context ? { context } : {}) });
+    if (ask.toName === "监工" && !a.to) {
+      const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 40) * 1000);
+      return got.status === "pending" ? `已交给监工（${ask.id}）。可以先做别的部分，再用 wait_answer 等回答。` : describeAnswer(got);
+    }
     if (context) {
       const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? 0) * 1000);
       return got.status === "pending" ? `已去问 ${context.toName}（${ask.id}），问题只发给了 ta。告诉本人你去问了谁、问了什么；ta 回答后会作为新消息回到这个会话。` : describeAnswer(got);
@@ -4276,7 +4282,7 @@ def({
     const ask = getAsk(ctx.app, a.ask_id);
     if (ask.userId !== (ctx.userId ?? OWNER) && ask.askedBy !== (ctx.userId ?? OWNER)) throw new HttpError(403, "不是这次运行提的问题");
     const got = await waitForAnswer(ctx.app, ask.id, (a.wait_seconds ?? ASK_WAIT_MAX) * 1000, ctx.userId ?? OWNER);
-    return got.status === "pending" ? `本人还没回答（${ask.id}）。` : describeAnswer(got);
+    return describeAnswer(got);
   },
 });
 
@@ -5377,6 +5383,7 @@ def({
     "交办编码任务：每个涉及的代码仓库空间各有一条工作分支（新建的从仓库目录当前的提交切出，或接着已有分支），在 omem 自动管理的工作区里由同一个编码 Agent 一起实现并按功能提交，分别运行检查，再按评审档位由一个或几个评审项（功能、业务、架构、规范、历史，或本人建的专项）各自独立审查。之后的轮次在同一条分支上接着提交；分支在仓库目录检出时每轮结束会快进过去。最后本人确认时推送（apply_code_run）。返回运行 id，可用 read_run 查看进度。仅在用户明确要求实现/修改代码时使用。",
   write: true,
   schema: z.object({
+    goal: z.string().trim().min(1).max(2000).optional().describe("监工派活时，写任务书的目标或完成条件原文，供修改项沿用"),
     execution: executionSchema.optional().describe("编码 AI 的临时选择"),
     review_execution: executionSchema.optional().describe("独立评审 AI 的临时选择"),
     review_executions: reviewAIsSchema,
@@ -5434,10 +5441,13 @@ def({
       if (baseline.origin === "own" && baseline.workId) throw new HttpError(409, `方案 ${baseline.id} 已经是交办 ${baseline.workId} 的基线`);
     }
     if (a.sync) checkedBranchSync(ctx, ids, a.sync);
+    const supervised = longTaskForRun(ctx.app, ctx.runId);
+    const goal = a.goal ?? supervised?.goal;
+    if (supervised && a.goal && a.goal !== supervised.goal && !supervised.brief.doneWhen.includes(a.goal)) throw new HttpError(400, "goal 要写任务书的目标或完成条件原文");
     const r = queueCodeWork(ctx.app, {
       spaceId: home,
       title: truncate(a.title?.trim() || a.task.split("\n")[0], 80),
-      input: { task: a.task, execution, reviewExecution, reviewExecutions: await reviewAIsOf(ctx, a.review_executions), ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, contextItemId: scoped.contextItemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: { ...a.sync, ...normalizeBranchSync(a.sync) }, syncOnly: !!a.sync_only } : {}) },
+      input: { task: a.task, ...(supervised ? { goal } : {}), execution, reviewExecution, reviewExecutions: await reviewAIsOf(ctx, a.review_executions), ...(a.design && a.design !== "auto" ? { design: a.design } : {}), ...(ctx.peer ? { peerCoder: { caller: ctx.peer.caller, session: ctx.peer.session, model: ctx.model ?? undefined } } : {}), ...(!ctx.peer && !a.sync_only && ctx.app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(a.max_rounds ? { maxRounds: a.max_rounds } : {}) } : {}), ...(a.pre_check === false ? { preCheck: false } : {}), checkCommand: a.check_command, repos: ids, checks: a.check_commands, reviewTier: a.review_tier, reviewChecks: a.review_checks, itemId, contextItemId: scoped.contextItemId, ...(a.from_branch ? { fromBranches: Object.fromEntries(ids.map((id) => [id, a.from_branch!])) } : {}), ...(a.branch ? { branchNames: Object.fromEntries(ids.map((id) => [id, a.branch!])) } : {}), ...(a.sync ? { sync: { ...a.sync, ...normalizeBranchSync(a.sync) }, syncOnly: !!a.sync_only } : {}) },
       parentId: ctx.runId,
       userId: ctx.userId ?? OWNER,
     });
@@ -5644,6 +5654,7 @@ def({
     "接着一次编码交办或分支评审往下做，一个工具几种用法（run_id 都是交办或评审的任一运行 id，也可以是最初发起交办的 ask 运行 id）：\n- 开下一轮（默认）：评审要求修改，或本人看了结果要调整。复用同一次交办的工作区和编码 Agent 会话，不要重新 delegate_code。task 写这一轮要做的事。\n- 按评审结论改：fix 写要改的问题编号（read_run 的评审问题 #编号），later / wontfix 同时把问题标成暂不改或不改（不改要写业务理由，之后的评审不再提），task 写本人补充的要求。交办编码续在原工作区；分支评审基于该分支交办编码（只出意见的评审本身不能续轮）。只在本人明确要改时用。\n- 交给正在跑的这一轮（when=now）：本人在交办进行中说了新要求、纠正或补充，原话为主；编码 Agent 下一次调用 omem 工具时收到，已经在评审时随下一轮交给它。\n- 只改之后的评审（不写 task，只写 review_tier / review_checks / split / rotate_models / review_executions）：本人说“后面从简 / 别再拆需求 / 这轮只要功能评审 / 业务评审换个模型”时用，不开新的一轮，还没开始评审的这一轮就按新的来，之后沿用。",
   write: true,
   schema: z.object({
+    basis: z.string().trim().min(1).max(3000).optional().describe("监工的依据：引用任务书条目、本人补充的原文或本长任务运行 ID"),
     run_id: z.string().describe("交办或分支评审的任一运行 id（r…），或最初发起交办的 ask 运行 id"),
     task: z.string().max(20000).optional().describe("这一轮要做什么、本人补充的要求或原话；只改之后的评审、只给问题定改不改时不写"),
     when: z.enum(["next", "now"]).optional().describe("now：交给正在进行的这一轮（不等它结束、不另开一轮）；默认 next：开下一轮"),
@@ -5662,6 +5673,13 @@ def({
     ...roundReviewSchema,
   }),
   handler: async (ctx, a) => {
+    const by = ctx.role === "supervisor" ? "supervisor" : ctx.userId ?? OWNER;
+    if (ctx.role === "supervisor") {
+      checkSupervisorBasis(ctx.app, ctx.runId, a.run_id, a.basis);
+      if (!["code", "review"].includes(getRun(ctx.app, a.run_id).kind)) throw new HttpError(400, "请指定编码交办或评审的运行 ID");
+      if (a.apply_first) throw new HttpError(403, "应用交办涉及推送，请在报告中交给本人确认");
+      if (a.task) a = { ...a, task: a.task + "\n\n监工依据：" + a.basis };
+    }
     const execution = validateExecution(ctx.app, a.execution, ctx.userId);
     const reviewExecution = validateExecution(ctx.app, a.review_execution, ctx.userId);
     if (a.onto_latest_target && !a.apply_first && !a.fix?.length && !a.later?.length && !a.wontfix?.length) {
@@ -5676,7 +5694,7 @@ def({
         if (roundStage(round) === "ended" && a.task?.trim()) {
           const spaces = checkedBranchSync(ctx, (round.input.repos as string[] | undefined) ?? [round.spaceId!], sync);
           queueBranchSync(ctx.app, round, spaces, sync);
-          const note = loop.ownerNote(ctx.app, round.id, a.task, ctx.userId ?? OWNER, { asTask: true });
+          const note = loop.ownerNote(ctx.app, round.id, a.task, by, { asTask: true });
           return `已登记同步到目标分支和 ${note?.task.title ?? "本人补充"}，接手后先同步再改（${note?.next?.id ?? round.id}）。${switched}`;
         }
         const next = await (await import("./code.ts")).queueMoveToTarget(ctx.app, round.id, ctx.userId ?? OWNER, sync.mode);
@@ -5692,7 +5710,7 @@ def({
       const { requestCodeSync } = await import("./code.ts");
       if (stage === "ended" && a.task?.trim() && (await import("./code-tasks.ts")).isTaskWork(ctx.app, round.id)) {
         queueBranchSync(ctx.app, round, spaces, a.sync);
-        const task = (await import("./code-loop.ts")).ownerNote(ctx.app, round.id, a.task, ctx.userId ?? OWNER, { asTask: true });
+        const task = (await import("./code-loop.ts")).ownerNote(ctx.app, round.id, a.task, by, { asTask: true });
         return `已登记同步和 ${task?.task.title ?? "本人补充"}，接手后先同步再改（${task?.next?.id ?? round.id}）。`;
       }
       const root = String(round.input.continueFrom ?? round.id);
@@ -5719,6 +5737,7 @@ def({
     const seed = getRun(ctx.app, a.run_id);
     let askId = a.run_id;
     if (seed.kind === "code") askId = seed.parentId ?? a.run_id;
+    if (seed.kind === "code" && seed.input.longTaskId) askId = String(seed.input.continueFrom ?? seed.id);
     const rounds = codeChainRounds(ctx.app, askId).filter((r) => r.kind === "code");
     const last = rounds.at(-1);
     if (!last) throw new HttpError(400, "这不是一次交办编码任务");
@@ -5729,6 +5748,7 @@ def({
     if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     // Waiting for its design to be confirmed: going on means coding without waiting (designs/work.ts).
     if (last.output.verdict === "awaiting-design") {
+      if (ctx.role === "supervisor") throw new HttpError(403, "方案在等本人确认，请在报告中说明");
       const { skipDesign } = await import("../designs/work.ts");
       skipDesign(ctx.app, last.id, ctx.userId ?? OWNER, task);
       return `交办 ${last.id} 不再等方案确认，现在开始编码（方案保留着，只作参考，不再是这次交办的基线；这段话交给编码 Agent）。要按方案改就别用这个，用 settle_design 转达本人的确认或意见。`;
@@ -5742,8 +5762,8 @@ def({
     const switched = taskWork ? (await import("./code-loop.ts")).setWorkAI(ctx.app, last.id, { execution, reviewExecution }) : "";
     if (taskWork && !a.sync && !a.onto_latest_target && !a.apply_first) {
       const loop = await import("./code-loop.ts");
-      if (!a.new_item) return [loop.workNote(ctx.app, last.id, task, ctx.userId ?? OWNER), switched].filter(Boolean).join("\n");
-      const made = loop.ownerNote(ctx.app, last.id, task, ctx.userId ?? OWNER, { asTask: true })!;
+      if (!a.new_item) return [loop.workNote(ctx.app, last.id, task, by), switched].filter(Boolean).join("\n");
+      const made = loop.ownerNote(ctx.app, last.id, task, by, { asTask: true })!;
       return `${revisionHandoff(made, taskLabel(made.task.seq))}${switched}`;
     }
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
@@ -5792,6 +5812,7 @@ function revisionHandoff(made: NonNullable<ReturnType<typeof import("./code-loop
 /** continue_code_run with when=now: the owner's words to the round in progress (code-steer.ts addCodeNote). */
 async function messageRound(ctx: ToolContext, a: ContinueArgs) {
   if (!a.task?.trim()) throw new HttpError(400, "when=now 要写 task：交给编码 Agent 的话");
+    const by = ctx.role === "supervisor" ? "supervisor" : ctx.userId ?? OWNER;
     steerable(ctx, a.run_id);
     let joinedItem: string | undefined;
     if (a.item_id) {
@@ -5805,11 +5826,11 @@ async function messageRound(ctx: ToolContext, a: ContinueArgs) {
     const { isTaskWork, taskLabel } = await import("./code-tasks.ts");
     const taskWork = isTaskWork(ctx.app, a.run_id);
     if (taskWork && a.new_item) {
-      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER, { asTask: true, item: joinedItem })!;
+      const made = (await import("./code-loop.ts")).ownerNote(ctx.app, a.run_id, a.task!, by, { asTask: true, item: joinedItem })!;
       return revisionHandoff(made, taskLabel(made.task.seq));
     }
     const { addCodeNote } = await import("./code-steer.ts");
-    const r = addCodeNote(ctx.app, a.run_id, a.task!, ctx.userId ?? OWNER, joinedItem);
+    const r = addCodeNote(ctx.app, a.run_id, a.task!, by, joinedItem);
     if (getRun(ctx.app, r.runId).output.verdict === "awaiting-design") {
       const wait = getRun(ctx.app, r.runId).output.designWait as { designId?: string } | undefined;
       return `交办在等方案${wait?.designId ? ` ${wait.designId}` : ""} 确认，还没开始编码：这段补充记下了，开始编码时交给编码 Agent。是对方案的意见就用 settle_design（comment）转达，写方案的会话会改一版；本人要不等方案直接改，用 continue_code_run（不带 when）。`;
@@ -6748,6 +6769,7 @@ def({
       task: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，merge 到已有的修改项时填它的编号（如 T5），这时不填 into"),
       note: z.string().max(1000).optional().describe("理由；驳回必须写"),
       owner: z.object({ question: z.string().min(1).max(1000), options: z.array(z.string().min(1).max(40)).min(1).max(4) }).optional().describe("只在按修改项推进的交办里用：接受的问题要本人决定时，给本人的问题和两三个选项"),
+      goal: z.string().trim().min(1).max(2000).optional().describe("长任务中，此问题对应的目标或完成条件原文；跟进原项时默认继承"),
       follows: z.union([z.string(), z.number()]).optional().describe("按修改项推进的交办里，accept / defer 的问题是某个已完成修改项没改好或改出来的新问题时，填那一项（如 T5）"),
     })).max(300),
     verdict: z.enum(["approve", "revise", "escalate"]),
@@ -6796,6 +6818,12 @@ def({
     // A finding that restates a task the work already has joins that task (checked before any ruling is recorded).
     const t = await import("./code-tasks.ts");
     const rootId = tasks ? t.workRootOf(ctx.app, r.id) : null;
+    const goals: Record<string, string> = {};
+    const supervised = rootId && longTaskForRun(ctx.app, rootId);
+    for (const x of a.rulings) if (x.goal) {
+      if (!supervised || (x.goal !== supervised.goal && !supervised.brief.doneWhen.includes(x.goal))) throw new HttpError(400, "goal 要对应本长任务的目标或完成条件原文");
+      goals[x.id] = x.goal;
+    }
     const follows: Record<string, number> = {};
     for (const x of a.rulings) {
       if (x.follows === undefined) continue;
@@ -6804,7 +6832,7 @@ def({
       t.getTask(ctx.app, rootId!, seq);
       follows[String(x.id)] = seq;
     }
-    const rulings = a.rulings.map(({ follows: _, ...x }) => {
+    const rulings = a.rulings.map(({ follows: _, goal: _goal, ...x }) => {
       if (x.task === undefined) return { ...x, task: undefined };
       if (!rootId) throw new HttpError(400, `问题 ${x.id}：只有按修改项推进的交办才能合并到修改项`);
       if (x.decision !== "merge") throw new HttpError(400, `问题 ${x.id}：填了 task 就要用 merge`);
@@ -6816,7 +6844,7 @@ def({
     applyRulings(ctx.app, r.id, round, rulings);
     for (const x of rulings) if (x.task) t.joinTask(ctx.app, rootId!, x.id, x.task);
     const owner = Object.fromEntries(a.rulings.filter((x) => x.owner).map((x) => [String(x.id), x.owner!]));
-    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}), ...(Object.keys(follows).length ? { follows } : {}) } });
+    setRunOutput(ctx.app, r.id, { reviewLeadDraft: { round, verdict: a.verdict, summary: a.summary, changeRequest: a.change_request ?? "", rerun: a.rerun ?? [], escalation: a.escalation, ...(Object.keys(owner).length ? { owner } : {}), ...(Object.keys(follows).length ? { follows } : {}), ...(Object.keys(goals).length ? { goals } : {}) } });
     if (design && a.decisions?.length) {
       const ds = await import("../designs/store.ts");
       for (const x of a.decisions) {
@@ -6849,6 +6877,8 @@ def({
   description: "编码 Agent 拆分修改项，交给当前编码会话；写预计路径供独立分组，回合还有待做项时直接接着做。",
   schema: z.object({
     tasks: z.array(z.object({
+      goal: z.string().trim().min(1).max(2000).optional().describe("长任务书的目标或完成条件原文，省略时沿用交办目标"),
+      deadline: z.string().datetime({ offset: true }).optional().describe("任务书或监工给本项指定的时限"),
       title: z.string().min(1).max(200).describe("一句话：这一项要做成什么"),
       done_when: z.string().max(2000).optional().describe("完成标准：怎样算做完（可核对）。只写在仓库和工作区里能做到、能验证的；把结果挂回事项、写工作文件、通知本人这些由发起的助手做，不拆成修改项"),
       files: z.array(z.string().max(500)).max(30).optional().describe("预计改的文件"),
@@ -6868,7 +6898,11 @@ def({
       const bad = [...new Set(named.map((x) => x.decision!).filter((id) => !d.body.decisions.some((y) => y.id === id)))];
       if (bad.length) throw new HttpError(400, `方案 ${d.id} 没有决定 ${bad.join("、")}；有的是 ${d.body.decisions.map((y) => y.id).join("、")}`);
     }
-    const made = a.tasks.map((x) => t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", origin: { ...(x.files?.length ? { files: x.files } : {}), ...(x.decision ? { decision: x.decision } : {}) } }, "coder"));
+    const supervised = longTaskForRun(ctx.app, rootId);
+    const inheritedGoal = getRun(ctx.app, rootId).input.goal as string | undefined;
+    if (supervised && a.tasks.some(x => x.goal && x.goal !== supervised.goal && !supervised.brief.doneWhen.includes(x.goal)))
+      throw new HttpError(400, "修改项的 goal 要对应任务书的目标或完成条件原文");
+    const made = a.tasks.map((x) => t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", origin: { ...(supervised ? { goal: x.goal ?? inheritedGoal ?? supervised.goal, deadline: x.deadline } : {}), ...(x.files?.length ? { files: x.files } : {}), ...(x.decision ? { decision: x.decision } : {}) } }, "coder"));
     const taken = made.map(task => t.updateTask(ctx.app, rootId, task.seq, { state: "coding", coderRun: r.id }));
     const w = a.rounds ? t.estimateBudget(ctx.app, rootId, a.rounds) : t.workState(ctx.app, rootId);
     const groups = (await import("./code-helpers.ts")).parallelTaskHint(ctx.app, r.id, taken);
@@ -7287,6 +7321,7 @@ def({
   description: "发起交办的助手处理修改项。「等助手处理」的项（编码被挡住、改了几次没过、几轮没轮到、评审负责人没裁决、同一处修了几层，编码 Agent 或评审负责人认为要本人定的）由你处理：retry 写清这次怎么做（每项最多 2 次）、skip 写理由（不合理的评审改动、等别的团队、缺外部字段）、later 记成以后再做（问题成立但和这次要的关系不大：不挡交付，同一分支下一次交办会接上）、owner 只在要本人在业务或功能上取舍、要新的授权或越出原需求时，写 question 和两三个 options。评审提的待做项（还没做的）也可以直接 skip 驳回或 later 放下，写清理由；同一处你放下两次后再被提出，会直接问本人。add 新增一项（不填 task，写 title 和 note 作完成标准）：需求要求了却没有哪一项在做、或评审漏了的必要修复。「等你决定」的项（卡片已经发给本人）只在本人这一轮回答了才转达（retry / skip），本人回答前不动它。retry 和 add 在自动推进的轮数内接着开下一轮。已发的卡片随之关闭。",
   write: true,
   schema: z.object({
+    basis: z.string().trim().min(1).max(3000).optional().describe("监工的依据：引用任务书条目、本人补充的原文或本长任务运行 ID"),
     run_id: z.string().describe("这次交办的任一运行 id"),
     task: z.union([z.string(), z.number()]).optional().describe("修改项编号，如 T3；add 时不填"),
     action: z.enum(["retry", "skip", "owner", "later", "add"]),
@@ -7296,18 +7331,23 @@ def({
     options: z.array(z.string().min(1).max(60)).max(4).optional().describe("owner：两三个可选的做法"),
   }),
   handler: async (ctx, a) => {
+    if (ctx.role === "supervisor") {
+      checkSupervisorBasis(ctx.app, ctx.runId, a.run_id, a.basis);
+      if (a.action === "owner") throw new HttpError(400, "需要本人决定的问题请合并到 supervise_report 的 askOwner");
+      a = { ...a, note: a.note + "\n\n监工依据：" + a.basis };
+    }
     const t = await import("./code-tasks.ts");
     const rootId = t.workRootOf(ctx.app, a.run_id);
     if (t.workOwner(ctx.app, rootId) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能处理本人的交办");
     if (a.action === "add") {
       if (!a.title?.trim()) throw new HttpError(400, "add 要写 title（这一项要做成什么）");
-      const made = (await import("./code-loop.ts")).addAssistantTask(ctx.app, rootId, { title: a.title, doneWhen: a.note, ownerWords: ownerAskedThisTurn(ctx) }, "assistant");
+      const made = (await import("./code-loop.ts")).addAssistantTask(ctx.app, rootId, { title: a.title, doneWhen: a.note, ownerWords: ownerAskedThisTurn(ctx) }, ctx.role === "supervisor" ? "supervisor" : "assistant");
       return `已新增 ${t.taskLabel(made.task.seq)}「${made.task.title}」${made.next ? `，第 ${made.next.input.round ?? "?"} 轮已排上（${made.next.id}）` : "，下一轮做"}。`;
     }
     if (a.task === undefined) throw new HttpError(400, `${a.action} 要填 task（修改项编号）`);
     const seq = t.parseTaskRef(a.task);
     if (a.action === "owner") checkBrief(a.question, "question ");
-    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action as "retry" | "skip" | "owner" | "later", text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), question: a.question, options: a.options }, "assistant");
+    const next = (await import("./code-loop.ts")).settleTask(ctx.app, rootId, seq, { action: a.action as "retry" | "skip" | "owner" | "later", text: a.note.trim(), ownerWords: ownerAskedThisTurn(ctx), question: a.question, options: a.options }, ctx.role === "supervisor" ? "supervisor" : "assistant");
     const label = t.taskLabel(seq);
     if (a.action === "owner") return `已把 ${label} 交给本人（发了卡片）。`;
     if (a.action === "later") return `${label} 记成以后再做${next ? `，第 ${next.input.round ?? "?"} 轮已排上（${next.id}）` : ""}。`;

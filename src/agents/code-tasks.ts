@@ -1,3 +1,5 @@
+import { longTaskForRun, signalCodeWork } from "./supervisor-code.ts";
+import { checkCheckpoint, checkTaskDuration } from "./drift.ts";
 import { commitWorktree } from "./member-git.ts";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
@@ -5,7 +7,7 @@ import { isAbsolute, join, relative } from "node:path";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { fetchBranchAsync, git, resolveRef } from "../core/git.ts";
-import { HttpError, now, truncate, localStamp } from "../core/util.ts";
+import { HttpError, newId, now, truncate, localStamp } from "../core/util.ts";
 import { OWNER } from "../core/users.ts";
 import type { FindingRow, LeadResult } from "./review.ts";
 import { getRun, runUser, setRunOutput, type Run } from "./runs.ts";
@@ -47,7 +49,7 @@ export type CodeTask = {
    * delegation on the branch; follows: the task this one is a follow-up fix of (it did not come out
    * right or broke something); carried: the task of an earlier delegation it continues.
    */
-  origin: { findings?: number[]; note?: string; redoOf?: number; files?: string[]; later?: boolean; follows?: number; carried?: { work: string; seq: number }; decision?: string; item?: string };
+  origin: { unmapped?: boolean; questionId?: string; startedAt?: string; finishedAt?: string; slow?: boolean; goal?: string; deadline?: string; findings?: number[]; note?: string; redoOf?: number; files?: string[]; later?: boolean; follows?: number; carried?: { work: string; seq: number }; decision?: string; item?: string };
   state: TaskState;
   question: string | null;
   options: string[];
@@ -250,8 +252,10 @@ export type NewTask = { title: string; doneWhen?: string; kind: TaskKind; origin
 export function addTask(app: App, rootId: string, t: NewTask, by: string): CodeTask {
   const seq = (one<{ n: number | null }>(app.db, "select max(seq) as n from code_tasks where work_id = ?", rootId)?.n ?? 0) + 1;
   const at = now();
+  const task = !t.origin?.goal && t.kind !== "fix" ? longTaskForRun(app, rootId) : null;
+  const origin = task ? { ...t.origin, goal: getRun(app, rootId).input.goal ?? task.goal } : t.origin;
   run(app.db, "insert into code_tasks(work_id, seq, title, done_when, kind, origin, state, question, options, verifier, created_by, created_at, updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    rootId, seq, truncate(t.title.trim(), 200), (t.doneWhen ?? "").trim(), t.kind, JSON.stringify(t.origin ?? {}), t.state ?? "todo", t.question ?? null, t.options?.length ? JSON.stringify(t.options) : null, t.verifier ?? null, by, at, at);
+    rootId, seq, truncate(t.title.trim(), 200), (t.doneWhen ?? "").trim(), t.kind, JSON.stringify(origin ?? {}), t.state ?? "todo", t.question ?? null, t.options?.length ? JSON.stringify(t.options) : null, t.verifier ?? null, by, at, at);
   app.emit({ type: "changed", entity: "code-task", id: rootId });
   return getTask(app, rootId, seq);
 }
@@ -260,11 +264,33 @@ export type TaskPatch = Partial<Pick<CodeTask, "title" | "doneWhen" | "origin" |
 export function updateTask(app: App, rootId: string, seq: number, patch: TaskPatch, note?: Omit<TaskNote, "at">): CodeTask {
   const t = getTask(app, rootId, seq);
   const next = { ...t, ...patch };
+  const supervised = longTaskForRun(app, rootId);
+  const newQuestion = next.state === "assistant" && (t.state !== "assistant" || next.question !== t.question || JSON.stringify(next.options) !== JSON.stringify(t.options));
+  if (supervised && newQuestion) next.origin = { ...next.origin, questionId: newId("q") };
+  if (supervised && next.state !== t.state) {
+    if (next.state === "coding" && !t.origin.startedAt) next.origin = { ...next.origin, startedAt: now() };
+    if (next.state === "done") next.origin = { ...next.origin, finishedAt: now() };
+  }
   const notes = note ? [...t.notes, { at: now(), ...note }] : t.notes;
   run(app.db, "update code_tasks set title=?, done_when=?, origin=?, state=?, question=?, options=?, answer=?, verifier=?, coder_run=?, attempts=?, reverts=?, commits=?, checkpoint=?, notes=?, updated_at=? where id=?",
     next.title, next.doneWhen, JSON.stringify(next.origin), next.state, next.question, next.options.length ? JSON.stringify(next.options) : null, next.answer, next.verifier, next.coderRun, next.attempts, next.reverts, JSON.stringify(next.commits), next.checkpoint, JSON.stringify(notes), now(), t.id);
   app.emit({ type: "changed", entity: "code-task", id: rootId });
-  return getTask(app, rootId, seq);
+  const updated = getTask(app, rootId, seq);
+  if (supervised) {
+    const events: string[] = [];
+    if (next.attempts >= MAX_ATTEMPTS && next.attempts > t.attempts) events.push(`已尝试 ${next.attempts} 次`);
+    if (next.reverts > t.reverts || next.state === "reverted" && t.state !== "reverted") events.push("已回退");
+    if (next.origin.follows !== t.origin.follows && followDepth(app, rootId, seq) > MAX_FOLLOW_DEPTH) events.push("跟进修复超过两层");
+    if (!t.origin.slow && next.state !== t.state && next.state === "done") {
+      const slow = checkTaskDuration(app, updated);
+      if (slow) events.push(slow);
+    }
+    if (events.length || next.state === "done" && t.state !== "done")
+      signalCodeWork(app, rootId, `T${seq} ${next.title}：${events.join("；") || "已完成"}`, !!events.length);
+    if (newQuestion)
+      signalCodeWork(app, rootId, `修改项问题 task:${updated.id}:${updated.origin.questionId} · T${seq} ${next.title}\n${next.question}\n${next.options.join(" / ")}`);
+  }
+  return updated;
 }
 
 /**
@@ -280,7 +306,7 @@ export function retryTask(app: App, rootId: string, seq: number, note: Omit<Task
 
 /** The work reports to an assistant (it was delegated from a conversation), which settles what holds a task up. */
 export function hasAssistant(app: App, rootId: string) {
-  return !!(lastRound(app, rootId).output as { codeChain?: unknown }).codeChain;
+  return !!(lastRound(app, rootId).output as { codeChain?: unknown }).codeChain || !!longTaskForRun(app, rootId);
 }
 
 /**
@@ -300,6 +326,7 @@ export function toAssistant(app: App, rootId: string, seq: number, why: string, 
  * just received. With no assistant (started on the web), the owner is asked.
  */
 export function toDecide(app: App, rootId: string, seq: number, q: { question: string; options: string[]; why: string; from?: string }, note?: Omit<TaskNote, "at">): CodeTask {
+  if (longTaskForRun(app, rootId)) return updateTask(app, rootId, seq, { state: "assistant", question: q.question, options: q.options }, note);
   if (!hasAssistant(app, rootId)) return updateTask(app, rootId, seq, { state: "owner", question: q.question, options: q.options }, note);
   // The assistant set this part aside ASSISTANT_OVERRULES times and it is raised again: the owner settles it.
   const overruled = overrules(app, rootId, seq);
@@ -346,7 +373,7 @@ export function notReached(app: App, rootId: string, seq: number, round: number)
 }
 
 /** A finding taken up as a task: its check verifies it, the finding remembers the task. */
-export function taskForFinding(app: App, rootId: string, f: { id: number; title: string; suggestion: string; owner_suggestion?: string | null; check_name: string; file_path: string | null }, by: string, owner?: { question: string; options: string[] }): CodeTask {
+export function taskForFinding(app: App, rootId: string, f: { id: number; title: string; suggestion: string; owner_suggestion?: string | null; check_name: string; file_path: string | null }, by: string, owner?: { question: string; options: string[] }, goal?: string): CodeTask {
   const existing = one<{ task_id: number | null }>(app.db, "select task_id from review_findings where id = ?", f.id)?.task_id;
   if (existing) {
     const t = one<Row>(app.db, "select * from code_tasks where id = ?", existing);
@@ -356,10 +383,11 @@ export function taskForFinding(app: App, rootId: string, f: { id: number; title:
     title: f.title,
     doneWhen: f.owner_suggestion?.trim() || f.suggestion,
     kind: "fix",
-    origin: { findings: [f.id], ...(f.file_path ? { files: [f.file_path] } : {}) },
+    origin: { findings: [f.id], ...(goal ? { goal } : longTaskForRun(app, rootId) ? { unmapped: true } : {}), ...(f.file_path ? { files: [f.file_path] } : {}) },
     verifier: f.check_name,
     ...(owner ? { state: "owner", question: owner.question, options: owner.options } : {}),
   }, by);
+  if (t.origin.unmapped) signalCodeWork(app, rootId, `T${t.seq} ${t.title} 来源不明：评审问题 #${f.id} 未对应任务书目标`, true);
   run(app.db, "update review_findings set task_id = ?, decision = coalesce(decision, 'fix') where id = ?", t.id, f.id);
   return t;
 }
@@ -383,7 +411,7 @@ export function joinTask(app: App, rootId: string, findingId: number, seq: numbe
 }
 
 /** The work's tasks as checks and review-lead read them: label, state, title. */
-export const taskList = (app: App, rootId: string) => listTasks(app, rootId).map((t) => `- ${taskLabel(t.seq)} [${stateLabel(t)}]${t.origin.follows ? `（接着 ${taskLabel(t.origin.follows)}）` : ""} ${t.title}${setAsideWhy(t)}`).join("\n");
+export const taskList = (app: App, rootId: string) => listTasks(app, rootId).map((t) => `- ${taskLabel(t.seq)} [${stateLabel(t)}]${t.origin.follows ? `（接着 ${taskLabel(t.origin.follows)}）` : ""} ${t.title}${t.origin.goal ? `（任务书：${t.origin.goal}）` : t.origin.unmapped ? "（来源不明）" : ""}${setAsideWhy(t)}`).join("\n");
 
 /** Why the assistant set a task aside, for the reviews: they raise it again only with something new. */
 function setAsideWhy(t: CodeTask) {
@@ -432,7 +460,7 @@ export function deferTask(app: App, rootId: string, seq: number, why: string, no
  * gave none): each a task its check verifies; set aside when the lead deferred it; a follow-up of the
  * task it names, and past MAX_FOLLOW_DEPTH handed to the assistant instead of coded again.
  */
-export function tasksFromRuling(app: App, rootId: string, findings: (FindingRow & { check_name: string })[], lead: Pick<LeadResult, "by" | "owner" | "follows">): CodeTask[] {
+export function tasksFromRuling(app: App, rootId: string, findings: (FindingRow & { check_name: string })[], lead: Pick<LeadResult, "by" | "owner" | "follows" | "goals">): CodeTask[] {
   const made: CodeTask[] = [];
   for (const f of findings) {
     const take = lead.by === "lead" ? f.state === "accepted" : f.state === "open" || f.state === "accepted";
@@ -440,8 +468,9 @@ export function tasksFromRuling(app: App, rootId: string, findings: (FindingRow 
     const owner = f.decision === "later" ? undefined : lead.owner?.[String(f.id)];
     const follows = lead.follows?.[String(f.id)];
     const existed = !!one(app.db, "select 1 from review_findings where id = ? and task_id is not null", f.id);
-    let t = taskForFinding(app, rootId, f, "review-lead");
-    if (follows && follows !== t.seq && !t.origin.follows && one(app.db, "select 1 from code_tasks where work_id = ? and seq = ?", rootId, follows)) t = updateTask(app, rootId, t.seq, { origin: { ...t.origin, follows } });
+    const parent = follows && one(app.db, "select 1 from code_tasks where work_id=? and seq=?", rootId, follows) ? getTask(app, rootId, follows) : null;
+    let t = taskForFinding(app, rootId, f, "review-lead", undefined, lead.goals?.[String(f.id)] ?? parent?.origin.goal);
+    if (parent && parent.seq !== t.seq && !t.origin.follows) t = updateTask(app, rootId, t.seq, { origin: { ...t.origin, follows } });
     const lead_ = { by: "review-lead", kind: "lead" as const };
     if (existed && f.decision !== "later") {
       // Already a task (ruled before): left as it is.
@@ -524,12 +553,18 @@ export function recordCheckpoint(app: App, rootId: string, worktrees: WorktreeRe
     if (h) heads[wt.space] = h;
   }
   if (!Object.keys(heads).length) return null;
-  const last = listCheckpoints(app, rootId).at(-1);
+  const previous = listCheckpoints(app, rootId);
+  const last = previous.at(-1);
   if (last && JSON.stringify(last.heads) === JSON.stringify(heads)) return last;
   const seq = (last?.seq ?? 0) + 1;
   run(app.db, "insert into code_checkpoints(work_id, seq, heads, tasks, by, label, created_at) values(?,?,?,?,?,?,?)", rootId, seq, JSON.stringify(heads), JSON.stringify(tasks), by, label, now());
+  const task = longTaskForRun(app, rootId);
   for (const wt of worktrees) {
     const dir = gitDirOf(app, wt);
+    if (task && dir && heads[wt.space]) {
+      const base = wt.start ?? wt.base;
+      checkCheckpoint(app, task, rootId, seq, wt.space, dir, last && (previous.at(-2)?.heads[wt.space] ?? base), last?.heads[wt.space] ?? base, heads[wt.space]);
+    }
     if (dir && heads[wt.space]) git(dir, ["update-ref", `refs/omem/${rootId}/cp${seq}`, heads[wt.space]]);
   }
   return listCheckpoints(app, rootId).at(-1)!;
@@ -1011,6 +1046,7 @@ export function taskText(app: App, t: CodeTask) {
   const tries = t.notes.filter((n) => ["verify", "revert", "host", "owner", "lead", "consult", "assistant"].includes(n.kind)).slice(-6);
   return [
     `### ${taskLabel(t.seq)} ${t.title}`,
+    t.origin.goal ? `任务书目标：${t.origin.goal}` : t.origin.unmapped ? "来源不明：评审问题未对应任务书目标" : "",
     t.doneWhen ? `**完成标准**\n${t.doneWhen}` : "",
     ...findings.map((f) => [
       `评审问题 #${(t.origin.findings ?? [])[findings.indexOf(f)]}（${f!.check_name}${f!.file_path ? `，${f!.file_path}${f!.line ? `:${f!.line}` : ""}` : ""}）：${f!.title}`,
@@ -1018,7 +1054,7 @@ export function taskText(app: App, t: CodeTask) {
       f!.owner_suggestion?.trim() ? `建议（本人改写，以此为准）：${f!.owner_suggestion.trim()}` : f!.suggestion ? `建议：${f!.suggestion}` : "",
     ].filter(Boolean).join("\n")),
     // The owner's words are often what the task was written from: shown again only when they say more.
-    t.origin.note && !(t.doneWhen ?? "").includes(t.origin.note.trim()) ? `**本人的原话**\n${t.origin.note}` : "",
+    t.createdBy !== "supervisor" && t.origin.note && !(t.doneWhen ?? "").includes(t.origin.note.trim()) ? `**本人的原话**\n${t.origin.note}` : "",
     t.answer ? `**本人的决定**\n${t.answer}` : "",
     tries.length ? `**之前的情况**\n${tries.map((n) => `- ${n.text}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");

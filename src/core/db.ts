@@ -2527,6 +2527,8 @@ export const migrations: readonly string[] = [
    create index long_tasks_user on long_tasks(user_id, updated_at desc);
    create index long_tasks_open_items on long_tasks(item_id) where status in ('draft','active','paused');
    create index long_tasks_updated on long_tasks(updated_at desc);`,
+  `create index if not exists supervised_code_rounds on runs(json_extract(input,'$.longTaskId'))
+     where kind='code' and json_extract(input,'$.longTaskId') is not null;`,
 ];
 
 export type Db = DatabaseSync;
