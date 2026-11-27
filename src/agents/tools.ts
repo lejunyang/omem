@@ -230,6 +230,7 @@ function space(ctx: ToolContext, requested?: string | null) {
 /** In this run's read scope; a branch or delegation index goes with the repository it is over. */
 function canRead(ctx: ToolContext, id: string) {
   if (!ctx.spaces || ctx.spaces.includes(id)) return true;
+  if (ctx.sourceSpaces) return false;
   const repo = overlayRepo(ctx.app, id);
   return !!repo && ctx.spaces.includes(repo);
 }
@@ -7794,7 +7795,9 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
       const ceiling = ctx.sourceSpaces ?? ctx.spaces;
       const spaces = selected.filter(id => !ceiling || ceiling.includes(id));
       if (!spaces.length) return { text: "本轮没有可读的材料空间。", isError: true };
-      ctx = { ...ctx, spaces, spaceId: spaces[0], writable: [] };
+      if (name === "search" && args && typeof args === "object" && "branch" in args && args.branch)
+        return { text: "材料检索只读所选空间已收录的版本。", isError: true };
+      ctx = { ...ctx, spaces, sourceSpaces: spaces, spaceId: spaces[0], writable: [] };
       if (name === "search" && args && typeof args === "object" && !("space" in args)) args = { ...args, space: "*" };
     }
   }
