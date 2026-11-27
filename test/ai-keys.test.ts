@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/main.ts";
 import { categoryStatus, defaultFor, findAnthropicUrl, keyEnv, listModelEntries, modelChoices, modelDisplayName, noteModelAccess, tryBackendModel, newestOf, readKeys, refreshModels, setKey, setModelListFetchForTests, testProvider, useKeyHome } from "../src/core/ai-keys.ts";
-import { allProfiles, configSchema, keyedModelEnv, keyedProfiles } from "../src/core/config.ts";
+import { AI_MINUTE } from "../src/core/ai-rate-limit.ts";
+import { allProfiles, configSchema, keyedModelEnv, keyedProfiles, providerFormats } from "../src/core/config.ts";
 import { backendAvailable } from "../src/agents/availability.ts";
 import { backendHosts } from "../src/agents/egress-policy.ts";
 import { probeProfile } from "../src/agents/probe.ts";
+import { testApp } from "./helpers.ts";
 
 const servers: { close(): Promise<unknown> }[] = [];
 afterAll(async () => {
@@ -143,6 +145,42 @@ describe("API-key providers", () => {
     // An endpoint answers as the model behind it.
     expect(await tryBackendModel({ ...p, model: "ep-1", anthropicUrl: "https://ark.example.com/api/compatible" }, "k", (async () => Response.json({ model: "glm-5-260101" })) as unknown as typeof fetch)).toEqual({ ok: true, detail: "模型 ep-1 可以调用（背后是 glm-5-260101）", served: "glm-5-260101" });
     expect(await tryBackendModel({ ...p, model: "x" }, "k", (async () => Response.json({ error: { code: "ModelNotOpen", message: "not open" } }, { status: 404 })) as unknown as typeof fetch)).toMatchObject({ ok: false, detail: "模型 x 调不通（OpenAI 格式 404：ModelNotOpen：not open（模型或接入点不对））" });
+  });
+
+  it("waits for the shared RPM window before starting the second format's probe timeout", async () => {
+    const app = testApp();
+    const provider = withProviders([{ id: "ark", kind: "ark", model: "ep-1", limits: { rpm: 1 } }]).ai.providers[0];
+    const formats = providerFormats(provider);
+    const probe = { model: "ep-1", baseUrl: formats.openai?.url, anthropicUrl: formats.anthropic?.url };
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const start = Date.now();
+      const sent: { path: string; at: number }[] = [];
+      const fetcher: typeof fetch = async (url) => {
+        sent.push({ path: new URL(String(url)).pathname, at: Date.now() - start });
+        return Response.json({ model: "model-a" });
+      };
+
+      const pending = tryBackendModel(probe, "test-key", fetcher, provider.kind, { app, provider });
+      await vi.advanceTimersByTimeAsync(0);
+      const first = { path: "/api/v3/chat/completions", at: 0 };
+      expect(sent).toEqual([first]);
+      expect(timeout.mock.calls).toEqual([[30_000]]);
+
+      await vi.advanceTimersByTimeAsync(AI_MINUTE - 1);
+      expect(sent).toEqual([first]);
+      expect(timeout.mock.calls).toEqual([[30_000]]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sent).toEqual([first, { path: "/api/compatible/v1/messages", at: AI_MINUTE }]);
+      expect(timeout.mock.calls).toEqual([[30_000], [30_000]]);
+      expect(await pending).toMatchObject({ ok: true, served: "model-a" });
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+      app.db.close();
+    }
   });
 
   it("adds the key at launch and refuses a keyed profile without one", () => {

@@ -15,19 +15,20 @@ export async function requestWithAiLimit(
   provider: Provider,
   model: string,
   estimate: () => number,
-  options: { signal: AbortSignal; deadline?: number; onWait?: (ms: number) => void },
+  options: { signal?: AbortSignal; deadline?: number; onWait?: (ms: number) => void },
   send: () => Promise<Response>,
 ): Promise<Result> {
   const queue = aiRateLimit(app, provider, model);
   if (!queue) return { response: await send() };
   const tokens = estimate();
+  const wait = { ...options, signal: options.signal ?? new AbortController().signal };
   for (let retry = 0; ; retry++) {
-    const settle = await queue.acquire(tokens, options);
-    options.signal.throwIfAborted();
+    const settle = await queue.acquire(tokens, wait);
+    wait.signal.throwIfAborted();
     const response = await send();
     if (response.ok) return { response, settle };
     const errorText = await response.text().catch(() => "");
-    options.signal.throwIfAborted();
+    wait.signal.throwIfAborted();
     if (!isMinuteRateLimit(classifyError(provider.kind, response.status, errorText))) return { response, errorText };
     if (retry === MINUTE_RETRIES) {
       settle(0);

@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## API key 检查等待分钟额度（2026-11-28）
+
+- 从 `src/core/ai-keys.ts` 读起。对同一个接入点试调用 OpenAI 和 Anthropic 两种格式时，共用分钟额度。轮到请求发往上游时才开始计 30 秒超时，`rpm: 1` 时第二种格式可以等到窗口释放后完成检查。
+
 ## 决策等不到 API key 分钟额度时的处理（2026-11-28）
 
 - 从 `src/core/decision.ts` 读起。所有决策模型都来不及等额度时，按决策失败处理。配置 `fallback: general` 时改问通用模型，配置 `fallback: none` 时按否处理。等待超时仍不计入提供方故障，设置页试用会显示等待超过时限。

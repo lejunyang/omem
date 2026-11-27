@@ -2682,6 +2682,7 @@ TraeX 与其他 ACP 的清理补验：
 | 未给 key 配分钟限额时，方舟的接入点限流（`RateLimitExceeded.Endpoint*`）时让 `codex@<编号>` 做一件事 | omem 转发处等几秒重试；还限流则运行以“限流”结束、换下一个后端，key 那一行写“最近 1 小时：限流 1 次……” | 真实 codex-acp / claude-agent-acp 对假接口实测 |
 | 给方舟 key 加 `limits.rpm = 2`，通过中转连续发三次 `max_tokens = 1` 的调用 | 前两次直接发，第三次等到第一笔用量满 60 秒才发。三次都返回 200，`GET /api/ai` 显示等待次数、时长和窗口计数 | 2026-11-28 真实方舟 key 小流量验证，第三次排队 58.539 秒，三次各生成 1 token。并发顺序、TPM 预占与实际用量修正、超大请求和 API 字段由假接口覆盖 |
 | 给 key 配分钟限额，让假上游先返回方舟的 RPM / TPM 错误，再返回成功 | 原来的 HTTP 连接等到下一轮，继续用同一 key 和模型。运行记等待时间。连续三轮拒绝才按原方式避让，写出限额提示。每日额度仍立即处理 | `test/ai-relay.test.ts` |
+| 给方舟 key 设置 `limits.rpm = 1`，对同一个接入点用 OpenAI 和 Anthropic 两种格式试调用 | 第一次直接发，第二次在第一笔用量满 60 秒后发。各次的 30 秒上游超时从发出时开始。两种格式均成功时检查通过，并返回接入点背后的模型名 | `test/ai-keys.test.ts`（假时钟和假接口） |
 | 决策提供方已用完本地分钟额度，分别在剩余时限足够和不足时请求 | 时限足够等到有位置再发。时限不足跳过，备用提供方可继续，下次保留原顺序。全部因等待时限跳过时，`fallback: general` 转通用模型，`fallback: none` 按否处理。设置页试用显示等待超过时限 | `test/decision-multi.test.ts`、`test/settings-restart.test.ts` |
 | 方舟返回 `SetLimitExceeded` / `AccountOverdueError` / `ModelAccountTpdRateLimitExceeded` | 运行几秒内以“额度用完”结束；前两种收到一条通知，key 那一行写“已暂停到 …”（每日用量到午夜，其余一天）；点“检查”通过后恢复 | 真实 codex-acp / claude-agent-acp 对假接口实测 |
 | 决策模型（例如 Cloudflare）返回每日额度用完（3036） | 换下一个决策模型，它排到最后直到午夜；API key 页那一行记下这条错误 | 测试覆盖 |

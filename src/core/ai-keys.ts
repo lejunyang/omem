@@ -192,11 +192,12 @@ export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUr
   for (const [label, url, headers, body] of calls) {
     try {
       const encoded = JSON.stringify(body);
-      const deadline = Date.now() + 30_000;
-      const signal = AbortSignal.timeout(30_000);
-      const send = () => fetcher(url, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: encoded, signal });
+      const send = () => fetcher(url, {
+        method: "POST", headers: { ...headers, "content-type": "application/json" },
+        body: encoded, signal: AbortSignal.timeout(30_000),
+      });
       const { response: r, errorText, settle, minuteRetriesExhausted } = rate
-        ? await requestWithAiLimit(rate.app, rate.provider, p.model, () => estimatedAiTokens(encoded, body), { signal, deadline }, send)
+        ? await requestWithAiLimit(rate.app, rate.provider, p.model, () => estimatedAiTokens(encoded, body), {}, send)
         : { response: await send() };
       const text = errorText ?? await r.text().catch(() => "");
       if (r.ok) {
