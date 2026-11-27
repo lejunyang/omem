@@ -38,7 +38,7 @@ const ownerKey = (t: WakeTarget, setBy: WakeInput["setBy"]) => t.conversationId 
 export type PendingWake = { id: string; kind: "timed" | "event"; note: string; at: string | null; expiresAt: string | null; target: WakeTarget; setBy: WakeInput["setBy"]; detail: string };
 
 export function pendingWakes(app: App, opts: { conversationId?: string; spec?: string } = {}): PendingWake[] {
-  const timed = all<{ id: string; input: string; not_before: string | null }>(app.db, "select id, input, not_before from runs where kind = 'wake' and status = 'queued' order by not_before").map((r) => {
+  const timed = all<{ id: string; input: string; not_before: string | null }>(app.db, "select id, input, not_before from runs where kind = 'wake' and status = 'queued' and json_extract(input,'$.supervisorTimer') is null order by not_before").map((r) => {
     const w = JSON.parse(r.input) as WakeInput;
     return w.onRunEnd
       ? { id: r.id, kind: "event" as const, note: w.note, at: null, expiresAt: w.onRunEnd.expiresAt, target: w.target, setBy: w.setBy, detail: `编码轮次 ${w.onRunEnd.runId} 结束` }
@@ -191,6 +191,8 @@ function reportReadBy(app: App, parentId: string, childId: string) {
 }
 
 registerHandler("wake", async (ctx) => {
+  if (typeof ctx.run.input.supervisorTimer === "string")
+    return (await import("./supervisor.ts")).checkSupervisorTimer(ctx.app, ctx.run.input.supervisorTimer, ctx.run.input.purpose as string);
   const w = ctx.run.input as WakeInput;
   if (w.childReport?.parentId && reportReadBy(ctx.app, w.childReport.parentId, w.childReport.runId))
     return { quiet: true, summary: `没有唤醒：交办它的那一轮（${w.childReport.parentId}）已经读过这份报告` };

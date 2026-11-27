@@ -5,6 +5,14 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 用 /跟进 开启和管理长任务（2026-11-28）
+
+从 `src/agents/supervisor-command.ts` 读起。在工作话题发 `/跟进` 看进展，进度卡显示由哪个 AI 跟进。跟进消息沿用主助手署名，设置项名为“长任务跟进用的 AI”。
+
+## 群工作话题接收斜杠开头的补充（2026-11-28）
+
+从 `src/channels/lark-bot.ts` 的群话题入口读起。发起人在工作话题直接发接口路径或目录名，会按原文追加到任务书并立即唤醒。路径的首段即使是后端名（如 `/claude/settings.json`），群入口与会话收件也都按补充处理。其他已注册命令和选择 AI 的命令仍按群消息原有的 @ 规则处理。
+
 ## Codex 启动流量（2026-11-28）
 
 - omem 启动的 Codex 关闭 `plugin_discovery_prefetch`。ACP 用 `CODEX_PATH` 给原本选中的 Codex 传启动参数，CLI 后备和额度查询直接传同一开关。仍可按需浏览和使用插件。
@@ -27,6 +35,21 @@ updated: 2026-11-28
 - 回补：`POST /api/replies/sweep {since, until?, limit?, perDay?, reset?}` 先补登记更早的回答（标“没判”），从最早的开始扫，到条数上限或扫完就停；`reset` 清掉那一段回扫的结论、件和查数记录。`GET /api/replies/sweep`、`/api/reply-tasks`、`/api/data-queries` 看进度和结果。两回都没交结论的回答按第一遍留着。
 - 数据页：“谁触发的”显示飞书姓名（`askerOf`：成员按邮箱认成成员），模型名归一（`modelKey`），“回扫过的”“回扫同意第一遍的占比”“还没回扫的”。
 - `move_file`（“收进材料”组）和 `POST /api/sources/:id/move` 的 `path`：工作文件改路径或空间，id 不变，移动记录写着从哪条路径到哪条。数据相关的放法（`数据/数据源目录.md`、`数据/观测计划/`、`数据/采集/`、`数据/查数/`、`数据/报表/`）写进 `roles/_common.md` 和技能 data-sources、observation-plan。
+
+## 跟进命令沿用话题的 AI 写法（2026-11-28）
+
+从 `src/agents/supervisor-command.ts` 读起。创建任务和更换跟进的 AI 都用 `parseAiSpec` 按发起人解析后端、别名、组、设备或密钥。任务保存选中的具体 AI。指定后端时，英文目标另起一行。模型简称有多个候选时，回复会列出完整型号。
+
+## 飞书工作话题的暂停和结束命令刷新原卡（2026-11-28）
+
+从 `src/channels/lark-bot.ts` 的群消息入口看起。发起人可以在工作话题直接发送 `/跟进 暂停` 或 `/跟进 结束`。接收机器人按群和话题定位任务，命令沿用空间写权限校验。只有在该话题向机器人提问或接着发附件，才会延长两分钟的附件跟随时间。
+
+命令、HTTP 和卡片按钮在 `src/agents/long-tasks.ts` 保存变更后共用一次刷新。原卡在暂停后显示“继续”，结束后收起全部操作按钮。
+
+## 跟进汇总卡上的修改项决定（2026-11-28）
+
+从 `src/agents/supervisor-report.ts` 的汇总卡回调看起。本人选择的做法记入修改项和长任务补充。助手已经让同一项重做两次时，本人仍可决定继续，下一轮沿用长任务剩余预算。
+
 ## AI 规则和组有了网页（2026-11-28）
 
 - 设置 → 后端与模型 多一个子页“规则”（`web/src/components/AiRules.vue`）：顶上“用一句话改”（`AiPolicyPropose.vue`，起草运行好了在原处出确认卡，运行 id 存在标签页里，回来接着跟）；“任务类别”（`AiClassRules.vue`）一类一行，点开改能用的组或 AI、排除、先后、只用这些，看规则来源、近 7 天用量和被排除的角色默认 AI，整份 `PUT /api/ai/policy`；“AI 组”（`AiGroups.vue`）整份 `PUT /api/ai/groups`。
@@ -54,6 +77,25 @@ updated: 2026-11-28
 - `node scripts/card-preview.ts`：用真实的卡片代码（`askCard`、`viewCard`、阶段卡和方案确认的排版）在临时数据目录里生成样例，用开发依赖 open-feishu-card 按电脑和手机宽度画出来截图；`--json` 画任意卡片，`--site` 重画文档站的 `lark-card-stage` / `lark-card-design` / `lark-card-view`（机器人与卡片页）。和客户端的差别写在脚本开头和 docs/v2/lark-cards.md 第 5 节。
 - 方案确认的排版提成纯函数 `designConfirmation`（`src/designs/work.ts`），脚本和交办共用。
 - 预览里看出来的：回答后的宿主卡片原来还是灰色卡片头，灰色的“已回答”标签几乎看不见；现在宿主卡片回答后也是不着色的卡片头，颜色只在标签上。
+
+## 长任务的任务书、跟进报告和查询接口（2026-11-27）
+
+从 `src/agents/supervisor.ts` 看一轮跟进怎样收到任务书、本人补充和跑偏信号。`src/agents/supervisor-report.ts` 把报告记入时间线并更新原进度卡。编码和工作 Agent 按同一预算派活和续轮，工作者待答的问题会保留到助手处理。
+
+长任务在所在空间创建一条关注事项和一个工作会话。`src/agents/long-tasks.ts` 保留目标原文、确认后的任务书和带时间的本人补充。报告和进度文字写入本轮运行，决定、理由和下一步追加到跟进笔记，每轮在事项时间线上留一条记录。跨设备拉取保留这些记录，进行中的长任务在新设备上暂停。
+
+`src/server/long-tasks-http.ts` 提供四个接口。列表和详情沿用事项阅读权限，修改要求调用者是发起人且仍有空间写权。
+
+| 请求 | 输入与结果 |
+| --- | --- |
+| `GET /api/long-tasks` | 可传 `space`、`limit`、`offset`，返回 `tasks` 摘要列表。 |
+| `GET /api/long-tasks/:id` | 返回任务书、原话补充、预算、笔记、事项时间线，以及最近报告和宿主统计的进度、用量。 |
+| `POST /api/long-tasks` | `goal` 必填，可传 `space`、发起会话 `threadId`、`ai`、`budget`、`notifications`，返回新建的草案。 |
+| `PATCH /api/long-tasks/:id` | `action` 取 `pause`、`resume`、`end`、`budget`、`ai` 或 `supplement`。后三项分别传 `budget`、`ai` 或 `text`。预算字段按新总额更新，可只给一项。 |
+
+## 对话里开长任务、给助手补充要求（2026-11-27）
+
+用 `/跟进 [AI] 任务` 或请主助手开工作话题，确认任务书后按进度跟进。在话题里查看状态、加时、换 AI、暂停、继续或结束，也可以请助手从另一会话按编号转达原话。见 [对话用法](../../../site/features/ask.md#跟进一件长任务)。
 
 ## 用后端别名或设备名换 AI（2026-11-27）
 

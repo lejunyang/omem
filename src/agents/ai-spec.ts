@@ -23,7 +23,7 @@ export type AiSpec = {
 
 const compact = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 const effortValues: Record<string, string> = { 低: "low", 中: "medium", 高: "high", 极高: "xhigh", 最高: "max" };
-const effortEnd = /(minimal|medium|xhigh|high|low|max|极高|最高|低|中|高)$/i;
+const effortEnd = /(?:\beffort\s*[:=]\s*([\w.-]+)|(minimal|medium|xhigh|high|low|max|极高|最高|低|中|高))$/i;
 
 // Only correct a complete command word. A short prefix or an arbitrary sentence is not a typo.
 function oneLetterAway(a: string, b: string) {
@@ -42,8 +42,9 @@ function argumentsOf(text: string) {
   if (levelInChinese) end += levelInChinese[0].length;
   const args = line.slice(0, end).trim();
   const level = effortEnd.exec(args);
-  const word = level?.[1].toLowerCase();
-  return { model: (level ? args.slice(0, level.index) : args).trim(), effort: word && (effortValues[word] ?? word),
+  const shorthand = level?.[2]?.toLowerCase();
+  const effort = level?.[1]?.toLowerCase() ?? (shorthand && (effortValues[shorthand] ?? shorthand));
+  return { model: (level ? args.slice(0, level.index) : args).trim(), effort,
     rest: [line.slice(end).trimStart(), ...lines].join("\n").trim() };
 }
 

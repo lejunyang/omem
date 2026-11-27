@@ -32,6 +32,8 @@ export const WORK_BOARD_TOOLS = ["dispatch_work", "work_status", "work_review", 
 
 export const ROLE_TOOLS = ["name_work_branch", "claim_commits", "note_item_change", "submit_item_step", "describe_source", "classify_source", "propose_archive_rule", "review_notes", "review_memories", "settle_items", "submit_plan", "submit_review", "submit_change_points", "review_task", "code_workspace", "rule_review", "propose_knowledge_mapping", "plan_tasks", "finish_task", "report_task", "ask_reviewer", "dispatch_tasks", "verify_tasks", "plan_review", "rule_dispute", "attach_artifact", "report_tests", "submit_brief", "submit_design", "reply_to_asker", "submit_page_check", "submit_level_check", "settle_wiki_question", "meeting_suggest", "submit_playbook", "review_reply_outcomes", "submit_line_state", "propose_lines", "meeting_outcomes", "read_flow_object", "submit_flow_reconcile", "update_situation", "propose_situation", "sync_assigned_item", "first_look_outcome"];
 for (const t of ROLE_TOOLS) CORE_TOOLS.add(t);
+ROLE_TOOLS.push("supervise_report");
+CORE_TOOLS.add("supervise_report");
 ROLE_TOOLS.push("sync_branch");
 CORE_TOOLS.add("sync_branch");
 /**
@@ -59,6 +61,7 @@ export const TOOL_GROUPS: { capability: ToolCapability; id: string; label: strin
   { id: "track", capability: "items.edit", label: "事项与需求", doc: "items", tools: ["req_tree", "req_read", "save_requirements", "split_requirements", "list_items", "read_item", "upsert_item", "settle_items", "propose_item_update", "list_item_proposals", "resolve_item_proposal", "submit_line_state", "propose_lines", "meeting_outcomes", "sync_assigned_item"] },
   { id: "notifications", capability: "agents.manage", label: "事项通知排查", doc: "items", tools: ["repair_item_association", "inspect_item_notification", "read_item_repair", "refresh_item_notification", "ignore_notification_rule"] },
   { id: "wiki", capability: "wiki.write", label: "Wiki", doc: "wiki", tools: ["list_pages", "read_page", "write_page", "correct_page", "move_page", "confirm_page", "generate_wiki", "submit_plan", "submit_page_check", "submit_level_check", "settle_wiki_question"] },
+  { id: "supervise", capability: "items.edit", label: "长任务跟进", doc: "supervise", tools: ["start_long_task", "message_supervisor", "long_task_status", "supervise_report"] },
   { id: "delegate", capability: "owner", label: "交给别的 Agent 与查看运行", doc: "agents", tools: ["list_agents", "run_agent", ...WORK_BOARD_TOOLS, "ask_agent", "list_ai_backends", "propose_ai_policy", "switch_run_ai", "list_runs", "read_run", "take_over_run", "revise_reply_outcome", "review_reply_outcomes"] },
   { id: "skills", capability: "agents.manage", label: "技能与档案", doc: "agents", tools: ["list_skills", "read_skill", "save_skill", "organize_skills", "save_agent", "propose_profile_change"] },
   { id: "remote", capability: "owner", label: "远程操作的录制", doc: "remote", tools: ["list_recordings", "read_recording"] },
