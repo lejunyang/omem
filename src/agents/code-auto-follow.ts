@@ -52,10 +52,20 @@ export function followAgentWork(app: App, work: AgentWork, goal: string) {
 export function backfillCodeFollow(app: App) {
   const auto = app.config.longTasks.auto;
   if (auto.code) {
-    const roots = all<{ id: string }>(app.db, `select distinct coalesce(json_extract(c.input,'$.continueFrom'),c.id) id
+    const roots = all<{ id: string }>(app.db, `select coalesce(json_extract(c.input,'$.continueFrom'),c.id) id
       from runs r join runs c on c.id=case r.kind when 'code' then r.id when 'review' then json_extract(r.input,'$.codeRunId')
         when 'ask' then case json_extract(r.input,'$.handoff.kind') when 'code-tasks' then json_extract(r.input,'$.handoff.workId') end end
-      where r.status in ('queued','running') and c.kind='code'`);
+      where r.status in ('queued','running') and c.kind='code'
+      union
+      select coalesce(json_extract(c.input,'$.continueFrom'),c.id) from runs c indexed by runs_done_code_verdict
+      where c.kind='code' and c.status='done' and json_extract(c.output,'$.verdict') in
+        ('awaiting-plan','awaiting-design','awaiting-owner','awaiting-assistant','awaiting-peer','awaiting-peer-code',
+         'paused','changes-requested','sync-conflict')
+      -- A previous round can still carry its waiting verdict after the work advanced or was discarded.
+      and not exists (select 1 from runs n where n.kind='code'
+        and json_extract(n.input,'$.continueFrom')=coalesce(json_extract(c.input,'$.continueFrom'),c.id)
+        and ((n.created_at,n.rowid)>(c.created_at,c.rowid)
+          or json_extract(n.output,'$.discardedAt') is not null or json_extract(n.output,'$.appliedAt') is not null))`);
     for (const { id } of roots) followCodePlan(app, id);
   }
   if (auto.agentWork) {

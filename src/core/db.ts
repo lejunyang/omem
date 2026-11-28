@@ -102,6 +102,10 @@ const FLOW_SIGNAL_INDEXES = `create index flow_signal_stage on flow_signals(item
    create index flow_signal_age on flow_signals(at);
    create index doing_flow_stages on item_stages(item_id,stage_id) where state='doing';`;
 
+const LONG_TASK_GENERATION_MIGRATION = `alter table long_tasks add column source_generation integer not null default 1;
+   drop index long_tasks_source;
+   create unique index long_tasks_source on long_tasks(source_kind,source_id,source_generation) where source_kind is not null;`;
+
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2583,9 +2587,8 @@ export const migrations: readonly string[] = [
    create index supervised_pending_asks on asks(json_extract(context,'$.supervisorTaskId'))
      where status='pending' and json_extract(context,'$.supervisorTaskId') is not null;`,
   `create index item_flows_unfinished on item_flows(item_id) where ended_at is null;`,
-  `alter table long_tasks add column source_generation integer not null default 1;
-   drop index long_tasks_source;
-   create unique index long_tasks_source on long_tasks(source_kind,source_id,source_generation) where source_kind is not null;`,
+  LONG_TASK_GENERATION_MIGRATION,
+  `create index if not exists runs_done_code_verdict on runs(json_extract(output,'$.verdict')) where kind='code' and status='done';`,
 ];
 
 export type Db = DatabaseSync;
@@ -2603,6 +2606,11 @@ export function openDb(path: string): Db {
   // for those databases before applying the idempotent egress migration.
   if (version === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
       !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
+    version--;
+  }
+  // The code-backfill branch used the generation migration's version for its verdict index.
+  if (version === migrations.indexOf(LONG_TASK_GENERATION_MIGRATION) + 1 &&
+      !db.prepare("select 1 from pragma_table_info('long_tasks') where name='source_generation'").get()) {
     version--;
   }
   for (let i = version; i < migrations.length; i++) {

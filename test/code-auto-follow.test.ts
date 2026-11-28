@@ -6,9 +6,13 @@ import { autoFollowFor } from "../src/agents/auto-follow.ts";
 import { backfillCodeFollow } from "../src/agents/code-auto-follow.ts";
 import { codeChainFor, queueNextCodeRound, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { queueCodeWork } from "../src/agents/code-delegate.ts";
+import { reviewMetrics } from "../src/agents/code.ts";
+import { planReview } from "../src/agents/review.ts";
+import { askPlan } from "../src/agents/review-chain.ts";
+import { addTask } from "../src/agents/code-tasks.ts";
 import { createAgentWork, onWorkRunSettled, queueAgentRound } from "../src/agents/agent-work.ts";
 import { changeLongTask } from "../src/agents/long-tasks.ts";
-import { __testHandlers, addRunEvent, createRun, getRun, queuedInLane } from "../src/agents/runs.ts";
+import { __testHandlers, addRunEvent, createRun, getRun, queuedInLane, setRunOutput } from "../src/agents/runs.ts";
 import { retryRun } from "../src/agents/retry.ts";
 import { supervisorFacts, supervisorUsage } from "../src/agents/supervisor.ts";
 import { createWorkerAsk, longTaskForRun } from "../src/agents/supervisor-code.ts";
@@ -98,6 +102,43 @@ it("接管前的编码轮计入预算，退出后继续原交办，重复补挂�
   const resumed = queueNextCodeRound(app, next.chain, "第三轮", { manual: true })!;
   backfillCodeFollow(app);
   expect(longTaskForRun(app, resumed.run.id)).toBeNull();
+});
+
+it("达标交办停在评审计划确认卡时，连续启动两次只补挂一个跟进", () => {
+  const { app, ask, delegate } = setup();
+  app.config.longTasks.auto.code = false;
+  const root = delegate(3);
+  const plan = planReview(app, reviewMetrics([], [], root.title), { tier: "full" });
+  const card = askPlan(app, root, codeChainFor(app, root), plan);
+  expect(card.status).toBe("pending");
+  setRunOutput(app, root.id, { verdict: "awaiting-plan", reviewAskId: card.id });
+  run(app.db, "update runs set status='done' where id in (?,?)", ask.id, root.id);
+  expect(trySettleCodeChain(app, root.id)).toBe(true);
+  expect(all(app.db, "select id from runs where status in ('queued','running')")).toHaveLength(0);
+
+  app.config.longTasks.auto.code = true;
+  backfillCodeFollow(app);
+  backfillCodeFollow(app);
+  expect(all(app.db, "select source_id from long_tasks")).toEqual([{ source_id: root.id }]);
+  expect(conversationMessages(app, String(ask.input.conversationId)).filter(m => "autoFollowId" in m.meta)).toHaveLength(1);
+});
+
+it("只按当前轮的待答状态补挂，沿用原交办门槛", () => {
+  const { app, delegate } = setup();
+  app.config.longTasks.auto.code = false;
+  const waiting = delegate(3), small = delegate(), completed = delegate(3);
+  for (const root of [waiting, small, completed]) {
+    addTask(app, root.id, { kind: "build", title: "确定示例范围", state: "owner", question: "保留旧示例吗？" }, "coder");
+    setRunOutput(app, root.id, { verdict: "awaiting-owner" });
+    run(app.db, "update runs set status='done' where id=?", root.id);
+  }
+  const next = queueNextCodeRound(app, codeChainFor(app, completed)!, "已答复", { manual: true })!;
+  setRunOutput(app, next.run.id, { verdict: "approved" });
+  run(app.db, "update runs set status='done' where id=?", next.run.id);
+
+  app.config.longTasks.auto.code = true;
+  backfillCodeFollow(app);
+  expect(all(app.db, "select source_id from long_tasks")).toEqual([{ source_id: waiting.id }]);
 });
 
 const scope = { userId: "owner", spaces: ["personal"], denyTools: [], lark: { chats: [] } };

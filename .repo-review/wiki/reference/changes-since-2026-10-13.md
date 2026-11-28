@@ -13,7 +13,7 @@ updated: 2026-11-28
 
 从 `src/agents/auto-follow.ts` 读起。自动跟进记录工作来源，首版任务书随报告生效。原会话可退出，之后仍能查到已作出的决定。三类工作各有独立开关，编码交办另按拆分和轮数判断。进度卡、可编辑的必问清单和每轮报告在 `src/agents/supervisor-report.ts`。
 
-服务启动时同时补挂研究和编码。等待中的研究关卡随退出操作交回本人。研究流程的运行阶段可在 `done: confirm` 旁写 `confirm: supervisor`，详见 `src/flows/engine.ts`。
+服务启动时同时补挂研究和编码。编码交办即使没有活跃运行，只要当前轮还在等确认或等修改项答复，重启时也会按原门槛补挂一次。等待中的研究关卡随退出操作交回本人。研究流程的运行阶段可在 `done: confirm` 旁写 `confirm: supervisor`，详见 `src/flows/engine.ts`。
 
 ## 沙箱在启动前报告后端与命令的登录目录冲突（2026-11-28）
 
