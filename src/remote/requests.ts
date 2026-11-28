@@ -72,11 +72,11 @@ function eventBatch(sent: unknown): boolean {
 }
 
 /** Numbers, ids and hashes in a path are values, not endpoints. */
-const shape = (path: string) =>
-  path
-    .split("/")
-    .map((seg) => (/^\d+$/.test(seg) || /^[0-9a-f]{8,}(-[0-9a-f]{4,})*$/i.test(seg) || /^[A-Za-z0-9_-]{20,}$/.test(seg) && /\d/.test(seg) ? ":id" : seg))
-    .join("/");
+export const isPathId = (segment: string) =>
+  /^\d+$/.test(segment) || /^[0-9a-f]{8,}(-[0-9a-f]{4,})*$/i.test(segment) ||
+  /^[A-Za-z0-9_-]{20,}$/.test(segment) && /\d/.test(segment);
+
+const shape = (path: string) => path.split("/").map(seg => isPathId(seg) ? ":id" : seg).join("/");
 
 function noiseOf(e: Omit<Endpoint, "noise">): string | null {
   const first = e.requests[0];
