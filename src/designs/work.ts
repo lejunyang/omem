@@ -8,7 +8,7 @@ import { cancelAsk, createAsk, getAsk, registerAskHandler, type Ask } from "../a
 import { CODE_HANDOFF_DENY, reportConversation, type CodeChain } from "../agents/code-chain.ts";
 import { listTasks, taskLabel, type CodeTask } from "../agents/code-tasks.ts";
 import type { PreCheck } from "../agents/pre-check.ts";
-import { createRun, getRun, requeueRun, runUser, setRunOutput, type Run } from "../agents/runs.ts";
+import { addRunEvent, createRun, getRun, requeueRun, runUser, setRunOutput, type Run } from "../agents/runs.ts";
 import { getThread } from "../agents/threads.ts";
 import type { AskUi, UiField } from "../agents/ui-blocks.ts";
 import { designLine, designMarkdown } from "./render.ts";
@@ -203,13 +203,23 @@ function confirm(app: App, root: Run, d: Design, note = "") {
 }
 
 function askOwner(app: App, root: Run, d: Design, chain: CodeChain | null, note: string): Ask {
-  return createAsk(app, {
+  const ask = createAsk(app, {
     runId: root.id,
     conversationId: chain ? reportConversation(app, chain) : null,
     userId: runUser(app, root.id),
     ...designConfirmation(app, d, root.title, note),
     context: { handler: "design-confirm", designId: d.id, rootId: root.id },
   });
+  refreshFollowCard(app, root.id);
+  return ask;
+}
+
+/** A follow-up cannot confirm a plan: its progress card lists the plans waiting on the owner (supervisor-report.ts). */
+function refreshFollowCard(app: App, rootId: string) {
+  void (async () => {
+    const task = (await import("../agents/supervisor-code.ts")).longTaskForRun(app, rootId);
+    if (task?.status === "active") await (await import("../agents/supervisor-report.ts")).refreshSupervisorCard(app, task.id);
+  })().catch((error) => addRunEvent(app, rootId, "warning", { message: `更新跟进的进度卡失败：${String(error)}` }));
 }
 
 /**
@@ -315,6 +325,7 @@ onDesignDecided((app, design, d) => {
   const wait = r.output.designWait as DesignWait | undefined;
   const label = ACTIONS.find((a) => a.action === d.action)!.label;
   if (wait?.askId) cancelAsk(app, wait.askId, `已${label}（${d.by === "owner" ? "本人" : d.by === "assistant" ? "助手" : d.by}）`);
+  if (wait?.askId) refreshFollowCard(app, root.id);
   // Discarded while it waited: confirmed for the record, nothing to code.
   if (r.status !== "done" || r.output.verdict !== "awaiting-design" || r.output.discardedAt || r.output.appliedAt) return;
   requeueRun(app, r.id, { verdict: null, designWait: null, reviewStage: null });

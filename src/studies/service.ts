@@ -3,7 +3,7 @@ import { checkStudyGate, studyGate } from "./auto-follow.ts";
 import { finishStage } from "../flows/plugin-gates.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
-import { HttpError, json, now } from "../core/util.ts";
+import { HttpError, json, newId, now } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { describeStage } from "../flows/definitions.ts";
 import { answerAsk, getAsk, registerAskHandler } from "../agents/asks.ts";
@@ -11,9 +11,9 @@ import { artifactInbox, artifactsByIds, attachPath, attachText } from "../agents
 import { getRun } from "../agents/runs.ts";
 import { changeStage, getStage, itemFlow, type FlowActor } from "../flows/store.ts";
 import { studyOperation } from "../flows/engine.ts";
-import { assertOwner, confirmDirection, direction, findings, idleRounds, isOpenDirection, normalize, saveProposals, trial, trials, directions, type Direction, type PlannedTrial, type Trial } from "./store.ts";
+import { assertOwner, confirmDirection, direction, findings, idleRounds, isOpenDirection, isStudy, normalize, saveProposals, trial, trials, directions, type Direction, type PlannedTrial, type Trial } from "./store.ts";
 import { coverage } from "./materials.ts";
-import { resultSchema, type Proposal, type TrialReport } from "./schema.ts";
+import { resultSchema, type FollowTrial, type Proposal, type TrialReport } from "./schema.ts";
 import { studyScope } from "./scope.ts";
 import { checkDirectionChoice, resolveEnv, thirdPartyReason } from "./envs.ts";
 import { captureBaseline } from "./workspace.ts";
@@ -119,6 +119,42 @@ export async function reportTrial(app: App, report: TrialReport, by: FlowActor) 
     run(app.db, "update study_trials set state='reported',result=?,summary=?,evidence=?,findings=?,unsure=?,updated_at=? where id=?", report.result, report.summary, JSON.stringify(evidence), JSON.stringify(report.findings ?? []), report.unsure ? 1 : 0, now(), t.id);
   });
   return "已记下试验结果；候选发现由小结归并。";
+}
+/**
+ * A trial the study's follow-up ran as a plain agent run (a rerun, a real project the plan did not list)
+ * goes into the study's record like any other, with what the follow-up verified. A summary already
+ * written (or skipped) for this round runs again to merge it.
+ */
+export async function recordFollowTrial(app: App, superviseRunId: string, a: FollowTrial) {
+  const { getLongTask } = await import("../agents/long-tasks.ts");
+  const task = getLongTask(app, String(getRun(app, superviseRunId).input.longTaskId));
+  if (task.sourceKind !== "study" || !task.sourceId) throw new HttpError(400, "只有跟进研究时才能把运行记成研究的试验");
+  const itemId = task.sourceId, r = getRun(app, a.run);
+  if (r.kind !== "agent" || r.input.longTaskId !== task.id) throw new HttpError(400, "只能记本长任务里派出的运行");
+  if (!["done", "failed"].includes(r.status)) throw new HttpError(409, "运行还没结束，结束后再记");
+  const filed = await studyOperation(app, itemId, async () => {
+    const f = itemFlow(app, itemId);
+    if (!f || f.endedAt || !isStudy(f)) throw new HttpError(409, "研究流程已结束");
+    if (one(app.db, "select 1 from study_trials where run_id=?", r.id)) throw new HttpError(409, "这次运行已经记成试验");
+    const all = directions(app, itemId);
+    const d = a.direction ? all.find((x) => x.id === a.direction) : all.filter(isOpenDirection).at(-1) ?? all.filter((x) => x.state === "done").at(-1) ?? all.at(-1);
+    if (!d) throw new HttpError(a.direction ? 400 : 409, a.direction ? "direction 必须是本研究的方向" : "研究还没有方向，先走一轮定方向");
+    const id = newId("st"), at = now();
+    const seq = Math.max(0, ...trials(app, itemId).filter((t) => t.direction_id === d.id).map((t) => t.seq)) + 1;
+    run(app.db, `insert into study_trials(id,item_id,direction_id,round,seq,object,"check",env,state,result,summary,run_id,created_at,updated_at)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, itemId, d.id, f.round, seq, a.object, a.check, d.env, "reported", a.result,
+      `${a.summary}\n\n跟进补跑，运行 ${r.id}`, r.id, at, at);
+    const summary = f.definition.stages.find((s) => s.tools?.includes("record_finding"));
+    const state = summary ? getStage(app, itemId, summary.id).state : null;
+    return { id, round: f.round, summary: summary && (state === "done" || state === "skipped") ? summary : null, waiting: !!summary && !(state === "done" || state === "skipped") };
+  });
+  if (filed.summary) {
+    const { reopenStage } = await import("../flows/engine.ts");
+    await reopenStage(app, itemId, filed.summary.id, `跟进补记了试验 ${filed.id}（运行 ${r.id}）。只归并这一轮还没进发现的试验，已有发现用 same_as 合并依据，不要重记。`,
+      [`run:${r.id}`], { actor: "supervisor", runId: superviseRunId, userId: getItem(app, itemId).userId }, { feedback: true });
+    return `已记成第 ${filed.round} 轮的试验 ${filed.id}；「${filed.summary.name}」已重开，会把它归并进发现。`;
+  }
+  return `已记成第 ${filed.round} 轮的试验 ${filed.id}${filed.waiting ? "；这一轮的小结还没写完，写时会一起归并" : ""}。`;
 }
 /** A trial's screenshots as Markdown a finding's body can carry as they are. */
 function images(app: App, t: Trial) {

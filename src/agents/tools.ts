@@ -48,7 +48,7 @@ import { storedPath } from "../core/stored-files.ts";
 import { createSpace, findSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceFamily, unrelateSpaces, updateSpace } from "../core/spaces.ts";
 import { cloneRepository, initRepository, remoteKeys, repositoryRoot, sameRepository } from "../core/repositories.ts";
 import { accessibleSpaces, activeUser, identityOwner, findUser, requireMembershipSpace, OWNER, canWrite, scopeFor, userName } from "../core/users.ts";
-import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, closeDirectionSchema, reviseStudyFindingSchema, queueStudyFixesSchema } from "../studies/schema.ts";
+import { studyPushSchema, proposalSchema, trialReportSchema, ledgerSchema, recordFindingSchema, followTrialSchema,closeDirectionSchema, reviseStudyFindingSchema, queueStudyFixesSchema } from "../studies/schema.ts";
 import { attachText, deleteArtifacts, evidenceTextSchema } from "./artifacts.ts";
 import { memberToolAccess, trimTools } from "../auth/tools.ts";
 import { featuresOff } from "../auth/connections.ts";
@@ -2679,7 +2679,14 @@ def({
   },
 });
 def({
-  name: "revise_study_finding", description: "本人在对话里要改一条研究发现时用：重写标题或正文（Markdown，分条件 / 现象 / 为什么是问题 / 建议几段，第一次改时宿主留原文）、改类型，或改状态（confirmed 认可、rejected 不算、later 以后再说、fixed 已改好，reason 写依据，比如修复的提交或交办）。只改本人明确要改的，不自己判发现成不成立。", write: true, schema: reviseStudyFindingSchema,
+  name: "record_follow_trial", description: "跟进研究时用：把你在本长任务里用 run_agent 派出、已经结束的试验运行（补跑、计划外的真实项目）记成研究的试验。先读运行报告核实结果，summary 写条件、命令、期望和实际、关键输出。这一轮的小结已写完会重开，由小结归并成发现；一次运行只记一次。", write: true, schema: followTrialSchema,
+  handler: async (ctx, a) => {
+    if (ctx.role !== "supervisor" || !ctx.runId) throw new HttpError(403, "只有跟进角色可以补记研究的试验");
+    return (await import("../studies/service.ts")).recordFollowTrial(ctx.app, ctx.runId, a);
+  },
+});
+def({
+  name: "revise_study_finding",description: "本人在对话里要改一条研究发现时用：重写标题或正文（Markdown，分条件 / 现象 / 为什么是问题 / 建议几段，第一次改时宿主留原文）、改类型，或改状态（confirmed 认可、rejected 不算、later 以后再说、fixed 已改好，reason 写依据，比如修复的提交或交办）。只改本人明确要改的，不自己判发现成不成立。", write: true, schema: reviseStudyFindingSchema,
   handler: async (ctx, a) => {
     flowItem(ctx, a.item, "write");
     const store = await import("../studies/store.ts");

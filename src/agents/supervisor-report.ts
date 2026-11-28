@@ -1,16 +1,25 @@
 import type { SupervisorReport as Report } from "./supervisor-schema.ts";
 import type { App } from "../core/app.ts";
-import { one, run, withinTx } from "../core/db.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { deliveryPlan, notify } from "../core/notify.ts";
-import { HttpError, now, truncate } from "../core/util.ts";
+import { HttpError, now, truncate, webLink } from "../core/util.ts";
 import { cancelAsk, createAsk, registerAskHandler } from "./asks.ts";
 import { confirmLongTaskBrief, changeLongTask, followAiLabel, getLongTask, saveLongTaskReport, type LongTask } from "./long-tasks.ts";
 import { addRunEvent, getRun } from "./runs.ts";
 import { patchSupervisorState, scheduleSupervisorTimer, supervisorFacts, supervisorUsage, supervisorState } from "./supervisor.ts";
+import { longTaskForRun } from "./supervisor-code.ts";
 import { getThread } from "./threads.ts";
 import type { UiField } from "./ui-blocks.ts";
 
 const labels: Record<Report["status"], string> = { "on-track": "按计划推进", drifting: "正在纠偏", stuck: "遇到阻塞", "needs-owner": "等你决定", done: "已完成" };
+
+/** Plans of this task's delegations waiting on the owner's card: the follow-up cannot confirm them, so the card says so. */
+export function plansForOwner(app: App, task: LongTask) {
+  return all<{ id: string; title: string; root: string }>(app.db, `select d.id, d.title, json_extract(a.context,'$.rootId') root
+    from asks a join designs d on d.id=json_extract(a.context,'$.designId')
+    where a.status='pending' and a.user_id=? and json_extract(a.context,'$.handler')='design-confirm' order by a.created_at`, task.userId)
+    .filter(p => longTaskForRun(app, p.root)?.id === task.id);
+}
 
 export function supervisorProgressText(app: App, task: LongTask, report: Report, facts = supervisorFacts(app, task), usage = supervisorUsage(app, task)) {
   const hours = Math.max(0, Date.now() - Date.parse(task.createdAt)) / 3600_000;
@@ -26,6 +35,7 @@ export function supervisorProgressText(app: App, task: LongTask, report: Report,
     section("已完成", report.progress.done), section("在做", report.progress.doing), section("下一步", report.progress.next),
     section("目标核对", report.goalCheck), section("跟进的判断与依据", report.decisions.map(d => d.what + "：" + d.why)),
     section("纠偏", report.actions), section("要你定", report.askOwner.map(q => q.question + "（倾向：" + q.prefer + "）")),
+    section("等你确认的方案", plansForOwner(app, task).map(p => `[${p.title}](${webLink(app, `#/design/${p.id}`)})：确认后才开始编码，跟进不能替你确认`)),
   ].filter(Boolean).join("\n\n");
 }
 

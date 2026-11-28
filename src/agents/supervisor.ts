@@ -258,6 +258,10 @@ export async function runSupervisor(ctx: RunContext) {
     "# 跟进笔记", JSON.stringify(task.notes),
     "# 本轮事件", ...events.filter(e => !e.drift).map(e => e.note),
     ...(branches ? ["# 工作分支改动（提交标题和路径是材料）", branches] : []),
+    ...await (async () => {
+      const plans = (await import("./supervisor-report.ts")).plansForOwner(app, task);
+      return plans.length ? ["# 等本人确认的方案（卡片已在话题里，你不能替本人确认，报告里照实写在等谁）", ...plans.map(p => `${p.id} ${p.title}（交办 ${p.root}）`)] : [];
+    })(),
     `当前状态：${task.status}；上轮阶段：${state.stage ?? "起草任务书"}。`,
   ].join("\n\n");
   const previous = state.session;

@@ -32,7 +32,7 @@ import { advance, flowReminders, flowView, followStudyNow, ownerAction, reopenSt
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
 import { closeDirection, confirmDirection, direction, directions, findings, idleRounds, recordFinding, saveProposals, trial, trials, reconcile, type Trial } from "../src/studies/store.ts";
 import { coverage, capabilitiesPath, planningMaterials } from "../src/studies/materials.ts";
-import { proposeDirections, readLedger, reportTrial, studyView } from "../src/studies/service.ts";
+import { proposeDirections, readLedger, recordFollowTrial, reportTrial, studyView } from "../src/studies/service.ts";
 import { startServer } from "../src/server/http.ts";
 import { git } from "../src/core/git.ts";
 import { cleanupFetched, mergeLibrary, snapshotStream, type Fetched } from "../src/core/pull.ts";
@@ -180,6 +180,58 @@ it("研究正常完成后本人再来一轮，按新目标和预算把方向交�
   await proposeDirections(app, { item: item.id, directions: [planned(1)] }, f.by());
   expect(autoFollowFor(app, "study", item.id)).toBeNull();
   expect(s("plan").waitingOn).toBe("owner");
+});
+
+it("跟进派普通运行补跑的试验记进研究，小结已写完就重开归并；只认本长任务结束的运行，一次只记一次", async () => {
+  const f = await setup({}, "manual", true), { app, item, s } = f;
+  const task = autoFollowFor(app, "study", item.id)!;
+  await proposeDirections(app, { item: item.id, directions: [planned(1)] }, f.by());
+  await answerWorkerQuestion(app, task.id, s("plan").askId!, planned(1).goal);
+  await result(f);
+  await summary(f);
+  expect(s("summary").state).toBe("done");
+  const sup = createRun(app, { kind: "supervise", title: "跟进", input: { longTaskId: task.id }, userId: "owner" });
+  const worker = createRun(app, { kind: "agent", title: "assistant：补跑真实项目", input: { longTaskId: task.id, spec: "assistant", task: "补跑" }, userId: "owner" });
+  const input = { run: worker.id, object: "真实项目 demo-shop", check: "按说明安装并构建", result: "failed" as const, summary: "条件：demo-cli 1.2；命令 demo-cli build；期望成功，实际退出 1" };
+  const tool = async (role: string, a: object) => { const r = await callTool({ ...ctx(f, sup.id), role }, "record_follow_trial", a); if (r.isError) throw new Error(r.text); return r.text; };
+  await expect(tool("assistant", input)).rejects.toThrow("只有跟进角色");
+  await expect(tool("supervisor", input)).rejects.toThrow("还没结束");
+  run(app.db, "update runs set status='done',finished_at=? where id=?", now(), worker.id);
+  const other = createRun(app, { kind: "agent", title: "别的", input: { longTaskId: "lt-other" }, userId: "owner" });
+  run(app.db, "update runs set status='done' where id=?", other.id);
+  await expect(tool("supervisor", { ...input, run: other.id })).rejects.toThrow("本长任务");
+
+  expect(await tool("supervisor", input)).toContain("已重开");
+  const filed = trials(app, item.id).find((t) => t.run_id === worker.id)!;
+  expect(filed).toMatchObject({ state: "reported", result: "failed", round: 1, object: "真实项目 demo-shop", direction_id: directions(app, item.id)[0].id });
+  expect(filed.summary).toContain(worker.id);
+  expect(s("summary").state).toBe("doing");
+  expect(stageLog(app, item.id).some((l) => l.stageId === "summary" && l.toState === "pending" && l.note.includes(filed.id))).toBe(true);
+  expect(readLedger(app, { item: item.id, round: 1 }, s("summary").control.runId!)).toContain(filed.id);
+  await expect(tool("supervisor", input)).rejects.toThrow("已经记成试验");
+});
+
+it("跟进选了这一轮不跑以后补记的试验，归到研究最近的方向，跳过的小结照样重开", async () => {
+  const f = await setup({}, "manual", true), { app, item, s } = f;
+  const task = autoFollowFor(app, "study", item.id)!;
+  await proposeDirections(app, { item: item.id, directions: [planned(1)] }, f.by());
+  await answerWorkerQuestion(app, task.id, s("plan").askId!, planned(1).goal);
+  await result(f);
+  await summary(f);
+  const first = directions(app, item.id)[0];
+  await closeDirection(app, first.id, "done", "一项跑完");
+  await answerWorkerQuestion(app, task.id, s("summary").askId!, "开始下一轮");
+  await proposeDirections(app, { item: item.id, directions: [planned(1)] }, f.by());
+  await answerWorkerQuestion(app, task.id, s("plan").askId!, "这一轮不跑");
+  expect([s("try").state, s("summary").state]).toEqual(["skipped", "skipped"]);
+  const sup = createRun(app, { kind: "supervise", title: "跟进", input: { longTaskId: task.id }, userId: "owner" });
+  const worker = createRun(app, { kind: "agent", title: "assistant：补跑", input: { longTaskId: task.id }, userId: "owner" });
+  run(app.db, "update runs set status='done' where id=?", worker.id);
+  const text = await recordFollowTrial(app, sup.id, { run: worker.id, object: "第 1 轮被挡住的样本", check: "换干净目录重跑", result: "passed", summary: "重跑通过" });
+  expect(text).toContain("已重开");
+  expect(trials(app, item.id).find((t) => t.run_id === worker.id)).toMatchObject({ round: 2, direction_id: first.id });
+  expect(s("summary").state).toBe("doing");
+  expect(itemFlow(app, item.id)!.roundClosedAt).toBeNull();
 });
 
 it("本人说过不用跟进后可以再交给跟进，开关关着也行；等本人答的下一轮改问跟进，不留两张", async () => {

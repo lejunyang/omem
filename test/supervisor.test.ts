@@ -52,6 +52,27 @@ function turn(app: App, task: LongTask) {
 }
 
 describe("长任务跟进", () => {
+  it("交办的方案在等本人确认时，进度里写明是哪件，确认后去掉", async () => {
+    const { app, task } = await setup();
+    const root = createRun(app, { kind: "code", title: "分步滚轮", input: { longTaskId: task.id }, userId: "owner" });
+    const other = createRun(app, { kind: "code", title: "别的交办", input: {}, userId: "owner" });
+    const { createDesign } = await import("../src/designs/store.ts");
+    const { createAsk } = await import("../src/agents/asks.ts");
+    const { plansForOwner, supervisorProgressText } = await import("../src/agents/supervisor-report.ts");
+    const mine = createDesign(app, { spaceId: "personal", title: "分步滚轮的方案", origin: "own", workId: root.id, userId: "owner" });
+    const theirs = createDesign(app, { spaceId: "personal", title: "别的方案", origin: "own", workId: other.id, userId: "owner" });
+    const ask = createAsk(app, { runId: root.id, userId: "owner", question: "方案写好了", context: { handler: "design-confirm", designId: mine.id, rootId: root.id } });
+    createAsk(app, { runId: other.id, userId: "owner", question: "方案写好了", context: { handler: "design-confirm", designId: theirs.id, rootId: other.id } });
+    expect(plansForOwner(app, task).map(p => p.id)).toEqual([mine.id]);
+    const text = supervisorProgressText(app, task, draftReport);
+    expect(text).toContain("等你确认的方案");
+    expect(text).toContain("分步滚轮的方案");
+    expect(text).not.toContain("别的方案");
+    const { cancelAsk } = await import("../src/agents/asks.ts");
+    cancelAsk(app, ask.id, "已确认");
+    expect(supervisorProgressText(app, task, draftReport)).not.toContain("等你确认的方案");
+  });
+
   it("按话题接收本人原话，和待处理事件合在一轮", async () => {
     const { app, task } = await setup();
     const queued = wakeSupervisor(app, task.id, "修改项完成");

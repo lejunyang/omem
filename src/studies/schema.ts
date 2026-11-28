@@ -12,7 +12,15 @@ export const proposalSchema = z.object({
   directions: z.array(z.object({ goal: text(500), approach: text(), acceptance: text(), env: z.string().trim().max(1000).optional(), thirdParty: z.boolean().optional(), estimate: text(1000).optional(), trials: z.array(z.object({ object: text(1000), check: text(2000), features: z.array(text(300)).max(10).optional() })).min(1).max(40) })).max(3),
 });
 export const trialReportSchema = z.object({ trial: text(100), result: resultSchema, summary: text(12000), evidence: z.array(text(1000)).max(50).optional(), evidence_text: evidenceTextSchema, findings: z.array(findingSchema).max(20).optional(), unsure: z.boolean().optional() });
-export const ledgerSchema = z.object({ item: text(100), direction: text(100).optional(), object: text(1000).optional(), result: resultSchema.optional(), round: z.number().int().positive().optional(), limit: z.number().int().min(1).max(1000).optional() });
+/** A trial the study's follow-up ran as a plain agent run, filed with what it verified (`record_follow_trial`). */
+export const followTrialSchema = z.object({
+  run: text(100).describe("本长任务里派出、已经结束的运行 id（r…）"),
+  object: text(1000).describe("试的对象：哪个项目、版本或命令"), check: text(2000).describe("查的是什么"),
+  result: resultSchema, summary: text(12000).describe("条件（版本、提交、环境）、命令、期望和实际、关键输出；小结据此写发现"),
+  direction: text(100).optional().describe("归到哪个方向；不填归到研究最近的方向"),
+}).strict();
+export type FollowTrial = z.infer<typeof followTrialSchema>;
+export const ledgerSchema =z.object({ item: text(100), direction: text(100).optional(), object: text(1000).optional(), result: resultSchema.optional(), round: z.number().int().positive().optional(), limit: z.number().int().min(1).max(1000).optional() });
 export const recordFindingSchema = findingSchema.extend({ item: text(100), trials: z.array(text(100)).min(1).max(1000), evidence_text: evidenceTextSchema, same_as: text(100).optional(), distinct_from: z.array(text(100)).max(100).optional() });
 export const reviseStudyFindingSchema = z.object({
   item: text(100), finding: text(100), kind: kind.optional(), title: text(300).optional(), repro: text(20000).optional(),
