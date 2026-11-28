@@ -18,6 +18,7 @@ type WakeEvent = { note: string; drift: boolean };
 type Session = { id: string; stage: string; ai: LongTask["ai"] };
 type SupervisorState = {
   day?: string; wakes?: number; lastWake?: string; session?: Session; stage?: string;
+  branchHeads?: [string, string][];
   pausedEvents?: WakeEvent[];
   briefAsk?: string; cardId?: string; lastPush?: string; pendingPush?: string; pendingHighlights?: string[]; lastReport?: string;
 };
@@ -217,7 +218,15 @@ export async function runSupervisor(ctx: RunContext) {
   });
   const events = ctx.run.input.events as WakeEvent[];
   const { supervisorBranches } = await import("./supervisor-branches.ts");
-  const branches = await supervisorBranches(app, task);
+  let branches = ctx.run.output.branchSummary as string | undefined;
+  if (branches === undefined) {
+    const snapshot = await supervisorBranches(app, task, state.branchHeads);
+    withinTx(app.db, () => {
+      patchSupervisorState(app, task.id, { branchHeads: snapshot.heads });
+      ctx.output({ branchSummary: snapshot.text });
+    });
+    branches = snapshot.text;
+  }
   const prompt = [
     ...events.filter(e => e.drift).map(e => e.note),
     "# 任务书", task.goal, JSON.stringify(task.brief), JSON.stringify(task.budget),

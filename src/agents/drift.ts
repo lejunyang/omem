@@ -17,7 +17,7 @@ export function checkTaskDuration(app: App, task: CodeTask): string | null {
   return elapsed > median * 3 ? `T${task.seq} 用时 ${Math.ceil(elapsed / 60000)} 分钟，超过其他已完成项中位数的三倍` : null;
 }
 
-function inScope(scope: string[], repo: string, path: string) {
+export function inScope(scope: string[], repo: string, path: string) {
   return scope.some(entry => {
     const prefix = entry.trim().replace(/^\.\//, "").replace(/\/(?:\*\*)?$/, "");
     return prefix === "." || prefix === repo || [path, `${repo}/${path}`].some(p => p === prefix || p.startsWith(prefix + "/") || posix.matchesGlob(p, prefix));

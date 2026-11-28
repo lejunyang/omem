@@ -86,15 +86,40 @@ describe("助手的编码交办", () => {
     }
     run(app.db, "update spaces set root_path=? where id='personal'", dir);
     setRunOutput(app, root.id, { worktrees: [{ space: "personal", branch: "work", path: dir, base, commits: true }] });
-    for (const summary of [await supervisorBranches(app, task),
-      await supervisorBranches(app, { ...task, id: "adopted", sourceKind: "code", sourceId: root.id })]) {
-      expect(summary).toContain("change-6");
-      expect(summary).not.toContain("change-1");
-      expect(summary).toContain("21 files changed");
-      expect(summary).not.toContain("正文不会进入汇总");
-      expect(summary.length).toBeLessThan(2500);
+    const first = await supervisorBranches(app, task);
+    const adopted = await supervisorBranches(app, { ...task, id: "adopted", sourceKind: "code", sourceId: root.id });
+    for (const { text } of [first, adopted]) {
+      expect(text).toContain("change-6");
+      expect(text).not.toContain("change-1");
+      expect(text).toContain("【范围外】（根目录） +21 -0");
+      expect(text).not.toContain("正文不会进入汇总");
     }
-    expect(await supervisorBranches(app, { ...task, id: "other" })).toBe("");
+    for (const name of ["docs", "examples"]) {
+      mkdirSync(join(dir, name));
+      writeFileSync(join(dir, name, "guide.md"), "增加一行\n");
+    }
+    git(dir, ["add", "."]);
+    git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "说明和样例"]);
+    const second = await supervisorBranches(app, task, first.heads);
+    expect(second.text).toContain("说明和样例");
+    expect(second.text).not.toContain("change-6");
+    expect(second.text).toContain("【范围外】examples/ +1 -0");
+    expect(second.text).toMatch(/^docs\/ \+1 -0$/m);
+    expect((await supervisorBranches(app, task, second.heads)).text).toContain("没有新提交");
+    for (let i = 0; i < 35; i++) {
+      const folder = join(dir, "outside-" + i);
+      mkdirSync(folder);
+      writeFileSync(join(folder, "a"), "one\n");
+    }
+    git(dir, ["rm", "examples/guide.md"]);
+    git(dir, ["add", "."]);
+    git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "多个目录"]);
+    const third = await supervisorBranches(app, task, second.heads);
+    expect(third.text.split("\n")).toHaveLength(30);
+    expect(third.text).toContain("【范围外】examples/ +0 -1");
+    expect(third.text).toContain("行已省略");
+    expect((await supervisorBranches(app, { ...task, id: "other" })).text).toBe("");
+
   });
 
   it("工作 Agent 和编码共用预算，工作结束仍由助手接手", async () => {
