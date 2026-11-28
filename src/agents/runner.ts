@@ -52,7 +52,7 @@ import { commandGateDir } from "./command-gate.ts";
 import { embedQuery } from "../search/embeddings.ts";
 import { asOfContent, memoryWhere, type RunView } from "./replay-view.ts";
 import { categoryStatus } from "../core/ai-keys.ts";
-import { accountBlocked, accountPolicy, accountFor, isAiMember, memberAccountPlan, MemberOwnerQuotaChanged, selectedMemberAccount, unisolatedReason, withAccount } from "./accounts.ts";
+import { accountBlocked, accountPolicy, accountFor, isAiMember, memberAccountPlan, MemberOwnerQuotaChanged, runBrowserProfilesRoot, selectedMemberAccount, unisolatedReason, withAccount } from "./accounts.ts";
 import { memberAi } from "./member-ai.ts";
 import { selectMemberRunAccount } from "./member-run-ai.ts";
 import { aiLoginWait } from "./credential-wait.ts";
@@ -611,7 +611,7 @@ export function prepareRun(
   let toolBase = base.origin;
   const reconciling = roleName === "flow-reconcile";
   const browserProfilesRoot = !reconciling && (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.investigationTools && !input.itemTakeoverRead && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
-    ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
+    ? runBrowserProfilesRoot(app, userId, !!account)
     : undefined;
   const browserGuard = browserProfilesRoot && userId !== OWNER ? guardUrlNow() : null;
   const readOnly = reconciling || !!(input.boardAccess || input.investigationTools || input.itemTakeoverRead || input.reviewCheck || input.reviewLead || input.replay);

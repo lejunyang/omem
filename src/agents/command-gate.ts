@@ -9,16 +9,18 @@
 import { pathToFileURL } from "node:url";
 import { standardCommandLogins } from "./own-sandbox.ts";
 import { remoteGit } from "./git-command.ts";
-import { credentialMethods } from "./credential-registry.ts";
+import { credentialCommand } from "./credential-outcome.ts";
+import { judgeCredential } from "./credentials.ts";
+import { commandDeclarations, type CredentialCommand } from "./credential-registry.ts";
 import { auditOperation, commandArgsMatch, currentRules, decide, digest, fingerprint, operationWho, saveOperationRules, type Operation } from "./operation-policy.ts";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import type { App } from "../core/app.ts";
-import type { CommandRule } from "../core/config.ts";
+import type { CommandRule, OperationRule } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
-import { COMMAND_OUTPUT_LIMIT, COMMAND_TIMEOUT_SEC, now, truncate, webLink } from "../core/util.ts";
-import { findUser, listUsers, OWNER, userName } from "../core/users.ts";
+import { COMMAND_OUTPUT_LIMIT, COMMAND_TIMEOUT_SEC, HttpError, now, truncate, webLink } from "../core/util.ts";
+import { activeUser, findUser, listUsers, OWNER, userName } from "../core/users.ts";
 import { audit } from "../auth/permissions.ts";
 import { addRunEvent } from "./runs.ts";
 import { cancelAsk, createAsk, getAsk, markAskSent, registerAskHandler, type Ask } from "./asks.ts";
@@ -59,18 +61,20 @@ const norm = (name: string) => (win ? name.toLowerCase() : name);
  * The wrappers for the current rules and credential declarations under <home>/bin/guarded (stale ones removed); returns that
  * directory, or null when neither supplies a command.
  */
-export function syncCommandGate(home: string, rules: ({ command: string; args?: string } & Parameters<typeof commandArgsMatch>[0])[], sandbox = false): string | null {
+export function syncCommandGate(home: string, rules: ({ command: string; args?: string } & Parameters<typeof commandArgsMatch>[0])[], sandbox = false, configured: CredentialCommand[] = []): string | null {
   const { guarded, script } = gatePaths(home);
-  const declared = [...new Set(credentialMethods().flatMap(m => m.provides.commands.map(c => norm(c.name))))];
-  const names = [...new Set([...(sandbox ? ["git", ...standardCommandLogins.keys()] : []), ...declared, ...rules.map(r => norm(r.command.trim())).filter(Boolean)])];
+  const declarations = commandDeclarations(configured);
+  const declared = [...new Set(declarations.map(c => norm(c.name)))];
+  const names = [...new Set([...(sandbox ? ["git", "aad", ...standardCommandLogins.keys()] : []), ...declared, ...rules.map(r => norm(r.command.trim())).filter(Boolean)])];
   if (!names.length) {
     if (existsSync(guarded)) rmSync(guarded, { recursive: true, force: true });
     return null;
   }
   try {
     mkdirSync(guarded, { recursive: true });
-    const offline = [...new Set([...declared, ...(sandbox ? ["git"] : [])])].map(name => [name, rules.filter(r => norm(r.command) === name).map(r => ({
-      subcommand: r.subcommand, argv: r.argv, argsRegex: r.argsRegex ?? r.args,
+    const onlineOnly = new Set([...configured, ...declarations.filter(c => c.judge)].map(c => norm(c.name)));
+    const offline = [...new Set([...declared, ...(sandbox ? ["git"] : [])])].filter(name => !onlineOnly.has(name)).map(name => [name, rules.filter(r => norm(r.command) === name).map(r => ({
+      action: r.action, subcommand: r.subcommand, argv: r.argv, argsRegex: r.argsRegex ?? r.args,
     }))]);
     writeIfChanged(script, GATE_SCRIPT.replace("/*sandbox*/false", String(sandbox)).replace("/*local git*/false", String(sandbox && !declared.includes("git"))).replace("/*credential rules*/[]", () => JSON.stringify(offline)));
     const node = process.execPath;
@@ -254,6 +258,7 @@ async function ask() {
   let res;
   try {
     res = await request("/api/command-gate", { command: name, args, cwd: process.cwd(), credentialExecution: true, stream: isolated,
+      ...(name === "aad" && process.env.AAD_CDP_PORT && { desktopPort: Number(process.env.AAD_CDP_PORT) }),
       approver: process.env.OMEM_APPROVER, reason: process.env.OMEM_REASON }, credentialRules.get(win ? name.toLowerCase() : name)?.length === 0 ? 5000 : 310_000);
   } catch (e) { return offline("连不上 omem：" + e.message + "。命令 " + name + " 受命令规则保护，连不上时不执行。"); }
   if (res.status !== 200 || typeof res.value?.decision !== "string") fail("omem 没有放行命令 " + name + "：" + (res.value?.error || "HTTP " + res.status));
@@ -295,7 +300,7 @@ if (v.permit) {
     }
     for await (const line of createInterface({ input: res })) {
       const [fd, data] = JSON.parse(line);
-      if (fd === 0) { code = data; break; }
+      if (fd === 0) { code = data; continue; }
       const stream = fd === 1 ? process.stdout : process.stderr;
       const bytes = Buffer.from(data, "base64");
       if (v.report) tail = (tail + bytes.toString()).slice(-${COMMAND_OUTPUT_LIMIT});
@@ -350,14 +355,15 @@ child.on("close", async (code, signal) => {
 
 /** The guarded directory for an agent process of this app (written now), or null. */
 export function commandGateDir(app: App, sandbox = false) {
-  const rules = currentRules(app).flatMap(r => r.enabled && r.match.kind === "command" ? [{ ...r.match, command: r.match.executable }] : []);
+  const rules = currentRules(app).flatMap(r => r.enabled && r.match.kind === "command" ? [{ ...r.match, command: r.match.executable, action: r.action }] : []);
+  const commands = app.config.security.protectedCommands;
   const sandboxHome = join(app.home, "bin", "sandbox");
   if (sandbox || existsSync(sandboxHome)) {
-    const dir = syncCommandGate(sandboxHome, rules, true);
+    const dir = syncCommandGate(sandboxHome, rules, true, commands);
     if (!dir) throw new Error("无法准备沙箱命令垫片");
     if (sandbox) return dir;
   }
-  return syncCommandGate(app.home, rules);
+  return syncCommandGate(app.home, rules, false, commands);
 }
 
 /** `env` with the guarded directory first in PATH (whatever the key is spelled). */
@@ -470,9 +476,11 @@ async function resolveEntry(app: App, entry: string, why: string): Promise<Appro
   }
 }
 
-async function approverFor(app: App, rule: CommandRule, nominated: string | undefined): Promise<Approver> {
-  // Rules drafted from a recording name the caller; until the gate routes that to whoever the run acts for, the owner approves.
-  if (rule.approver === "caller") return resolveEntry(app, "owner", "审批人是这次运行的调用者，暂由本人批准");
+async function approverFor(app: App, rule: CommandRule, nominated: string | undefined, caller: string): Promise<Approver> {
+  if (rule.approver === "caller") {
+    if (caller !== OWNER && !activeUser(findUser(app, caller))) throw new HttpError(403, "运行调用者没有有效的成员身份");
+    return resolveEntry(app, caller === OWNER ? "owner" : "user:" + caller, "这次运行的调用者");
+  }
   if (rule.approver !== "run") return resolveEntry(app, rule.approver, "规则指定的审批人");
   if (!nominated?.trim()) return resolveEntry(app, "owner", "运行没有用 OMEM_APPROVER 提名审批人，改由本人批准");
   const entry = rule.approvers.find((e) => entryMatches(app, e, nominated));
@@ -482,6 +490,7 @@ async function approverFor(app: App, rule: CommandRule, nominated: string | unde
 
 /** What an ask of this kind keeps in its context. */
 type OperationGrant = {
+  judge?: string; judgeReason?: string; keyed?: boolean;
   member: string;
   ruleId: string;
   egressFallback?: boolean;
@@ -508,6 +517,7 @@ type GateContext = Partial<OperationGrant> & {
   approverName: string;
   approverWhy: string;
   lark: Approver["lark"];
+  callerOnly?: boolean;
   ownerLark: string | null;
   /** Until when the card can be answered. */
   expiresAt: string;
@@ -559,12 +569,42 @@ export async function commandGate(app: App, ctx: ToolContext, req: { command: st
   return gateOperation(app, ctx, { kind: "command", executable: req.command, argv: req.args, cwd: req.cwd }, { ...req, stage: "wrapper" }, session);
 }
 
+type PolicyDecision = ReturnType<typeof decide> & { plugin?: string; judgeKey?: string; reason?: string };
+
+async function commandPolicy(app: App, op: Operation, who: ReturnType<typeof operationWho>): Promise<PolicyDecision> {
+  const first = decide(app, op, who);
+  if (first.rule || op.kind !== "command" || !op.argv || !op.cwd) return first;
+  const entry = credentialCommand(op.executable, op.argv);
+  if (!entry?.command.judge) return first;
+  const { method } = entry;
+  const verdict = await judgeCredential(app, method, entry.command.judge, {
+    command: op.executable, argv: [...op.argv], cwd: op.cwd, member: who.member, runId: who.runId ?? null,
+  });
+  const current = decide(app, op, who);
+  if (current.rule) return current;
+  if (method.signal.aborted) return { action: "deny" };
+  if (!verdict) return { ...first, plugin: method.kind };
+  const rule: OperationRule = {
+    id: "credential/" + method.kind + "/" + entry.command.name, enabled: true, revision: 1,
+    match: { kind: "command", executable: entry.command.name }, action: verdict.action,
+    title: verdict.title, approval: { approver: verdict.approver ?? "owner" },
+  };
+  return { rule, action: verdict.action, plugin: method.kind, judgeKey: verdict.key, reason: safeReason(verdict.reason) };
+}
+
 /** Both ACP and PATH consult the current rule again before using an approval. */
 export async function gateOperation(app: App, ctx: ToolContext, op: Operation, req: {approver?: string; reason?: string; stage?: "before-wrapper" | "wrapper"; /** An HTTP request's page, shown to the approver. */ page?: string} = {}, session?: string, egress?: { evaluate: () => ReturnType<typeof decide>; fallback: boolean; waitSeconds: number; fieldSummary?: string; signal?: AbortSignal }): Promise<Decision> {
   const who = operationWho(ctx);
-  const evaluate = egress?.evaluate ?? (() => decide(app, op, who));
-  const decision = evaluate();
+  const evaluate = (): PolicyDecision | Promise<PolicyDecision> => egress ? egress.evaluate() : commandPolicy(app, op, who);
+  const decision = await evaluate();
+  if (decision.plugin) {
+    const detail = { plugin: decision.plugin, action: decision.rule ? decision.action : "abstain", reason: decision.reason, runId: ctx.runId };
+    audit(app, who.member, "command.judge", decision.plugin, detail);
+    if (ctx.runId) addRunEvent(app, ctx.runId, "status", { text: "插件判定：" + (decision.rule?.title ?? detail.action), ...detail });
+  }
   const policy = decision.rule;
+  if (policy?.approval?.approver === "caller" && (ctx.role === "guest" || ctx.commandHomeUser === null))
+    return { decision: "deny", message: "访客运行没有调用者审批权限" };
   auditOperation(app, op, who, policy, decision.action, "策略判定");
   if (decision.action === "deny") return { decision: "deny", message: `omem 的${op.kind === "command" ? "命令规则" : "操作规则"}「${policy?.title || policy?.id}」不允许 Agent 执行这项操作。` };
   if (!policy || decision.action !== "approve") return { decision: "allow" };
@@ -583,11 +623,14 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
     expireHours: (policy.approval?.expiresSeconds ?? 86400)/3600, waitSeconds: policy.approval?.waitSeconds ?? 90, reuse: policy.approval?.reuse ?? "once" };
   if (egress) rule.waitSeconds = Math.min(rule.waitSeconds, egress.waitSeconds);
   const chain = runId ? chainOf(app, runId) : session ?? randomUUID();
-  const key = digest([who.member, policy.id, policy.revision, fingerprint(op,policy), who.role, who.profile, who.space, who.backend]);
-  const runKey = digest([who.member, runId, policy.id, policy.revision]);
+  const judgedScope = decision.plugin ? [decision.plugin, policy.approval?.approver, decision.reason, policy.title, runId, ctx.commandTurn] : [];
+  const target = decision.judgeKey ?? fingerprint(op,policy);
+  const key = digest([who.member, policy.id, policy.revision, target, ...judgedScope, who.role, who.profile, who.space, who.backend]);
+  const runKey = digest([who.member, runId, policy.id, policy.revision, ...(decision.plugin ? [...judgedScope, target] : [])]);
   const takeGrant = () => {
-    const latest = evaluate();
-    if (latest.rule?.id !== policy.id || latest.rule.revision !== policy.revision || latest.action !== "approve") return false;
+    const latest = egress ? egress.evaluate() : decide(app, op, who);
+    if (decision.plugin ? latest.rule || credentialCommand(command, op.kind === "command" ? op.argv : undefined)?.method.kind !== decision.plugin
+      : latest.rule?.id !== policy.id || latest.rule.revision !== policy.revision || latest.action !== "approve") return false;
     if (egress?.fallback && one(app.db, "select 1 from asks where json_extract(context,'$.key')=? and status='answered' and approved=1 and json_extract(context,'$.scope')='always' limit 1", key)) return true;
     const reusable = runId && one(app.db, `select 1 from asks where json_extract(context,'$.runKey') = ? and
       json_extract(context,'$.scope') = 'run' and status='answered' and approved=1 and json_extract(context,'$.grantUntil') > ?
@@ -613,11 +656,11 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   let ask = pending();
   let approverName: string;
   if (!ask) {
-    const approver = await approverFor(app, rule, req.approver);
+    const approver = await approverFor(app, rule, req.approver, who.member);
     if (egress?.signal?.aborted) return { decision: "deny", message: "出网入口已关闭" };
     approverName = approver.name;
     ask = pending() ?? await openAsk(app, { runId, key, chain, command, args, cwd, rule, index, approver, reason: safeReason(req.reason),
-      grant: { member: who.member, kind: op.kind, ruleId: policy.id, revision: policy.revision, runKey, egressFallback: egress?.fallback, fieldSummary: egress?.fieldSummary, argsHash: op.kind === "command" ? digest(op.argv) : undefined,
+      grant: { judge: decision.plugin, judgeReason: decision.reason, keyed: !!(decision.plugin && decision.judgeKey && runId), member: who.member, kind: op.kind, ruleId: policy.id, revision: policy.revision, runKey, egressFallback: egress?.fallback, fieldSummary: egress?.fieldSummary, argsHash: op.kind === "command" ? digest(op.argv) : undefined,
         ownerChoices: approver.userId === OWNER && (!approver.lark || approver.lark.id === larkOwnerOpenId(app,"main")) } });
     record(app, runId, actor, "command.ask", { command, args, cwd, approver: approver.name, result: `等 ${approver.name} 批准（${approver.why}）`, rule: index, askId: ask.id });
     if (rule.approver === "run" && approver.userId !== OWNER) {
@@ -629,8 +672,10 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   const answered = current.status === "pending" ? await waitDecision(ask.id, rule.waitSeconds * 1000, egress?.signal) : current;
   if (answered?.status === "answered" && answered.approved) {
     // Taken by this request (a once-only approval is used up here).
-    const allowed = answered.choice === 2 ? evaluate().rule : undefined;
-    if (takeGrant() || (allowed?.id === policy.id && allowed.revision === policy.revision + 1 && allowed.action === "allow")) {
+    const latest = await evaluate();
+    const same = digest(latest) === digest(decision);
+    const allowed = answered.choice === 2 && !decision.plugin ? latest.rule : undefined;
+    if ((same && takeGrant()) || (allowed?.id === policy.id && allowed.revision === policy.revision + 1 && allowed.action === "allow")) {
       record(app, runId, actor, "command.allow", { command, args, cwd, approver: approverName, result: `${approverName} 批准，放行`, rule: index, askId: ask.id });
       return { decision: "allow" };
     }
@@ -681,7 +726,8 @@ async function openAsk(
     approverName: c.approver.name,
     approverWhy: c.approver.why,
     lark: c.approver.lark,
-    ownerLark: larkOwnerOpenId(app, "main") ?? null,
+    callerOnly: c.rule.approver === "caller",
+    ownerLark: c.rule.approver === "caller" ? null : larkOwnerOpenId(app, "main") ?? null,
     expiresAt,
   };
   const line = commandLine(c.command, c.args);
@@ -691,12 +737,13 @@ async function openAsk(
     http ? (c.cwd ? `页面：${c.cwd}` : "") : `目录：${c.cwd || "（未知）"}`,
     c.grant.fieldSummary ? `规则检查的字段：${c.grant.fieldSummary}` : "",
     c.grant.argsHash ? `参数摘要：${c.grant.argsHash.slice(0,16)}` : "",
+    c.grant.judgeReason ? `插件判定：${c.grant.judgeReason}` : "",
     c.reason ? `原因（Agent 填写）：${c.reason}` : "",
     c.rule.note ? `规则说明：${c.rule.note}` : "",
     `审批人：${c.approver.name}（${c.approver.why}）`,
   ].filter(Boolean).join("\n\n");
   // The web shows it to the approver (the owner for someone without an omem account); Feishu gets the card below.
-  const ask = createAsk(app, { runId: c.runId, conversationId: null, userId: c.approver.userId, kind: "approval", question, options: (c.grant.ownerChoices ? ["只这一次","这次运行里的同类操作","以后按这条规则放行"] : ["只这一次"]).map(label => ({label})), tool: c.grant.kind, args: { command: c.command, args: c.args, cwd: c.cwd }, context, allowText: true });
+  const ask = createAsk(app, { runId: c.runId, conversationId: null, userId: c.approver.userId, kind: "approval", question, options: (c.grant.judge ? (c.grant.keyed ? ["只这一次", "本轮对同一对象放行"] : ["只这一次"]) : c.grant.ownerChoices ? ["只这一次","这次运行里的同类操作","以后按这条规则放行"] : ["只这一次"]).map(label => ({label})), tool: c.grant.kind, args: { command: c.command, args: c.args, cwd: c.cwd }, context, allowText: true });
   const sending = sendCard(app, ask.id, context, c.runId).catch((e: Error) => console.warn(`[omem] 命令审批卡片没发出去：${e.message}`));
   if (c.grant.egressFallback === undefined) await sending;
   // Past its time nobody can approve it any more.
@@ -724,8 +771,9 @@ export function commandCard(app: App, c: GateContext, runId: string | null, stat
   const info = runInfo(app, runId);
   const blocks: Record<string, unknown>[] = [
     { markdown: `\`\`\`\n${fence(truncate(commandLine(c.command, c.args), 1500))}\n\`\`\`` },
-    { fields: [{ label: c.kind === "http" ? "页面" : "目录", value: truncate(c.cwd || "（未知）", 200) }, { label: "规则", value: c.kind === "http" ? `第 ${c.rule + 1} 条` : `第 ${c.rule + 1} 条（${c.command}）` }] },
+    { fields: [{ label: c.kind === "http" ? "页面" : "目录", value: truncate(c.cwd || "（未知）", 200) }, { label: "规则", value: c.judge ?? (c.kind === "http" ? `第 ${c.rule + 1} 条` : `第 ${c.rule + 1} 条（${c.command}）`) }] },
   ];
+  if (c.judgeReason) blocks.push({ note: "插件判定：" + cardText(c.judgeReason) });
   if (c.fieldSummary) blocks.push({ note: `规则检查的字段：${cardText(c.fieldSummary)}` });
   if (c.argsHash) blocks.push({ note: `参数摘要：${c.argsHash.slice(0,16)} · 规则 ${cardText(c.ruleId ?? "")}（版本 ${c.revision}）` });
   if (info) blocks.push({ markdown: `**发起**：${/^https?:/.test(info.link) ? `[${cardText(truncate(info.title, 80))}](${info.link})` : cardText(truncate(info.title, 80))} · ${cardText(info.who)}${info.rule ? ` · 规则「${cardText(info.rule)}」` : ""}` });
@@ -734,7 +782,7 @@ export function commandCard(app: App, c: GateContext, runId: string | null, stat
   blocks.push({ note: `审批人：${cardText(c.approverName)}（${cardText(c.approverWhy)}）` });
   if (!state) {
     blocks.push({ note: `${new Date(c.expiresAt).toLocaleString("zh-CN", { hour12: false, timeZone: app.config.timezone })} 前有效` });
-    blocks.push({ buttons: [{ text: "只这一次", value: "approve", style: "primary" }, ...(c.ownerChoices ? [...(runId ? [{ text: "这次运行里的同类操作", value: "run" }] : []), { text: "以后按这条规则放行", value: "always" }] : []), { text: "拒绝", value: "decline", style: "danger" }] });
+    blocks.push({ buttons: [{ text: "只这一次", value: "approve", style: "primary" }, ...(c.judge ? (c.keyed ? [{ text: "本轮对同一对象放行", value: "run" }] : []) : c.ownerChoices ? [...(runId ? [{ text: "这次运行里的同类操作", value: "run" }] : []), { text: "以后按这条规则放行", value: "always" }] : []), { text: "拒绝", value: "decline", style: "danger" }] });
   } else {
     const by = state.by ? `${cardText(state.by)} ` : "";
     blocks.push({ note: state.kind === "approved" ? `${by}已批准${state.text ? `：${cardText(state.text)}` : ""}` : state.kind === "declined" ? `${by}已拒绝${state.text ? `：${cardText(state.text)}` : ""}` : "已过期，没有批准" });
@@ -828,7 +876,7 @@ registerAskHandler("command-gate", async (app, ask, context) => {
     }
     const reuse = ask.answeredBy === OWNER && ask.choice === null ? c.reuse : "once";
     run(app.db, "update asks set context=json_set(context,'$.scope',?,'$.grantUntil',?,'$.reuse',?) where id=?", scope,new Date(Date.now() + c.expireHours * 3600_000).toISOString(),reuse,ask.id);
-    audit(app, ask.answeredBy!, "operation.approve", c.command, {kind:c.kind, ruleId:c.ruleId, revision:c.revision, member:c.member, runId:ask.runId, approver:ask.answeredBy, scope, result:"批准",argsHash:c.argsHash});
+    audit(app, ask.answeredBy!, "operation.approve", c.command, {kind:c.kind, ruleId:c.ruleId, revision:c.revision, member:c.member, runId:ask.runId, approver:ask.answeredBy, approverWhy:c.approverWhy, scope, result:"批准",argsHash:c.argsHash});
   }
   record(app, ask.runId, ask.answeredBy ?? "", ask.approved ? "command.approve" : "command.reject", { command: c.command, args: c.args, cwd: c.cwd, approver: by, result: ask.approved ? `${by} 批准` : `${by} 拒绝${ask.answer ? `：${truncate(ask.answer, 200)}` : ""}`, rule: c.rule, askId: ask.id });
   const fresh = getAsk(app, ask.id);
@@ -846,7 +894,13 @@ registerAskHandler("command-gate", async (app, ask, context) => {
   );
 }, (app, ask, context, by, answer) => {
   const c = context as GateContext;
+  if (c.callerOnly && by !== ask.userId) throw new HttpError(403, "只有这次运行的调用者能批准");
   if (c.expiresAt <= now()) throw new Error("审批卡片已过期");
+  if (c.judge && answer.choice === 1 && c.keyed) {
+    if (by !== ask.userId || !one(app.db, "select 1 from runs where id=? and status='running'", ask.runId))
+      throw new Error("只有审批人能在有效运行中批准同一对象");
+    return;
+  }
   if ((answer.choice ?? 0) > 0) {
     if (by !== OWNER || !c.ownerChoices) throw new Error("只有本人能扩大授权范围");
     if (!c.egressFallback && !currentRules(app).some(r => r.enabled && r.id === c.ruleId && r.revision === c.revision && r.action === "approve")) throw new Error("规则已变化");

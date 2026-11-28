@@ -21,7 +21,7 @@
 // it), not the whole document. --full asks for the whole page, for long pages with no overlay open.
 // --page picks the tab whose URL or title contains TEXT (else the last one opened). Prints
 // { path, width, height, url }. Only Node built-ins.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -65,6 +65,7 @@ function findChrome() {
     "/usr/bin/google-chrome",
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
+    "/opt/microsoft/msedge/msedge",
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   ];
   for (const base of [join(homedir(), ".cache", "puppeteer", "chrome"), join(homedir(), ".cache", "ms-playwright")]) {
@@ -172,6 +173,10 @@ async function shot() {
     const full = has("--full");
     const size = full ? m.cssContentSize ?? m.contentSize : { width: view.clientWidth, height: view.clientHeight };
     const r = await s.send("Page.captureScreenshot", { format: "png", ...(full ? { captureBeyondViewport: true, clip: { x: 0, y: 0, width: size.width, height: size.height, scale: 1 } } : {}) });
+    if (process.env.OMEM_BROWSER_EXECUTOR) {
+      console.log(JSON.stringify({ png: r.data, width: Math.round(size.width), height: Math.round(size.height), url: page.url, full }));
+      return;
+    }
     const path = resolve(out);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, Buffer.from(r.data, "base64"));
@@ -181,7 +186,7 @@ async function shot() {
   }
 }
 
-async function announce(port, details, tab) {
+async function announce(port, details, tab, navigate) {
   const opened = { profile: name, port, ...details };
   if (process.env.OMEM_BROWSER_PROFILES) {
     const page = tab ?? (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === "page");
@@ -193,6 +198,10 @@ async function announce(port, details, tab) {
     if (!r.ok) fail(`browser opened, remote registration failed (${r.status}): ${await r.text()}`);
     opened.sessionId = (await r.json()).id;
   }
+  if (navigate) {
+    const s = await session(tab.webSocketDebuggerUrl);
+    try { await s.send("Page.navigate", { url: navigate }); } finally { s.close(); }
+  }
   console.log(JSON.stringify(opened));
 }
 
@@ -200,10 +209,13 @@ async function open() {
   const dir = dirOf(name);
   mkdirSync(dir, { recursive: true });
   const url = opt("--url")[0];
+  // Attach aad assist (which owns the request gate) on a blank page before the first navigation.
+  const deferred = process.env.OMEM_BROWSER_EXECUTOR && url;
+  const target = deferred ? "about:blank" : url;
   const running = await alive(dir);
   if (running) {
-    const page = url ? await (await fetch(`http://127.0.0.1:${running}/json/new?${encodeURIComponent(url)}`, { method: "PUT" })).json() : null;
-    await announce(running, { reused: true }, page);
+    const page = url ? await (await fetch(`http://127.0.0.1:${running}/json/new?${encodeURIComponent(target)}`, { method: "PUT" })).json() : null;
+    await announce(running, { reused: true }, page, deferred);
     return;
   }
   rmSync(join(dir, "DevToolsActivePort"), { force: true });
@@ -238,9 +250,9 @@ async function open() {
       let page;
       if (url) {
         await new Promise((r) => setTimeout(r, 1500));
-        page = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: "PUT" })).json();
+        page = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(target)}`, { method: "PUT" })).json();
       }
-      await announce(port, { pid: child.pid, reused: false }, page);
+      await announce(port, { pid: child.pid, reused: false }, page, deferred);
       return;
     }
     await new Promise((r) => setTimeout(r, 200));
@@ -267,7 +279,19 @@ async function list() {
   console.log(JSON.stringify(out));
 }
 
-if (cmd === "open") await open();
+if (process.env.OMEM_COMMAND_GATE?.endsWith("/bin/sandbox/bin/guarded") && !process.env.OMEM_BROWSER_EXECUTOR) {
+  const shot = cmd === "shot";
+  const r = spawnSync("aad", ["omem-browser", ...process.argv.slice(2)], { stdio: ["inherit", shot ? "pipe" : "inherit", "inherit"], maxBuffer: 64 << 20 });
+  if (r.error) fail(r.error.message);
+  if (r.status !== 0) process.exit(r.status ?? 1);
+  if (shot) {
+    const { png, ...details } = JSON.parse(r.stdout);
+    const path = resolve(opt("--out")[0]);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, Buffer.from(png, "base64"));
+    console.log(JSON.stringify({ path, ...details }));
+  }
+} else if (cmd === "open") await open();
 else if (cmd === "register") {
   const pageId = opt("--page-id")[0];
   const port = await alive(dirOf(name));

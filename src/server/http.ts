@@ -10,7 +10,7 @@ import { capabilityAccess, spacesWithCapability, memberCapabilities } from "../a
 import { storedFileReadable } from "../auth/stored-files.ts";
 import { itemAccess, itemScope, requireItem, writableParents } from "../items/access.ts";
 import { randomUUID as operationId } from "node:crypto";
-import { currentRules, digest, enforcedBy, saveOperationRules } from "../agents/operation-policy.ts";
+import { currentRules, digest, enforcedBy, executableName, saveOperationRules } from "../agents/operation-policy.ts";
 import { disableRulePack, enableRulePack, listRulePacks } from "../agents/rule-packs.ts";
 import { networkInterfacesView, networkPoliciesView, pollNetworkPolicies, refreshNetworkPolicies, stopNetworkPolicies } from "../agents/network-policy.ts";
 import { lessonInput, listLessons, saveLesson, removeLesson } from "../agents/code-lessons.ts";
@@ -76,8 +76,10 @@ import { all, one, run } from "../core/db.ts";
 import { forgetRelayErrors, keyPaused, relayRequest, relayStats } from "../core/ai-relay.ts";
 import { aiRateLimitStats } from "../core/ai-rate-limit.ts";
 import { useRelayBase } from "../core/ai-relay-addr.ts";
+import { protectedCommandsSchema } from "../core/protected-commands.ts";
+import { declaredPaths } from "../agents/credential-registry.ts";
 import { allProfiles, keyBackendsOf, keyedProfiles, providerFormats, providerModels, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
-import { executionPermit, pendingExecution } from "../agents/command-executor.ts";
+import { sameCommandIdentity, executionPermit, pendingExecution } from "../agents/command-executor.ts";
 import { credentialExecution, memberExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
@@ -373,19 +375,21 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (viaProxy(req.raw) || !(loopbackIp(req.ip ?? "") || (!!s.remoteAddress && s.remoteAddress === s.localAddress))) throw new HttpError(403, "命令拦截只接受本机的请求");
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
-    const b = q(z.object({ stream: z.boolean().optional(), credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
+    const b = q(z.object({ desktopPort: z.number().int().min(1).max(65535).optional(), stream: z.boolean().optional(), credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
     const burst = gateBurst([ctx.runId ?? digest(bearer(req)), b.command, digest(b.args)].join("\n"));
     if (burst) {
       if (ctx.runId && burst === "first") addRunEvent(app, ctx.runId, "status", { text: `命令 ${b.command} 一分钟内以同样的参数请求了 60 次以上，疑似进程在循环启动自己，已拒绝。` });
       return { decision: "deny", message: "同一条命令一分钟内重复了 60 次以上，疑似在循环启动自己，omem 拒绝执行。" };
     }
     const decision = await commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
-    const allowed = () => decision.decision === "allow" && b.stream ? executionPermit(ctx, bearer(req), b) : undefined;
+    if (decision.decision !== "allow") return decision;
+    const allowed = () => b.stream ? executionPermit(ctx, bearer(req), b) : undefined;
     // A rule's run switched to a member who agreed (rules/run-as.ts): declared commands run on their login.
-    const runAs = ctx.runId && b.credentialExecution && decision.decision === "allow" ? await import("../rules/run-as.ts") : null;
+    const registered = app.config.security.protectedCommands.some(c => executableName(c.name) === executableName(b.command));
+    const entry = credentialCommand(b.command, b.args);
+    const runAs = ctx.runId && (b.credentialExecution || registered) ? await import("../rules/run-as.ts") : null;
     const member = runAs?.actingAs(ctx.runId);
-    const asEntry = member ? credentialCommand(b.command, b.args) : null;
-    if (runAs && member && asEntry && ctx.runId) {
+    if (runAs && member && entry && b.credentialExecution && ctx.runId) {
       const runId = ctx.runId;
       const ruleId = (getRun(app, runId).input as { rule?: { id?: string } }).rule?.id ?? "";
       reply.raw.writeProcessing?.();
@@ -394,12 +398,13 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       s.once("close", cancel);
       const live = () => !controller.signal.aborted && !s.destroyed && toolContextForToken(app, token)?.runId === runId && runAs.actingAs(runId) === member;
       try {
-        return await memberExecution({ ...ctx, runId }, asEntry, b.args, member, ruleId, live, controller.signal, () => runAs.consented(app, ruleId, member));
+        return await memberExecution({ ...ctx, runId }, entry, b.args, member, ruleId, live, controller.signal, () => runAs.consented(app, ruleId, member));
       } finally { s.off("close", cancel); unsubscribe(); }
     }
+    if (registered && (member || (!entry && !sameCommandIdentity(ctx))))
+      return { decision: "deny", message: "本人登记的命令只能在发起人自己的账号环境中执行" };
     const reports = reportable(ctx);
-    if (decision.decision === "allow" && (reports || ownerFallback(app, ctx))) {
-      const entry = credentialCommand(b.command, b.args);
+    if (reports || ownerFallback(app, ctx)) {
       if (entry && b.credentialExecution) {
         // Extend the wrapper's offline timeout only once the authenticated host answers.
         reply.raw.writeProcessing?.();
@@ -456,7 +461,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx.browserProfilesRoot || !ctx.runId) throw new HttpError(403, "只有本机受管运行可以登记浏览器");
     const b = q(z.object({ profile: z.string().regex(/^[\p{L}\p{N}_-]{1,40}$/u), pageId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/) }).strict(), req.body);
     const { registerAgentBrowser } = await import("../remote/agent-browser.ts");
-    return registerAgentBrowser(app, { ...b, root: ctx.browserProfilesRoot, userId: ctx.userId ?? "owner", runId: ctx.runId, spaceId: ctx.spaceId });
+    const viewer = ctx.commandSandbox && (await import("../agents/desktop-executor.ts")).desktopViewer(bearer(req));
+    if (ctx.commandSandbox && !viewer) throw new HttpError(409, "请先在本轮桌面执行器打开浏览器");
+    return registerAgentBrowser(app, { ...b, viewer, root: ctx.browserProfilesRoot, userId: ctx.userId ?? "owner", runId: ctx.runId, spaceId: ctx.spaceId });
   });
   server.get("/api/operation-gate/http", async (req) => (await import("../agents/http-gate.ts")).httpWatch(app, gateCaller(req)));
   server.post("/api/operation-gate/http", async (req) => {
@@ -510,6 +517,26 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     Object.assign(app.config, next);
     audit(app, who(req), "sandbox.settings", "security", { ...next.agents.ownSandbox, fullAccess: next.agents.fullAccess });
     return status;
+  });
+  const requireProtectedCommandOwner = (req: FastifyRequest) => {
+    if (who(req) !== OWNER || authOf(req)?.via === "local") throw new HttpError(403, "请以本人身份登录后登记受保护命令");
+  };
+  server.get("/api/security/protected-commands", async req => {
+    requireProtectedCommandOwner(req);
+    return { commands: app.config.security.protectedCommands };
+  });
+  server.put("/api/security/protected-commands", async req => {
+    requireProtectedCommandOwner(req);
+    const { commands } = q(z.object({ commands: protectedCommandsSchema }).strict(), req.body);
+    const next = { ...app.config, security: { ...app.config.security, protectedCommands: commands } };
+    saveConfig(next, app.home, candidate => {
+      try { declaredPaths(app, candidate.security.protectedCommands); }
+      catch (err) { throw new HttpError(400, (err as Error).message); }
+    });
+    Object.assign(app.config, next);
+    commandGateDir(app);
+    audit(app, who(req), "command.protected.settings", "security", { commands: commands.map(c => c.name) });
+    return { commands: app.config.security.protectedCommands };
   });
   server.get("/api/security/egress", async () => (await import("../agents/egress-run.ts")).egressStatus(app));
   server.put("/api/security/egress", async req => {

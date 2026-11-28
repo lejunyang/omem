@@ -11,7 +11,7 @@ export type JsonPattern = { jsonPath: string; regex: string };
 export type Scope = { members?: string[]; roles?: string[]; spaces?: string[]; backends?: string[] };
 export type Match =
   | { kind: "command"; executable: string; subcommand?: string[]; argv?: { index: number; regex: string }[]; argsRegex?: string }
-  | { kind: "http"; methods?: string[]; host: string; pathRegex?: string; body?: JsonPattern }
+  | { kind: "http"; source?: "agent" | "executor" | "browser"; methods?: string[]; host: string; pathRegex?: string; body?: JsonPattern }
   | { kind: "file"; operations: FileOp[]; pathRegex: string }
   | { kind: "tool"; server?: string; name: string; args?: JsonPattern[] };
 export type Kind = Match["kind"];

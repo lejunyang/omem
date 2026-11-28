@@ -56,7 +56,7 @@ function summarize(app: App, runId: string, hosts: HostUsage[]) {
 }
 
 export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: AgentProfile,
-  req: { app?: App; ownSandbox?: OwnSandbox; context?: ToolContext; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount, ownSandbox?: OwnSandbox) => T) {
+  req: { app?: App; ownSandbox?: OwnSandbox; source?: "executor"; desktop?: boolean; context?: ToolContext; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount, ownSandbox?: OwnSandbox) => T) {
   const account = accountOf(profile);
   const app = req.app;
   // Tool-less model calls still use the guarded entry points, which require a token.
@@ -66,11 +66,11 @@ export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: A
     const extra = { ...(guarded && { guarded }), ...(network && { network }) };
     return start(account && { ...account, ...extra }, req.ownSandbox && { ...req.ownSandbox, ...extra });
   };
-  if (!app || !egressRequested(app.config, profile, !!req.ownSandbox)) return launch();
+  if (!app || (!req.desktop && !egressRequested(app.config, profile, !!req.ownSandbox))) return launch();
   const support = egressSupport();
   if (!support.ok) {
     const reason = "出网隔离不可用：" + support.reason;
-    if (req.ownSandbox || app.config.agents.accountIsolation === "require") throw new Error(reason);
+    if (req.desktop || req.ownSandbox || app.config.agents.accountIsolation === "require") throw new Error(reason);
     if (req.runId) addRunEvent(app, req.runId, "status", { text: reason });
     return launch();
   }
@@ -83,7 +83,7 @@ export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: A
   try {
     const tls = inspect.length ? await (await import("./egress-ca.ts")).inspection(app.home, dir, inspect) : undefined;
     const lifetime = new AbortController();
-    const policy = egressPolicy(ctx, backendHosts(profile), lifetime.signal);
+    const policy = egressPolicy(ctx, backendHosts(profile), lifetime.signal, req.source);
     const callback = req.mcp && { target: app.baseUrl ?? req.mcp.baseUrl, origin: new URL(req.mcp.baseUrl).origin, token: req.mcp.token };
     if (callback && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(callback.origin)) throw new Error("出网隔离需要本机 HTTP 工具入口");
     const envProxy = { ...profile.env, ...networkEnvironment(app, profile) };
@@ -95,7 +95,10 @@ export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: A
       if (!/^https?:$/.test(proxy.protocol)) throw new Error("上游代理需要 HTTP(S) CONNECT");
       return proxy;
     }
-    const proxy = await startProxy(socket, { ...policy, callback, upstreamProxy, inspect: tls?.inspect });
+    // A member's desktop browser must retain its local-address guard even if an HTTP rule allows it.
+    const guard = req.desktop && ctx.userId !== OWNER ? await import("../remote/browser-guard.ts") : undefined;
+    const proxy = await startProxy(socket, { ...policy, callback, upstreamProxy, inspect: tls?.inspect,
+      check: dest => guard?.refusedAddress(dest) ? Promise.resolve({ allowed: false, reason: guard.GUARD_REFUSAL }) : policy.check(dest) });
     const item: Live = { runId: ctx.runId, hosts: () => [...proxy.usage.values()] };
     const live = active.get(app) ?? new Set<Live>();
     active.set(app, live); live.add(item);

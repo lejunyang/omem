@@ -73,6 +73,13 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   const account = opts.ownSandbox ?? opts.sandbox;
   const npmrc = account && join(canonical(account.home), ".npmrc");
   const registryFile = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => under(npmrc, p)) ? npmrc : undefined;
+  const runtime = base.XDG_RUNTIME_DIR;
+  const desktopPrivate = account && guarded ? [
+    ...[".ai-auto-desktop", ".aad-request-gates", ".Xauthority", ".omem/remote/profiles"].map(name => join(canonical(account.home), name)),
+    ...(base.XAUTHORITY && isAbsolute(base.XAUTHORITY) ? [base.XAUTHORITY] : []),
+    ...(runtime && isAbsolute(runtime) ? [join(runtime, "at-spi"), join(runtime, "bus"),
+      ...(base.WAYLAND_DISPLAY ? [isAbsolute(base.WAYLAND_DISPLAY) ? base.WAYLAND_DISPLAY : join(runtime, base.WAYLAND_DISPLAY)] : [])] : []),
+  ] : [];
   let boxed;
   if (opts.ownSandbox) {
     const box = opts.ownSandbox;
@@ -84,8 +91,8 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-      ...bwrapArgs({ ...plan, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
-  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, registryFile) : null;
+      ...bwrapArgs({ ...plan, masked: [...(plan.masked ?? []), ...desktopPrivate], privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
+  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, { ...opts.sandbox, masked: [...(opts.sandbox.masked ?? []), ...desktopPrivate] }, opts.workspace, base, registryFile) : null;
   // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
   const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;
   const start = (argv: string[], fds: number[]) => {

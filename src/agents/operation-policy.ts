@@ -9,9 +9,10 @@ import { egressSupport } from "./sandbox.ts";
 import { audit } from "../auth/permissions.ts";
 import type { ToolContext } from "./tools.ts";
 
+export type HttpSource = NonNullable<Extract<OperationRule["match"], { kind: "http" }>["source"]>;
 export type Operation =
   | { kind: "command"; executable: string; argv?: string[]; cwd?: string }
-  | { kind: "http"; method: string; url: string; body?: unknown; tunnel?: boolean }
+  | { kind: "http"; source?: HttpSource; method: string; url: string; body?: unknown; tunnel?: boolean }
   | { kind: "file"; operation: "read"|"write"|"delete"|"rename"; path: string }
   | { kind: "tool"; server?: string; name: string; args: unknown };
 export type OperationWho = { member: string; role?: string; profile?: string; space?: string; backend?: string; runId?: string|null };
@@ -64,23 +65,55 @@ export function hostMatches(pattern: string, hostname: string) {
   const host = pattern.toLowerCase();
   return host.startsWith("*.") ? hostname.endsWith(host.slice(1)) : hostname === host;
 }
-type CommandConditions = Pick<Extract<OperationRule["match"], {kind: "command"}>, "subcommand" | "argv" | "argsRegex">;
+type CommandConditions = Pick<OperationRule, "action"> & Pick<Extract<OperationRule["match"], {kind: "command"}>, "subcommand" | "argv" | "argsRegex">;
 /** Also embedded in the offline PATH wrapper. Keep this function self-contained. */
 export function commandArgsMatch(m: CommandConditions, args: string[], test: (pattern: string, input: string) => boolean) {
-  const words = args.filter(a => !a.startsWith("-"));
-  return (!m.subcommand || m.subcommand.every((w,i) => words[i] === w)) &&
+  function matchesPrefix(prefix: string[]) {
+    const requireAll = m.action === "allow";
+    let options = true;
+    let mayBeValue = false;
+    // Track distinct unfinished prefix lengths, without enumerating combinations of option values.
+    let positions = new Set([0]);
+    for (const arg of args) {
+      if (options && arg === "--") {
+        options = false;
+        mayBeValue = false;
+        continue;
+      }
+      if (options && arg.startsWith("-") && arg !== "-") {
+        mayBeValue = !arg.includes("=");
+        continue;
+      }
+      const next = mayBeValue ? new Set(positions) : new Set<number>();
+      for (const pos of positions) {
+        if (arg !== prefix[pos]) {
+          if (requireAll) return false;
+        } else if (pos + 1 === prefix.length) {
+          if (!requireAll) return true;
+        } else {
+          next.add(pos + 1);
+        }
+      }
+      if (!next.size) return requireAll;
+      positions = next;
+      mayBeValue = false;
+    }
+    return false;
+  }
+  return (!m.subcommand?.length || matchesPrefix(m.subcommand)) &&
     (!m.argv || m.argv.every(({index,regex}) => args[index] !== undefined && test(regex,args[index]!))) &&
     (!m.argsRegex || test(m.argsRegex,args.join(" ")));
 }
-function target(m: OperationRule["match"], op: Operation): boolean | undefined {
+function target({ match: m, action }: OperationRule, op: Operation): boolean | undefined {
   if (m.kind === "command" && op.kind === "command") {
     if (executableName(m.executable) !== executableName(op.executable)) return false;
     const args = op.argv;
     if (!args) return m.subcommand || m.argv || m.argsRegex ? undefined : true;
-    return commandArgsMatch(m,args,matches);
+    return commandArgsMatch({ ...m, action },args,matches);
   }
   if (m.kind === "http" && op.kind === "http") {
     const u = new URL(op.url);
+    if (m.source && m.source !== op.source) return false;
     if (!hostMatches(m.host,u.hostname)) return false;
     if (op.tunnel && (m.methods || m.pathRegex || m.body)) return undefined;
     return (!m.methods || m.methods.some(v => v.toUpperCase() === op.method.toUpperCase())) &&
@@ -101,7 +134,7 @@ export function decide(app: App, op: Operation, who: OperationWho): { rule?: Ope
   for (const rule of currentRules(app)) {
     if (!ruleApplies(rule, who)) continue;
     try {
-      const match = target(rule.match, op);
+      const match = target(rule, op);
       if (match === undefined) return { rule, action: "unavailable" };
       if (match) return { rule, action: rule.action };
     } catch (e) {
@@ -122,7 +155,7 @@ export function digest(value: unknown) {
 export function fingerprint(op: Operation, rule: OperationRule) {
   if (op.kind === "http") {
     const u = new URL(op.url);
-    return digest([op.kind,op.method.toUpperCase(),u.host,u.pathname,rule.match.kind === "http" && rule.match.body ? field(op.body,rule.match.body.jsonPath) : null]);
+    return digest([op.kind,...(rule.match.kind === "http" && rule.match.source ? [op.source] : []),op.method.toUpperCase(),u.host,u.pathname,rule.match.kind === "http" && rule.match.body ? field(op.body,rule.match.body.jsonPath) : null]);
   }
   if (op.kind === "command") return digest([op.kind, executableName(op.executable), op.argv, op.cwd]);
   return digest(op.kind === "tool" ? [op.kind,op.server ?? "omem",op.name,op.args] : op);
@@ -130,5 +163,6 @@ export function fingerprint(op: Operation, rule: OperationRule) {
 export function auditOperation(app: App, op: Operation, who: OperationWho, rule: OperationRule|undefined, action: string, result: string, approver?: string) {
   const target = op.kind === "command" ? op.executable : op.kind === "file" ? op.path : op.kind === "tool" ? op.name : op.method + " " + new URL(op.url).host + new URL(op.url).pathname;
   audit(app, who.member, op.kind+"."+action, target.slice(0,300), { kind: op.kind, member: who.member, runId: who.runId, ruleId: rule?.id, revision: rule?.revision, action, result, approver,
+    ...(op.kind === "http" && { source: op.source }),
     ...(op.kind === "command" ? { argsHash: digest(op.argv ?? []), commandLine: [op.executable,...(rule?.match.kind === "command" ? rule.match.subcommand ?? [] : [])].join(" ").slice(0,200) } : {}) });
 }

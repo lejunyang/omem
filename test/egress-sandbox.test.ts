@@ -84,17 +84,19 @@ it.skipIf(!support.ok)("本人沙箱可经本轮代理访问允许的地址 " + 
     expect(egressRequested(app.config, profile, true)).toBe(false);
     app.config.security.egress.mode = "all-sandboxed";
     app.config.agents.ownSandbox.mode = "require";
-    app.config.security.operationRules = [{ id: "fixture", revision: 1, enabled: true, action: "allow", match: { kind: "http", host: "127.0.0.1", pathRegex: "^/ok$" } }];
+    app.config.security.operationRules = [{ id: "fixture", revision: 1, enabled: true, action: "allow", match: { kind: "http", host: "127.0.0.1" } }];
     const box = ownRun(app, profile, cwd, false).box!;
     // Keep the test independent of the local user's cache and backend state.
     box.state = [];
     box.plan.rw = [cwd];
+    const nodeFetch = process.allowedNodeEnvironmentFlags.has("--use-env-proxy")
+      ? `; NO_PROXY= no_proxy= node -e 'fetch(process.argv[1]).then(async r=>process.stdout.write(await r.text()))' "$1"` : "";
     const child = await launchRun(profile, { app, ownSandbox: box }, (_account, ownSandbox) =>
-      launch("/bin/sh", ["-ec", 'if curl -fs --noproxy "*" --max-time 2 "$1"; then exit 1; fi; curl -fs --noproxy "" --max-time 5 "$1"', "sh", url], { cwd, ownSandbox }));
+      launch("/bin/sh", ["-ec", 'if curl -fs --noproxy "*" --max-time 2 "$1"; then exit 1; fi; curl -fs --noproxy "" --max-time 5 "$1"' + nodeFetch, "sh", url], { cwd, ownSandbox }));
     let out = "", err = "";
     child.stdout.on("data", chunk => out += chunk);
     child.stderr.on("data", chunk => err += chunk);
     expect((await once(child, "close"))[0], err).toBe(0);
-    expect(out).toBe("fixture");
+    expect(out).toBe(nodeFetch ? "fixturefixture" : "fixture");
   } finally { upstream.close(); app.db.close(); }
 });

@@ -56,7 +56,10 @@ if (mode === 'denied') {
 } else console.log('sample');
 `, { mode: 0o755 });
   if (win) writeFileSync(join(dir, name + ".cmd"), `@"${process.execPath}" "${file}" %*\r\n@exit /b %ERRORLEVEL%\r\n`);
-  app.config.security.operationRules = [{ id: "edit", revision: 1, enabled: true, match: { kind: "command", executable: name, subcommand: ["edit"] }, action: "deny" }];
+  app.config.security.operationRules = [
+    { id: "edit", revision: 1, enabled: true, match: { kind: "command", executable: name, subcommand: ["edit"] }, action: "deny" },
+    { id: "list", revision: 1, enabled: true, match: { kind: "command", executable: name, subcommand: ["list"] }, action: "log" },
+  ];
   const guarded = commandGateDir(app);
   const paths = gatePaths(app.home);
   function invoke(args: string[], baseUrl = app.baseUrl) {
@@ -90,6 +93,12 @@ if (mode === 'denied') {
     expect(all(app.db, "select id from notifications where user_id='owner' and title like '%登录过期%'")).toHaveLength(1);
     expect((await invoke(["edit"])).code).toBe(126);
     expect((await invoke(["edit"], "http://127.0.0.1:1")).code).toBe(126);
+    for (const url of [app.baseUrl, "http://127.0.0.1:1"]) {
+      expect((await invoke(["--site", "list", "edit"], url)).code).toBe(126);
+    }
+    expect((await invoke(["--site", "cn", "list"])).code).toBe(0);
+    expect((await invoke(["--site", "cn", "list"], "http://127.0.0.1:1")).code).toBe(126);
+    expect((await invoke(["--site=cn", "list"], "http://127.0.0.1:1")).code).toBe(126);
     expect((await invoke(["show"], "http://127.0.0.1:1")).code).toBe(0);
     const api = await server.inject({ method: "POST", url: "/api/credentials/outcome", payload: { command: name, args: [], code: 0, output: "" } });
     expect(api.statusCode).toBe(401);

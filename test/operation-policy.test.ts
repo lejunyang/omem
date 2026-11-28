@@ -14,6 +14,35 @@ describe("operation rules", () => {
     expect(run(op,r,{...r,action:"allow"}).action).toBe("deny");
     expect(fingerprint(op,r)).not.toBe(fingerprint({...op,cwd:"/other"},r));
   });
+  it.each([
+    { argv: ["mr", "show", "id"], possible: true, certain: true },
+    { argv: ["--site=cn", "mr", "show"], possible: true, certain: true },
+    { argv: ["--site", "cn", "mr", "show"], possible: true, certain: false },
+    { argv: ["-q", "mr", "show"], possible: true, certain: false },
+    { argv: ["--site", "mr", "show", "edit"], possible: true, certain: false },
+    { argv: ["--site", "cn", "mr", "-p", "prod", "show"], possible: true, certain: false },
+    { argv: ["-q", "mr", "--site", "cn", "show"], possible: true, certain: false },
+    { argv: ["mr", "-q", "show", "show"], possible: true, certain: true },
+    { argv: ["mr", "--", "show"], possible: true, certain: true },
+    { argv: ["--", "--site", "mr", "show"], possible: false, certain: false },
+    { argv: ["--site=cn", "other", "mr", "show"], possible: false, certain: false },
+    { argv: ["--site", "cn", "other", "mr", "show"], possible: false, certain: false },
+  ])("matches command prefixes according to the rule action for $argv", ({ argv, possible, certain }) => {
+    const op: Operation = { kind: "command", executable: "acme", argv };
+    const r = rule({ kind: "command", executable: "acme", subcommand: ["mr", "show"] });
+    for (const action of ["deny", "approve", "allow", "log"] as const) {
+      const match = run(op, { ...r, action }).rule;
+      expect(!!match).toBe(action === "allow" ? certain : possible);
+    }
+  });
+  it("continues past an ambiguous read exception and checks the original argv for approval", () => {
+    const op: Operation = { kind: "command", executable: "acme", argv: ["--site", "show", "edit"] };
+    const read = rule({ kind: "command", executable: "acme", subcommand: ["show"] });
+    const edit = rule({ kind: "command", executable: "acme", subcommand: ["edit"],
+      argv: [{ index: 1, regex: "^show$" }], argsRegex: "^--site show edit$" });
+    expect(run(op, { ...read, action: "allow" }, { ...edit, action: "approve" }).action).toBe("approve");
+    expect(run({ ...op, argv: ["--site", "other", "edit"] }, edit).rule).toBeUndefined();
+  });
   it("matches normalized URLs, JSON fields and file operations", () => {
     expect(run({kind:"http",method:"post",url:"https://a.example.com/old/../new",body:{x:1}},rule({kind:"http",methods:["POST"],host:"*.example.com",pathRegex:"^/new$",body:{jsonPath:"$.x",regex:"1"}})).action).toBe("deny");
     expect(run({kind:"file",operation:"write",path:"/sample"},rule({kind:"file",operations:["write"],pathRegex:"sample$"})).action).toBe("deny");

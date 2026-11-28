@@ -19,7 +19,7 @@ export type HttpWatch = { host: string | null; methods: string[] | null };
  */
 export function httpWatch(app: App, ctx: ToolContext): { revision: string; watch: HttpWatch[] } {
   const who = operationWho(ctx);
-  const rules = currentRules(app).filter((r) => r.match.kind === "http" && r.action !== "allow" && ruleApplies(r, who));
+  const rules = currentRules(app).filter((r) => r.match.kind === "http" && (!r.match.source || r.match.source === "browser") && r.action !== "allow" && ruleApplies(r, who));
   const seen = new Set<string>();
   const watch: HttpWatch[] = [];
   for (const r of rules) {
@@ -47,5 +47,5 @@ export async function httpGate(app: App, ctx: ToolContext, req: HttpGateRequest,
   try { url = new URL(req.url); } catch { return { decision: "deny", message: "请求的地址不是有效的 URL，无法按规则判断" }; }
   if (!/^https?:$/.test(url.protocol)) return { decision: "allow" };
   const page = [req.page?.title, req.page?.url].filter(Boolean).join(" · ");
-  return gateOperation(app, ctx, { kind: "http", method: req.method.toUpperCase(), url: url.href, body: parsedBody(req) }, { page }, session ?? req.session);
+  return gateOperation(app, ctx, { kind: "http", source: "browser", method: req.method.toUpperCase(), url: url.href, body: parsedBody(req) }, { page }, session ?? req.session);
 }

@@ -8,6 +8,7 @@ import { omemHome } from "./home.ts";
 import { systemZone, validZone } from "./util.ts";
 import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
 import { relayUrl } from "./ai-relay-addr.ts";
+import { protectedCommandsSchema } from "./protected-commands.ts";
 import { isIP } from "node:net";
 
 /**
@@ -322,7 +323,7 @@ export const commandRuleSchema = z
     } catch (e) {
       ctx.addIssue({ code: "custom", path: ["args"], message: `参数模式不是有效的正则：${(e as Error).message}` });
     }
-    if (!/^(owner|run|user:.+|lark:.+)$/.test(r.approver)) ctx.addIssue({ code: "custom", path: ["approver"], message: "审批人要写 owner、run、user:<用户 id> 或 lark:<名字或邮箱>" });
+    if (!/^(owner|caller|run|user:.+|lark:.+)$/.test(r.approver)) ctx.addIssue({ code: "custom", path: ["approver"], message: "审批人要写 owner、caller、run、user:<用户 id> 或 lark:<名字或邮箱>" });
     for (const a of r.approvers) if (!/^(owner|user:.+|lark:.+)$/.test(a)) ctx.addIssue({ code: "custom", path: ["approvers"], message: `名单里的「${a}」要写 owner、user:<用户 id> 或 lark:<名字或邮箱>` });
   });
 export type CommandRule = z.infer<typeof commandRuleSchema>;
@@ -337,7 +338,7 @@ export const operationRuleSchema = z.object({
   match: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("command"), executable: z.string().max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/), subcommand: names.optional(),
       argv: z.array(z.object({ index: z.number().int().nonnegative(), regex: pattern })).max(100).optional(), argsRegex: pattern.optional() }).strict(),
-    z.object({ kind: z.literal("http"), methods: names.optional(), host: z.string().max(255).regex(/^(?:\*\.)?[a-zA-Z0-9.-]+$/), pathRegex: pattern.optional(), body: jsonPattern.optional() }).strict(),
+    z.object({ kind: z.literal("http"), source: z.enum(["agent", "executor", "browser"]).optional(), methods: names.optional(), host: z.string().max(255).regex(/^(?:\*\.)?[a-zA-Z0-9.-]+$/), pathRegex: pattern.optional(), body: jsonPattern.optional() }).strict(),
     z.object({ kind: z.literal("file"), operations: z.array(z.enum(["read","write","delete","rename"])).min(1), pathRegex: pattern }).strict(),
     z.object({ kind: z.literal("tool"), server: z.string().optional(), name: z.string().min(1), args: z.array(jsonPattern).max(100).optional() }).strict(),
   ]),
@@ -708,9 +709,9 @@ export const configSchema = z.object({
    * Commands an agent's processes may not run unchecked (docs/v2/command-gate.md): a wrapper of the
    * same name in front of PATH asks omem first. Only the owner changes this (PUT /api/security/command-rules).
    */
-  security: z.object({ egress: egressSchema.optional(), operationRules: operationRulesSchema.optional(), commandRules: z.array(commandRuleSchema).max(200).optional() }).default({}).transform(s => {
+  security: z.object({ protectedCommands: protectedCommandsSchema.optional(), egress: egressSchema.optional(), operationRules: operationRulesSchema.optional(), commandRules: z.array(commandRuleSchema).max(200).optional() }).default({}).transform(s => {
     const operationRules = s.operationRules ?? migrateCommands(s.commandRules ?? []);
-    return { egress: s.egress ?? egressSchema.parse({}), operationRules, commandRules: operationRules.flatMap(r => legacyCommand(r) ?? []) };
+    return { protectedCommands: s.protectedCommands ?? [], egress: s.egress ?? egressSchema.parse({}), operationRules, commandRules: operationRules.flatMap(r => legacyCommand(r) ?? []) };
   }),
   /** Web VS Code under /ide: the official `code serve-web` behind omem's own auth (src/server/ide-web.ts). */
   ide: z
@@ -1668,7 +1669,8 @@ export function prepareConfigSave(config: Config, home: string) {
   function write() {
     mkdirSync(home, { recursive: true });
     const security = candidate.security;
-    const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules } };
+    const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules,
+      ...(security.protectedCommands.length > 0 && { protectedCommands: security.protectedCommands }) } };
     writeFileSync(path, JSON.stringify(persisted, null, 2) + "\n");
     if (parsed) {
       // Only the sections the file changed are replaced: others keep their objects (some are held by reference).

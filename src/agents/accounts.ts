@@ -86,12 +86,19 @@ export function accountPolicy(app: App, backend: string): AccountPolicy {
 
 // ---------------------------------------------------------------- folders
 
-export function accountRoot(app: App, userId: string) {
+export function accountRoot(app: Pick<App, "home">, userId: string) {
   if (!SAFE_ID.test(userId) || userId === OWNER) throw new HttpError(400, "这个用户没有账号目录");
   return join(app.home, "accounts", userId);
 }
-export function accountHome(app: App, userId: string) {
+export function accountHome(app: Pick<App, "home">, userId: string) {
   return join(accountRoot(app, userId), "home");
+}
+
+/** Keep the existing sandbox and host layouts, always rooted in the browser user's identity. */
+export function runBrowserProfilesRoot(app: App, userId: string, memberSandbox: boolean) {
+  const home = canonical(app.home);
+  if (memberSandbox && userId !== OWNER) return join(accountHome({ home }, userId), ".omem", "remote", "profiles");
+  return join(home, "remote", "profiles", ...(userId === OWNER ? [] : ["@" + userId]));
 }
 
 /** Resolve member state only beneath the real account HOME, without following links in it. */

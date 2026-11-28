@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { z } from "zod";
-import type { CredentialContext } from "../../packages/plugin-sdk/credential.ts";
+import type { CommandJudgeCall, CommandVerdict, CredentialCommand, CredentialContext } from "../../packages/plugin-sdk/credential.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { activeUser, findUser, OWNER, userName } from "../core/users.ts";
@@ -16,7 +16,7 @@ import { accountCatalog } from "./catalog.ts";
 import { backendLoginReady, credentialReady, credentialWaits } from "./credential-wait.ts";
 
 export { registerCredential } from "./credential-registry.ts";
-import { credentialKindsForBackend, credentialMethod, credentialMethods, declaredPaths, defaultSharingScope, requireCredential, type CredentialMethod } from "./credential-registry.ts";
+import { commandDeclarations, credentialKindsForBackend, credentialMethod, credentialMethods, declaredPaths, defaultSharingScope, requireCredential, type CredentialMethod } from "./credential-registry.ts";
 const THREE_DAYS = 3 * 86400_000;
 const MINUTE = 60_000;
 const REFRESH_PENDING = "正在重试续签";
@@ -215,6 +215,20 @@ function precheckSubject(app: App, user: string, kind: string) {
   const email = findUser(app, user)?.email ?? undefined;
   return { ...(account ? { account } : {}), ...(email ? { email } : {}) };
 }
+const verdictSchema = z.object({
+  action: z.enum(["allow", "approve", "deny", "log"]), title: z.string().max(300).optional(),
+  reason: z.string().max(1000).optional(), approver: z.enum(["caller", "owner"]).optional(), key: z.string().min(1).max(1024).optional(),
+}).strict().nullable();
+
+export async function judgeCredential(app: App, method: CredentialMethod, judge: NonNullable<CredentialCommand["judge"]>, call: CommandJudgeCall): Promise<CommandVerdict | null> {
+  try {
+    return await timed(method, 3000, async signal =>
+      verdictSchema.parse(await judge(call, context(app, call.member, method, signal, "check"))));
+  } catch {
+    return { action: "approve", title: "命令需要人工核对", reason: "插件判定失败（异常、超时或返回值无效）" };
+  }
+}
+
 export function precheckCredential(app: App, holder: string, m: CredentialMethod, resource: string, user: string, command?: { name: string; args: readonly string[] }) {
   const check = m.precheck!;
   const subject = precheckSubject(app, user, m.kind);
@@ -556,12 +570,14 @@ export async function tickCredentialChecks(app: App, at = Date.now()) {
 }
 const installed = (path: string) => statSync(path, { throwIfNoEntry: false })?.isDirectory();
 export function credentialInstallDirs(app: App) {
-  return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m).install.map(d => d.path)).filter(installed))];
+  return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m.provides.commands).install.map(d => d.path)).filter(installed))];
 }
-export function credentialStatePaths(app: App) { return [...new Set(credentialMethods().flatMap(m => declaredPaths(app, m).state))]; }
+export function credentialStatePaths(app: App) {
+  return declaredPaths(app, commandDeclarations(app.config.security.protectedCommands)).state;
+}
 export function credentialStateRels(app: App) {
   credentialStatePaths(app);
-  return [...new Set(credentialMethods().flatMap(m => m.provides.commands.flatMap(c => c.state ?? [])))];
+  return [...new Set(commandDeclarations(app.config.security.protectedCommands).flatMap(c => c.state ?? []))];
 }
 export function maybeSendCredentialOnboarding(app: App, id: string) {
   if (!member(app, id)) return false;
@@ -577,7 +593,7 @@ function viewOf(app: App, id: string, m: CredentialMethod, s: Hold) {
   const state: CredentialState = p ? "logging-in" : s.state === "expired" || !renewable && (s.expiresAt ?? Infinity) <= Date.now() ? "expired"
     : id === OWNER && s.state === "none" ? "unknown"
     : !usableCredential(app, id, m.kind, s) ? "none" : !renewable && (s.expiresAt ?? Infinity) - Date.now() <= THREE_DAYS ? "expiring" : "ok";
-  const missing = declaredPaths(app, m).install.filter(d => !installed(d.path));
+  const missing = declaredPaths(app, m.provides.commands).install.filter(d => !installed(d.path));
   // As canStartLogin, without reading the person again for every row (the caller is an active person).
   const login = id === OWNER ? !!m.ownerLogin : sandboxSupport().ok;
   return { kind: m.kind, plugin: m.plugin, name: m.name, describe: m.describe ?? "", required: !!m.required, state,

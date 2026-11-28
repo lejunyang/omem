@@ -3,21 +3,24 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { runDesktop } from "./desktop-executor.ts";
+import { toolCommand } from "../core/tools.ts";
 import { audit } from "../auth/permissions.ts";
 import { activeUser, findUser, OWNER } from "../core/users.ts";
-import { COMMAND_TIMEOUT_SEC } from "../core/util.ts";
+import { COMMAND_TIMEOUT_SEC, HttpError } from "../core/util.ts";
 import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { accountEntries, accountHome, accountStatePaths } from "./accounts.ts";
 import { credentialCommand } from "./credential-outcome.ts";
-import { credentialMethods, declaredPaths } from "./credential-registry.ts";
+import { credentialMethods, declaredPaths, type CredentialCommand } from "./credential-registry.ts";
 import { launchRun } from "./egress-run.ts";
 import { canonical, gitLoginPaths, standardCommandLogins, under, type OwnSandbox } from "./own-sandbox.ts";
-import { currentRules } from "./operation-policy.ts";
+import { currentRules, executableName } from "./operation-policy.ts";
 import { addRunEvent } from "./runs.ts";
 import { withPinnedBinds } from "./bwrap-spawn.ts";
 import { accountOf, bwrapArgs, egressRelayPath, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
@@ -28,7 +31,7 @@ import { larkCliInstallation } from "../channels/lark-cli-path.ts";
 import { actingAs } from "../rules/run-as.ts";
 
 export type CommandSandbox = { profile: AgentProfile; workspace: WorkspaceMounts; own?: OwnSandbox };
-type Call = { command: string; args: string[]; cwd: string };
+type Call = { command: string; args: string[]; cwd: string; desktopPort?: number };
 
 const npmLogin = ["NPM_TOKEN", "NODE_AUTH_TOKEN"];
 const standardLoginEnv: ReadonlyMap<string, readonly string[]> = new Map([
@@ -44,6 +47,11 @@ const standardLoginEnv: ReadonlyMap<string, readonly string[]> = new Map([
 
 function program(name: string, writable: string[]) {
   if (basename(name) !== name || !/^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$/.test(name)) throw new Error("需要命令名");
+  if (name === "aad") {
+    const selected = toolCommand("aad")?.[0];
+    if (!selected) throw new Error("宿主没有安装 aad");
+    if (isAbsolute(selected)) { const file = realpathSync(selected); return { real: file, path: file }; }
+  }
   if (name === "lark-cli") {
     const file = realpathSync(larkCliInstallation().binary);
     return { real: file, path: file };
@@ -73,7 +81,7 @@ function kubeconfigPaths(app: App, user: string, scope: CommandSandbox, value: s
   });
 }
 
-function executorMounts(app: App, user: string, scope: CommandSandbox, call: Call, entry: ReturnType<typeof credentialCommand>, git: boolean, npm: boolean) {
+function executorMounts(app: App, user: string, scope: CommandSandbox, call: Call, command: CredentialCommand | undefined, git: boolean, npm: boolean) {
   if (!isAbsolute(call.cwd)) throw new Error("工作目录必须是绝对路径");
   // cwd is interpreted INSIDE the new namespace. It never authorizes a host bind mount.
   const home = canonical(user === OWNER ? homedir() : accountHome(app, user));
@@ -87,6 +95,22 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
   const runtime = dirname(dirname(process.execPath));
   if (writable.some(dir => under(runtime, dir) || under(dir, runtime))) throw new Error("执行器运行库位于 Agent 可写目录");
   ro.push(runtime, file);
+  // Standalone pnpm's bin launcher imports its sibling dist tree (outside node_modules).
+  if (call.command === "pnpm" && basename(dirname(file)) === "bin") {
+    const root = dirname(dirname(file));
+    const manifest = join(root, "package.json"), dist = join(root, "dist");
+    if (existsSync(join(dist, "pnpm.mjs")) && statSync(manifest, { throwIfNoEntry: false })?.isFile()) {
+      if (canonical(manifest) !== manifest || canonical(dist) !== dist || writable.some(dir => under(root, dir) || under(dir, root)))
+        throw new Error("pnpm 安装目录与 Agent 可写目录重叠");
+      if (JSON.parse(readFileSync(manifest, "utf8")).name === "pnpm") {
+        ro.push(dist, manifest);
+        for (const name of ["pnpm.cjs", "pnpm.mjs"]) {
+          const path = join(dirname(file), name);
+          if (canonical(path) === path && existsSync(path)) ro.push(path);
+        }
+      }
+    }
+  }
   const dependencies = file.indexOf("/node_modules/");
   if (dependencies > 0 && call.command !== "lark-cli") {
     const modules = file.slice(0, dependencies) + "/node_modules";
@@ -96,7 +120,7 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
   const env: NodeJS.ProcessEnv = { HOME: home, PATH: [dirname(process.execPath), "/usr/local/bin", "/usr/bin", "/bin"].join(":"), LANG: process.env.LANG ?? "C", TMPDIR: "/tmp/.omem-executor-tmp" };
   const account = accountOf(scope.profile);
   const memberEnv = account?.userId === user ? account.env : undefined;
-  for (const key of [...(standardLoginEnv.get(call.command) ?? []), ...(entry?.command.loginEnv ?? [])]) {
+  for (const key of [...(standardLoginEnv.get(call.command) ?? []), ...(command?.loginEnv ?? [])]) {
     const value = user === OWNER ? scope.profile.env[key] ?? process.env[key] : memberEnv?.[key];
     if (value !== undefined) env[key] = value;
   }
@@ -108,15 +132,15 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
       if (exists) { ro.push(path); granted.add(path); }
     }
   }
-  if (entry) {
-    if (user !== OWNER) accountStatePaths(app, user, entry.command.state ?? []);
-    const declared = declaredPaths(app, { provides: { backends: [], commands: [entry.command] } });
+  if (command) {
+    if (user !== OWNER) accountStatePaths(app, user, command.state ?? []);
+    const declared = declaredPaths(app, [command]);
     if (declared.install.some(p => writable.some(dir => under(p.path, dir) || under(dir, p.path))))
       throw new Error("命令安装目录与 Agent 可写目录重叠");
     ro.push(...declared.install.map(p => p.path));
     const bins = (process.env.PATH ?? "").split(":").filter(dir => isAbsolute(dir) && declared.install.some(p => under(canonical(dir), p.path)));
     env.PATH = [env.PATH, ...bins.map(canonical)].join(":");
-    for (const rel of entry.command.state ?? []) {
+    for (const rel of command.state ?? []) {
       const path = join(home, rel);
       if (canonical(path) !== path) throw new Error("命令状态目录含有符号链接");
       if (existsSync(path)) { rw.push(path); granted.add(path); }
@@ -152,6 +176,14 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
 type Pending = { token: string; start(input: IncomingMessage, output: ServerResponse): Promise<void> };
 const pending = new Map<string, Pending>();
 
+function commandActor(ctx: ToolContext) {
+  return ctx.actor === "agent" && !ctx.shadow && !ctx.view && !ctx.boardAccess && ctx.role !== "guest";
+}
+
+export function sameCommandIdentity(ctx: ToolContext) {
+  return commandActor(ctx) && ctx.commandHomeUser === (ctx.userId ?? OWNER);
+}
+
 export function executionPermit(ctx: ToolContext, token: string, call: Call) {
   const scope = ctx.commandSandbox;
   if (!scope) return;
@@ -159,11 +191,17 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
   const entry = credentialCommand(call.command, call.args);
   const git = call.command === "git" && remoteGit(call.args);
   const declared = credentialMethods().some(method => method.provides.commands.some(c => c.name === call.command));
+  const registered = app.config.security.protectedCommands;
+  const command = entry?.command ?? registered.find(c => executableName(c.name) === executableName(call.command));
   const standard = standardCommandLogins.has(call.command);
-  if (!declared && !standard && !git && !currentRules(app).some(r => r.enabled && r.match.kind === "command" && r.match.executable === call.command)) return;
+  const desktop = call.command === "aad";
+  if (desktop && (!ctx.browserProfilesRoot || process.env.OMEM_DESKTOP_TOOLS === "off" || scope.profile.env.OMEM_DESKTOP_TOOLS === "off" ||
+      !commandActor(ctx) || !ctx.commandHomeUser))
+    throw new HttpError(403, "本轮没有使用桌面或浏览器的权限");
+  if (!desktop && !command && !declared && !standard && !git && !currentRules(app).some(r => r.enabled && r.match.kind === "command" && r.match.executable === call.command)) return;
   const npm = call.command === "npm" || call.command === "pnpm";
   const user = ctx.userId ?? OWNER;
-  if ((entry || standard || git || npm) && (ctx.actor !== "agent" || ctx.commandHomeUser !== user || ctx.shadow || ctx.view || ctx.boardAccess || ctx.role === "guest"))
+  if ((command || standard || git || npm) && !sameCommandIdentity(ctx))
     throw new Error("本轮没有使用这份命令凭据的权限");
   const rules = app.config.security.operationRules, legacy = app.config.security.commandRules;
   const turn = ctx.commandTurn;
@@ -177,8 +215,8 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
     const live = toolContextForToken(app, token);
     if (!live || (user !== OWNER && !activeUser(findUser(app, user))) || live.runId !== runId || live.commandTurn !== turn || live.commandSandbox !== scope ||
         app.config.security.operationRules !== rules || app.config.security.commandRules !== legacy ||
-        entry?.method.signal.aborted || (runId && actingAs(runId))) throw new Error("运行、身份或规则已变化，请重新执行");
-    const { home, ro, rw, file, env, masked, links } = executorMounts(app, user, scope, call, entry, git, npm);
+        registered !== app.config.security.protectedCommands || entry?.method.signal.aborted || (runId && actingAs(runId))) throw new Error("运行、身份或规则已变化，请重新执行");
+    const { home, ro, rw, file, env, masked, links } = executorMounts(app, user, scope, call, command, git, npm);
     // The relay and its runtime are read-only. Do not mount the service checkout in the executor.
     const controller = new AbortController();
     const cancel = () => controller.abort();
@@ -189,11 +227,27 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
       const support = sandboxSupport();
       if (!support.ok || !support.bwrap) throw new Error("命令执行器需要 Linux 沙箱");
       audit(app, user, "command.execute", call.command, { runId, argv: call.args, cwd: call.cwd });
-      const child = await launchRun(scope.profile, { app, ownSandbox: scope.own, runId, context: ctx, signal }, (account, own) => {
+      if (desktop) {
+        await runDesktop(ctx, token, { home, ro, rw, file, env, masked, links }, call, (mount, network, args, desktopPointers) => {
+          const { args: argv } = bwrapArgs({ minimalRoot: true, privateDirs: [home], network, ro: mount.ro, rw: mount.rw,
+            hide: [canonical(app.home)], masked, links, cwd: "/", command: mount.file, args,
+            pointers: [...(scope.workspace.pointers ?? []), ...desktopPointers] });
+          return withPinnedBinds(argv, undefined, (pinned, fds) => spawn(support.bwrap!, pinned,
+            { env, cwd: "/", stdio: ["pipe", "pipe", "pipe", ...fds], detached: true }) as ChildProcessWithoutNullStreams);
+        }, input, output, signal);
+        return;
+      }
+      const child = await launchRun(scope.profile, { app, ownSandbox: scope.own, runId, source: "executor", context: ctx, signal }, (account, own) => {
         signal.throwIfAborted();
         const network = own?.network ?? account?.network;
         if (network) ro.push(realpathSync(egressRelayPath));
-        const { args: argv } = bwrapArgs({ ...scope.workspace, links, minimalRoot: true, network, privateDirs: [home], hide: [canonical(app.home), "/tmp/.omem-executor-tmp"],
+        const pointers = [...(scope.workspace.pointers ?? [])];
+        if (network && git && user === OWNER && !account) {
+          const proxy = new URL(import.meta.url.endsWith(".ts") ? "./git-ssh-proxy.ts" : "./git-ssh-proxy.js", import.meta.url);
+          pointers.push({ source: realpathSync(fileURLToPath(proxy)), path: "/tmp/.omem-ssh-proxy.mjs" });
+          env.GIT_SSH_COMMAND = "ssh -o 'ProxyCommand=node /tmp/.omem-ssh-proxy.mjs %h %p'";
+        }
+        const { args: argv } = bwrapArgs({ ...scope.workspace, pointers, links, minimalRoot: true, network, privateDirs: [home], hide: [canonical(app.home), "/tmp/.omem-executor-tmp"],
           masked, ro, rw, cwd: call.cwd, command: file, args: call.args });
         return withPinnedBinds(argv, undefined, (args, fds) => spawn(support.bwrap!, args,
           { env, cwd: "/", stdio: ["pipe", "pipe", "pipe", ...fds], detached: true }) as ChildProcessWithoutNullStreams);
