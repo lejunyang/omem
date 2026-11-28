@@ -345,7 +345,7 @@ type AccountPlan<P> = { kind: "ready"; profile: P; reason?: string } | { kind: "
   { kind: "login"; entry: AccountEntry; reason: string };
 
 /** Resolve before checking capacity. The owner's spent marks must not hide a member's own account. */
-export function memberAccountPlan<P extends AgentProfile>(app: App, userId: string, p: P, ownOnly = false): AccountPlan<P> {
+export function memberAccountPlan<P extends AgentProfile>(app: App, userId: string, p: P, ownOnly = false, waitForLogin = false): AccountPlan<P> {
   if (!isAiMember(app, userId)) return { kind: "ready", profile: p };
   const entry = accountEntryFor(app, p);
   const backend = sourceOf(p);
@@ -371,7 +371,10 @@ export function memberAccountPlan<P extends AgentProfile>(app: App, userId: stri
       return selected(p, OWNER, "本人额度充足，借用本人登录");
   }
   const blocked = accountBlocked(app, userId, p);
-  if (blocked) return { kind: "blocked", reason: blocked };
+  if (blocked) {
+    if (waitForLogin && entry && supported && !own) return { kind: "login", entry, reason: blocked };
+    return { kind: "blocked", reason: blocked };
+  }
   const profile = accountFor(app, userId, p);
   const holder = selectedCredential(profile)?.holder ?? (entry ? accountOf(profile)?.userId : undefined) ?? OWNER;
   const why = policy === "owner" && !pressure.known ? "本人额度未知，按后端设置" : "按后端账号设置";

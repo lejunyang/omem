@@ -1,8 +1,11 @@
 import type { App } from "../core/app.ts";
-import { allProfiles } from "../core/config.ts";
+import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { all, one, run, withinTx } from "../core/db.ts";
 import { canWrite } from "../core/users.ts";
 import { HttpError, now, truncate, zonedParts, zoneMidnight } from "../core/util.ts";
+import { memberAccountPlan } from "./accounts.ts";
+import { aiLoginWait, type AiLoginWait } from "./credential-wait.ts";
+import { selectMemberRunAccount } from "./member-run-ai.ts";
 import { backendAvailable } from "./availability.ts";
 import { downReason, excludedReason, hasRoom } from "./capacity.ts";
 import { policyScope } from "./ai-policy.ts";
@@ -53,9 +56,13 @@ export function wakeSupervisor(app: App, id: string, note: string, options: { im
     }
     if (pausedEvents) patchSupervisorState(app, id, { pausedEvents: null });
     if (queued) {
+      const input = { ...queued.input };
+      const wait = input.aiLoginWait as AiLoginWait | undefined;
+      if (wait && (wait.pick.profile !== task.ai.profile || wait.pick.model !== task.ai.model || wait.pick.effort !== task.ai.effort))
+        delete input.aiLoginWait;
       updateQueuedRun(app, queued.id, {
-        input: { ...queued.input, events },
-        ...(options.immediate || options.drift ? { notBefore: now() } : {}),
+        input: { ...input, events },
+        ...((options.immediate || options.drift) && (!input.aiLoginWait || wait?.ready) ? { notBefore: now() } : {}),
       });
       return queued.id;
     }
@@ -186,16 +193,23 @@ export async function runSupervisor(ctx: RunContext) {
   if (!ctx.run.output.counted && wakes >= task.budget.dailyWakes) throw new ResumeRunAt(nextDay(app));
   if (ctx.run.output.supervisorReport) return { summary: "本轮报告已保存" };
   const profile = allProfiles(app.config).find(p => p.id === task.ai.profile);
-  const selected = profile && { ...profile, ...task.ai };
+  let selected: AgentProfile | undefined = profile && { ...profile, ...task.ai };
   const execution: Execution = { ...task.ai, source: "flow", reason: "长任务指定的跟进 AI" };
   await ensureTopic(app, task);
-  try { validateExecution(app, execution, task.userId, true, policyScope(app, "supervise")); }
+  const waiting = aiLoginWait(app, ctx.run.id);
+  try { validateExecution(app, execution, task.userId, true, policyScope(app, "supervise"), false, !!waiting); }
   catch (error) {
     if (error instanceof HttpError) return waitForAi(ctx, task, error.message);
     throw error;
   }
-  const unavailable = !selected || !backendAvailable(selected, app.home) ? "后端不可用" :
-    excludedReason(app, selected) ?? downReason(app, selected) ?? (!hasRoom(app, selected) ? "等待模型空位" : null);
+  if (!selected || !backendAvailable(selected, app.home)) return waitForAi(ctx, task, "后端不可用");
+  const plan = memberAccountPlan(app, task.userId, selected, !!waiting, true);
+  if (plan.kind === "ready") selected = plan.profile;
+  else if (plan.kind === "login" || waiting) {
+    selected = await selectMemberRunAccount(app, selected, { userId: task.userId, runId: ctx.run.id,
+      threadId: task.threadId, pinned: true, waitForLogin: true, signal: ctx.signal });
+  } else return waitForAi(ctx, task, plan.reason);
+  const unavailable = excludedReason(app, selected) ?? downReason(app, selected) ?? (!hasRoom(app, selected) ? "等待模型空位" : null);
   if (unavailable) return waitForAi(ctx, task, unavailable);
   withinTx(app.db, () => {
     patchSupervisorState(app, task.id, { day, wakes: wakes + (ctx.run.output.counted ? 0 : 1), lastWake: now() });

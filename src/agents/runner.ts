@@ -1011,7 +1011,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const borrowed = input.borrow;
   const raw = member ? resolveRunProfile(app, { ...input, actor }) : undefined;
   const supervising = input.role === "supervisor";
-  const memberOptions = { userId: input.userId!, runId: input.runId, threadId: runInput.conversationId ?? runInput.threadId, pinned: specified || execution?.source === "user" || supervising, ownOnly: runInput.ownAccountOnly, signal: input.signal };
+  const memberOptions = { userId: input.userId!, runId: input.runId, threadId: runInput.conversationId ?? runInput.threadId, pinned: specified || execution?.source === "user" || supervising, ownOnly: runInput.ownAccountOnly, waitForLogin: supervising, signal: input.signal };
   const primary = borrowed ? peerProfile({
     id: `peer:${borrowed.device}:${borrowed.backend}`, peer: { id: borrowed.device, agent: borrowed.backend },
     transport: "acp", command: "omem", args: [], env: { OMEM_HOME: app.home }, idleTimeoutMs: 600000,
@@ -1219,7 +1219,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           runId: input.runId,
           selection: pinned && i === 0 ? execution : undefined,
           codeReview,
-          strictSelection: pinned && profile.id === primary.id ? { model: !!(execution?.model ?? personal.model), effort: !!(execution?.effort ?? personal.effort) } : undefined,
+          strictSelection: pinned && profile.id === primary.id ? { model: !!(login?.pick.model ?? execution?.model ?? personal.model), effort: !!(login?.pick.effort ?? execution?.effort ?? personal.effort) } : undefined,
           cwd: prep.cwd,
           workspace,
           ownSandbox: prep.isolation.box,
