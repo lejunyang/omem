@@ -5857,7 +5857,8 @@ def({
     const by = ctx.role === "supervisor" ? "supervisor" : ctx.userId ?? OWNER;
     if (ctx.role === "supervisor") {
       const target = supervisedRound(ctx, a.run_id, a.basis);
-      if (target.output.stoppedBySupervisor && target.status === "running") throw new HttpError(409, "编码轮正在停止，结束后再继续");
+      // Once stop_code_run has released the checkout, an immediate correction starts work there again.
+      if (target.output.stoppedBySupervisor && !["running", "queued"].includes(target.status) && a.when === "now") a = { ...a, when: "next" };
       a = { ...a, run_id: target.id };
       if (a.apply_first) throw new HttpError(403, "应用交办涉及推送，请在报告中交给本人确认");
       if (a.task) a = { ...a, task: a.task + "\n\n跟进依据：" + a.basis };
@@ -6092,6 +6093,10 @@ def({
     const target = supervisor ? supervisedRound(ctx, a.run_id, a.basis) : steerable(ctx, a.run_id);
     const { stopCodeWork } = await import("./code-steer.ts");
     const r = stopCodeWork(ctx.app, target.id, supervisor ? [a.reason, "跟进依据：" + a.basis].filter(Boolean).join("\n") : a.reason ?? "", supervisor ? "supervisor" : "owner");
+    if (supervisor && r.stopped.length) {
+      const { waitForRun } = await import("./runs.ts");
+      await Promise.all(r.stopped.map(id => waitForRun(ctx.app, id)));
+    }
     return r.stopped.length ? `已停下 ${r.stopped.join("、")}；工作区保留，不会自动续轮。` : `${r.runId} 没有在进行或排队的编码和评审，不用停。`;
   },
 });

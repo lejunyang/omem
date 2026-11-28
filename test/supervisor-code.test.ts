@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { all, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { answerAsk, createAsk, describeAnswer, getAsk, listAsks, waitForAnswer } from "../src/agents/asks.ts";
@@ -11,7 +11,7 @@ import { addTask, getTask, recordCheckpoint, toDecide, updateTask } from "../src
 import { changeLongTask, confirmLongTaskBrief, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
 import { queueSupervisedAgent, onWorkRunSettled } from "../src/agents/agent-work.ts";
 import { checkTaskDuration } from "../src/agents/drift.ts";
-import { createRun, getRun, queuedInLane, setRunOutput } from "../src/agents/runs.ts";
+import { createRun, getRun, queuedInLane, setRunOutput, __testHandlers, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { answerWorkerQuestion, checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "../src/agents/supervisor-code.ts";
 import { callTool, type ToolContext } from "../src/agents/tools.ts";
 import { supervisorBranches } from "../src/agents/supervisor-branches.ts";
@@ -61,15 +61,42 @@ describe("助手的编码交办", () => {
     expect((await call("stop_code_run", { run_id: other.id, basis: task.goal })).isError).toBe(true);
     expect((await call("stop_code_run", {})).text).toContain("basis");
     expect(getRun(app, root.id).status).toBe("queued");
-    expect((await call("stop_code_run", { basis: task.goal, reason: "先核对改动" })).isError).toBe(false);
-    expect(getRun(app, root.id)).toMatchObject({ status: "cancelled", output: { stoppedBySupervisor: expect.stringContaining(task.goal) } });
-    expect((await call("continue_code_run", { task: "只校对说明", basis: task.goal, apply_first: true })).isError).toBe(true);
-    const resumed = await call("continue_code_run", { task: "只校对说明", basis: task.goal });
-    expect(resumed.isError, resumed.text).toBe(false);
-    expect(all(app.db, "select id from runs where json_extract(input,'$.continueFrom')=? and status='queued'", root.id)).toHaveLength(1);
-    setRunOutput(app, lead.id, { supervisorReport: {} });
-    expect((await call("stop_code_run", { basis: task.goal })).text).toContain("已交本轮报告");
-    expect(getRun(app, other.id).status).toBe("queued");
+    const previous = __testHandlers.get("code");
+    const received: string[] = [];
+    const secondRuns: string[] = [];
+    const correction = "只校对说明";
+    __testHandlers.set("code", async worker => {
+      if (worker.run.id === root.id) {
+        await new Promise<void>(resolve => worker.signal.addEventListener("abort", () => resolve(), { once: true }));
+      } else {
+        secondRuns.push(worker.run.id);
+        expect(worker.run.input.continueFrom).toBe(root.id);
+        received.push(...(String(worker.run.input.roundNotes).match(/只校对说明/g) ?? []));
+      }
+    });
+    // Only the two coding rounds run. The caller and the unrelated delegation stay parked.
+    run(app.db, "update runs set not_before='2099-01-01' where id!=?", root.id);
+    try {
+      startWorker(app);
+      await vi.waitFor(() => expect(getRun(app, root.id).status).toBe("running"));
+      expect((await call("stop_code_run", { basis: task.goal, reason: "先核对改动" })).isError).toBe(false);
+      expect(getRun(app, root.id)).toMatchObject({ status: "cancelled", output: { stoppedBySupervisor: expect.stringContaining(task.goal) } });
+      expect((await call("continue_code_run", { task: correction, basis: task.goal, apply_first: true })).isError).toBe(true);
+      const resumed = await call("continue_code_run", { when: "now", task: correction, basis: task.goal });
+      expect(resumed.isError, resumed.text).toBe(false);
+      const rounds = all<{ id: string }>(app.db, "select id from runs where json_extract(input,'$.continueFrom')=?", root.id);
+      expect(rounds).toHaveLength(1);
+      expect((await waitForRun(app, rounds[0].id)).status).toBe("done");
+      expect(secondRuns).toEqual([rounds[0].id]);
+      expect(received).toEqual([correction]);
+      setRunOutput(app, lead.id, { supervisorReport: {} });
+      expect((await call("stop_code_run", { basis: task.goal })).text).toContain("已交本轮报告");
+      expect(getRun(app, other.id).status).toBe("queued");
+    } finally {
+      stopWorker();
+      if (previous) __testHandlers.set("code", previous);
+      else __testHandlers.delete("code");
+    }
   });
 
   it("工作分支汇总限制提交、文件和篇幅，只读相关交办的提交", async () => {
