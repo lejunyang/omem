@@ -104,6 +104,16 @@ const files = (dir: string, ext: RegExp): string[] =>
     ? readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? files(join(dir, d.name), ext).map((f) => `${d.name}/${f}`) : ext.test(d.name) ? [d.name] : []))
     : [];
 
+export function recordingEndpoints(dir: string) {
+  return endpoints(jsonLines(join(dir, "evidence", "network.jsonl")));
+}
+
+export function recordingStepLabel(dir: string, step: number | null): string {
+  if (!step) return "";
+  const action = jsonLines(join(dir, "steps.jsonl")).find(s => Number(s.id) === step)?.action;
+  return truncate(String(action?.label || action?.name || ""), 80);
+}
+
 /** Counts for the page and the organizing message, from what the recording directory holds. */
 export function recordingSummary(dir: string): Record<string, unknown> {
   const replay = readJson(join(dir, "record.json")) ?? {};
@@ -136,7 +146,7 @@ function stepLine(s: any, dir?: string): string {
   const where = a.heading ? `在「${truncate(String(a.heading), 60)}」下` : "";
   const context = role || where ? `（${[role, where].filter(Boolean).join("，")}）` : "";
   const changes = (s.changes ?? []).slice(0, 4).map((c: any) => truncate(typeof c === "string" ? c : JSON.stringify(c), 160));
-  const net = (s.network ?? []).slice(0, 4).map((n: any) => `${n.method ?? ""} ${truncate(String(n.url ?? ""), 120)} → ${n.status ?? "?"}`);
+  const net = (s.network ?? []).slice(0, 4).map((n: any) => `${n.method ?? ""} ${truncate(String(n.url ?? ""), 120)} → ${n.status ?? "?"}${n.ref ? ` [${n.ref}]` : ""}`);
   const shot = dir && s.screenshots?.[0]?.path ? join(dir, String(s.screenshots[0].path)) : "";
   return [
     `#${s.id} ${what}${context}${a.url ? ` @ ${truncate(String(a.url), 100)}` : ""}`,
@@ -196,11 +206,11 @@ export function readRecording(app: App, id: string, userId: string, o: { part?: 
   if (part === "steps") {
     const steps = jsonLines(join(r.dir, "steps.jsonl"));
     if (!steps.length) return readRecording(app, id, userId, { part: "replay", from, limit });
-    const noisy = new Set(endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl"))).filter((e) => e.noise).flatMap((e) => e.requests.map((q) => `${q.method} ${q.url}`)));
+    const noisy = new Set(recordingEndpoints(r.dir).filter((e) => e.noise).flatMap((e) => e.requests.map((q) => `${q.method} ${q.url}`)));
     const page = steps.filter((s) => s.id >= from).slice(0, limit);
     return page.map((s) => stepLine({ ...s, network: (s.network ?? []).filter((n: any) => !noisy.has(`${String(n.method ?? "").toUpperCase()} ${n.url ?? ""}`)) }, r.dir)).join("\n") + (steps.some((s) => s.id > (page.at(-1)?.id ?? 0)) ? `\n……from=${(page.at(-1)?.id ?? 0) + 1} 接着看` : "");
   }
-  const list = endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl")));
+  const list = recordingEndpoints(r.dir);
   if (!list.length) return "这次录制没有记下请求。";
   const want = (o.filter ?? "").toLowerCase();
   const matches = (e: Endpoint) => !want || haystack(e).includes(want);
@@ -224,7 +234,13 @@ const ordered = (list: Endpoint[]) => [...list.filter(isWrite), ...list.filter((
 function endpointText(e: Endpoint, n: number, bodies: boolean): string {
   const steps = e.steps.length ? `（第 ${e.steps.slice(0, 6).join("、")}${e.steps.length > 6 ? " 等" : ""} 步）` : "（不在哪一步里）";
   const ex = example(e);
-  const head = `${n}. ${e.method} ${e.host}${e.path} → ${e.statuses.slice(0, 3).join("/")}${e.requests.length > 1 ? ` ×${e.requests.length}` : ""}${steps}${e.noise ? ` [${e.noise}]` : ""} [${ex.id}]`;
+  // A single endpoint can be called by several buttons. Keep a selectable request
+  // number for each displayed step, even when the body example came from another.
+  const refs = e.steps.length > 1 ? e.steps.slice(0, 6).map(step => {
+    const request = e.requests.find(r => r.step === step);
+    return `第 ${step} 步 [${request!.id}]`;
+  }).join("、") : "";
+  const head = `${n}. ${e.method} ${e.host}${e.path} → ${e.statuses.slice(0, 3).join("/")}${e.requests.length > 1 ? ` ×${e.requests.length}` : ""}${steps}${e.noise ? ` [${e.noise}]` : ""} [${ex.id}]${refs ? `\n   分步请求：${refs}` : ""}`;
   if (!bodies) return head;
   const body = (v: unknown) => (v == null || v === "" ? "" : truncate(typeof v === "string" ? v : JSON.stringify(v), 1_500));
   const query = ex.url.includes("?") ? truncate(ex.url.slice(ex.url.indexOf("?")), 300) : "";
@@ -239,7 +255,7 @@ function endpointText(e: Endpoint, n: number, bodies: boolean): string {
  */
 export function skillFilesOf(app: App, id: string, userId: string, keep?: string[]): Record<string, string> {
   const r = getRecording(app, id, userId);
-  const list = endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl")));
+  const list = recordingEndpoints(r.dir);
   const wanted = keep?.map((k) => k.trim().toLowerCase()).filter(Boolean);
   const chosen = wanted?.length
     ? list.filter((e) => wanted.some((k) => haystack(e).includes(k)))
@@ -260,7 +276,7 @@ export function skillFilesOf(app: App, id: string, userId: string, keep?: string
 
 /** The endpoints a recording called, for the summary: what the task most likely went through. */
 function apiOverview(dir: string): string {
-  const list = endpoints(jsonLines(join(dir, "evidence", "network.jsonl")));
+  const list = recordingEndpoints(dir);
   if (!list.length) return "";
   const kept = ordered(list.filter((e) => !e.noise));
   const skipped = noiseNote(list.filter((e) => e.noise));

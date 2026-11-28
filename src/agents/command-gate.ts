@@ -471,6 +471,8 @@ async function resolveEntry(app: App, entry: string, why: string): Promise<Appro
 }
 
 async function approverFor(app: App, rule: CommandRule, nominated: string | undefined): Promise<Approver> {
+  // Rules drafted from a recording name the caller; until the gate routes that to whoever the run acts for, the owner approves.
+  if (rule.approver === "caller") return resolveEntry(app, "owner", "审批人是这次运行的调用者，暂由本人批准");
   if (rule.approver !== "run") return resolveEntry(app, rule.approver, "规则指定的审批人");
   if (!nominated?.trim()) return resolveEntry(app, "owner", "运行没有用 OMEM_APPROVER 提名审批人，改由本人批准");
   const entry = rule.approvers.find((e) => entryMatches(app, e, nominated));

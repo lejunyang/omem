@@ -8,6 +8,8 @@
   - `steps`：每个动作一行，带元素的角色、所在的标题、页面地址、引起的变化和请求；扩展录的还带元素的 CSS 路径和截图文件的路径（能打开图片时可以看）；标记写成“备注（指着「…」）：…”；`from` / `limit` 翻页。
   - `requests`：按接口合并的请求（方法、主机和路径，路径里的数字和 id 换成 `:id`；状态、调用次数、所在步骤、一个请求编号），写操作在前。默认略去埋点（发送事件批次、Ping、监控路径）、静态资源、CORS 预检和轮询（同一个 GET 反复调、响应不变），开头说略去了多少，`noise=true` 也列出并标原因。`filter` 按地址、方法或请求编号筛，`bodies=true` 带一次调用的参数、请求体和响应体的开头。cookie、令牌、密码已经替换成占位。
   - `replay`：转出的可回放步骤（`aad run` 用的），每步是动作、元素的角色和名字、运行时输入。
+- 本人说某一步的接口要审批时，先用 `read_recording(id, part="requests")` 找请求编号。同一接口出现在好几步时，选“分步请求”里对应的编号。必要时再看 `part="steps"`。拿不准是哪个请求时问本人，只起草本人选中的那一条。调用示例：`propose_operation_rule({recording_id, request_id: "req-2", title: "取消订单要审批"})`。工具把路径里的标识换成通配，逐个核对原录制的请求。卡片写明命中了几次、来自哪一步、读请求和噪声的核对结果。
+- 本人直接给出具体接口时可改传 `method`、`host`、`path` 和 `title`。可选 `body: {jsonPath: "$.mode", regex: "^live$"}` 限定请求体字段。默认 `action=approve`、`approver=caller`（运行发起人）。动作也可选 `deny`、`log` 或 `allow`。本人明确指定审批人时可传 `owner`、`user:<用户 id>` 或 `lark:<联系人>`。本人点“启用”才保存，之后可到设置 → 安全 → 操作规则删除。
 - 整理成技能：`save_skill(name, description, body, from_recording=<录制 id>, recording_requests=[…])`。`recording/requests.md` 随技能保存：`recording_requests` 里挑出的接口（接口的一段如 `POST /api/x`，或请求编号），不填时是略去噪音后的全部接口，每个一条带一次调用的示例。可回放步骤和 aad 的完整操作说明留在录制里，不进技能（里面有录的人走过的弯路）。正文你来写，写法见内置技能 `skill-from-recording`。
 
 本人也可以**演示**：一次演示是一个对话，演示期间扩展的录制、拾取（“我指给你看”）和结束时收进的本人飞书消息、远程录制按时间排在里面，结束时以“我演示完了：…”交给你，里面有时间线和要存成什么（技能，或关注 / 事项的经验文件）。按内置技能 `skill-from-demo` 整理；录制照上面读，时间线全文用 `read_conversation` 读这个对话。

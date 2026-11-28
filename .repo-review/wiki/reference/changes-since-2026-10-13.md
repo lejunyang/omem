@@ -9,11 +9,25 @@ updated: 2026-11-28
 
 普通 HOME 修改和缓存保存在身份层，每个进程独立写入。状态接口给出大小和回退原因。代码、原件和产物经只读视图访问，成员按空间、原件和运行权限筛选。宿主预览仍从本人的交办页面启动。见 `docs/v2/sandbox-everyday.md`。
 
+## 从录制里挑一个需要批准的网页请求（2026-11-28）
+
+- 本人说某一步的接口要审批，助手从远程或扩展录制中挑一个请求。`propose_operation_rule` 把数字、UUID 和哈希路径段换成通配，并按请求体条件核对目标、读请求和噪声。
+- 本人点“启用”后，规则才排进现有操作规则，aad 随即能查到对应的主机和方法。卡片和规则保留录制来源。实现见 `src/remote/operation-rule.ts`，验收见 `test/recording-rule.test.ts`。
+- 旧放行规则限定正文字段时，取消审批草稿可以不限正文，也可以限定另一个字段。录制中的取消请求同时满足两条规则时，启用后优先审批。
+
 ## 卡片预览画出 Markdown 表格；沙箱设置页跟上执行器（2026-11-28）
 
 - `scripts/card-preview.ts` 画之前把 Markdown 元素里的管道表格换成表格组件（每列 125px、每页 5 行），手机宽度下和客户端一样要横着滑；以前画成原样的竖线文字。在卡片搭建工具的手机视图里核对过客户端：JSON 2.0 的 Markdown 表格每页 5 行带翻页，每列约 125px，四列在手机上只露出前两列多一点。`skills/omem/references/owner.md` 的 `fold` 写明 fold 里的明细一项一行或只留两三列，列多的放成 fold 外的 `table`；`docs/v2/lark-cards.md` 同步。
 - 设置 → 安全 → 运行的沙箱（`web/src/components/SandboxSettings.vue`、`web/src/lib/sandbox.ts`）：加“只让这些运行进”“这些不进”两个多选（`agents.ownSandbox.includeKinds` / `excludeKinds`，选项是运行类型的中文名）；“默认藏起来”分清 omem 的数据目录和插件命令的登录（以前每一项都写成数据目录），能展开看常用登录文件和浏览器资料的清单（`defaults.loginPaths`，配置了 `loginPaths` 时用配置的）；帮助文字改成执行器之后的说法，“你加的可写目录”不再让人把登录目录加进来。操作规则卡的说明写明进了沙箱的运行里绝对路径和改过的 PATH 也落到垫片上，没进沙箱时才拦不住。截图 `settings-sandbox` 重拍。
 - `src/agents/own-sandbox.ts` 的 `canonical` 在 Windows 上按盘符路径的规则拆不存在的路径：以前把它当 POSIX 路径拆，成员账号下还没建的状态目录被判成“越界或含符号链接”，`scripts/doc-screens.ts` 在 Windows 上给演示成员登录时就退出。Linux 上不变。
+
+## 跟进对修改项答 later / skip 是放下或不做（2026-11-28）
+
+- 跟进在报告的 `answers` 里回答修改项问题（`task:…`）时，宿主一律当作“重做，做法是这段回答”。跟进写 `later` 想放到以后，结果修改项变成待做、指示是“later”，交办续轮时编码会照着这个空话去改（11-28 osdk 研究的 5 项和一轮 PATH 修复）。现在 `answerWorkerQuestion` 认 later / 以后再做 → 放到以后，skip / 不做 → 不做，理由取这条回答的 `basis`；同样的回答再交一次不报错。报告 schema 的 `answers` 说明里写了这个用法。`test/supervisor-code.test.ts`。
+
+## 跟进等模型空位不再往话题里发（2026-11-28）
+
+- 跟进的一轮等模型空位（`hasRoom`）、后端刚出故障被排后（`downReason`）、服务商排队或限流（`isRetryableAgentError`）时，原来等满 `queueTimeoutMinutes` 就停止本轮，往话题里发“等待超过 10 分钟，本轮停止”，这一轮的事件也随之丢了。现在这类等待留在队列里每分钟再看一次，不限时长、不发话题（`supervisor.ts` 的 `waitForAi` 分 slot / retry / owner）；中途断了的轮次悄悄重试三次（`output.silentRetries`）后才在话题里说；设置、登录、额度用完照旧。每次尝试各等自己的 `queueUntil`。`test/supervisor.test.ts`。
 
 ## 最高思考强度多给空闲时间（2026-11-28）
 
