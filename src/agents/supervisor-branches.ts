@@ -56,15 +56,15 @@ export async function supervisorBranches(app: App, task: LongTask, previous: [st
       sections.push(rows);
       if (!tip.ok) { rows.push("工作分支当前不可读取。"); continue; }
       const head = tip.stdout.trim();
+      heads.set(key, head);
       const base = previousHead ?? changeBase(repo.rootPath, wt, head);
-      if (base === head) { heads.set(key, head); rows.push("没有新提交。"); continue; }
+      if (base === head) { rows.push("没有新提交。"); continue; }
       const [log, stat] = await Promise.all([
         gitAsync(repo.rootPath, ["log", "-5", "--no-color", "--format=%h %<(96,trunc)%s", base + ".." + head, "--"], limits),
         gitAsync(repo.rootPath, ["diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", base, head, "--"], limits),
       ]);
       rows.push(...(log.ok ? log.stdout.trim().split("\n").filter(Boolean).map(label) : ["提交记录不可读取。"]));
       rows.push(...(stat.ok ? directoryStats(stat.stdout, task.brief.scope, repo.id) : ["目录统计不可读取或超出大小限制。"]));
-      if (log.ok && stat.ok) heads.set(key, head);
     }
   }
   // Leave room for each branch, and surface out-of-scope directories first within its allowance.
