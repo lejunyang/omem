@@ -136,7 +136,7 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
   const { answerWorkerQuestion, checkSupervisorBasis } = await import("./supervisor-code.ts");
   for (const a of report.answers ?? []) {
     checkSupervisorBasis(app, runId, runId, a.basis);
-    await answerWorkerQuestion(app, task.id, a.questionId, a.answer);
+    await answerWorkerQuestion(app, task.id, a.questionId, a.answer, undefined, a.basis);
   }
   // A task question goes to the owner only while it still waits on the follow-up: one it already settled
   // (retried, set aside) would take the owner's answer nowhere.
