@@ -38,7 +38,12 @@ export async function retryRun(app: App, id: string, userId?: string): Promise<R
       return { ...createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane, userId: owner }), continued: true };
     });
   }
-  return createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input: r.input, parentId: r.parentId, lane: r.lane, ...(owner ? { userId: owner } : {}) });
+  // A chat question (Feishu, a group) is answered by the channel adapter that awaited the first run;
+  // nobody awaits the retry, so it posts its answer itself, like a turn resumed after a restart.
+  const chatAsk = r.kind === "ask" && typeof r.input.conversationId === "string" &&
+    !!one(app.db, "select 1 from conversations where id = ? and channel not in ('web','cli')", r.input.conversationId);
+  const input = chatAsk ? { ...r.input, recoverReply: true } : r.input;
+  return createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane, ...(owner ? { userId: owner } : {}) });
 }
 
 /** The latest agent session a run opened (ACP reports it as soon as it is open), coding phase first. */

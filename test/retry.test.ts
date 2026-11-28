@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { attemptNote, lastSession, retryRun } from "../src/agents/retry.ts";
 import { addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
 import { run } from "../src/core/db.ts";
+import { resolveThread } from "../src/agents/threads.ts";
 import { testApp } from "./helpers.ts";
 
 const fail = (app: ReturnType<typeof testApp>, id: string, error: string) => run(app.db, "update runs set status = 'failed', error = ? where id = ?", error, id);
@@ -45,6 +46,20 @@ describe("retrying a run", () => {
     expect(again.input).toMatchObject({ retryOf: r.id, task: "看报警" });
     expect(again.input.resumeSessionId).toBeUndefined();
     expect(getRun(app, again.id).status).toBe("queued");
+    app.db.close();
+  });
+
+  it("lets a retried chat question post its own answer, since no channel adapter awaits it", async () => {
+    const app = testApp();
+    const lark = resolveThread(app, { channel: "lark", chatId: "oc_retry" }).thread.id;
+    const web = resolveThread(app, { channel: "web", chatId: "retry-web" }).thread.id;
+    const ask = (conversationId: string) => {
+      const r = createRun(app, { kind: "ask", title: "问", input: { conversationId, messageIds: [] }, notBefore: "2999-01-01T00:00:00Z" });
+      fail(app, r.id, "sandbox");
+      return r.id;
+    };
+    expect((await retryRun(app, ask(lark))).input.recoverReply).toBe(true);
+    expect((await retryRun(app, ask(web))).input.recoverReply).toBeUndefined();
     app.db.close();
   });
 });
