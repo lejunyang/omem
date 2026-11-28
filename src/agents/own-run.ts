@@ -74,8 +74,7 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
   }
   const box = planRun(app, profile, cwd, readOnly, runId, context, settings, state);
   const store = homeStore(box.data, box.home, context.userId ?? runUser(app, runId ?? null));
-  const overlay = box.isolatedNetwork ? { ok: false, reason: "出网隔离只挂运行所需目录，隔开 HOME 内的宿主套接字" }
-    : context.credentialState || context.restricted ? { ok: false, reason: "本轮使用受限身份" } : overlaySupport(store);
+  const overlay = context.credentialState || context.restricted ? { ok: false, reason: "本轮使用受限身份" } : overlaySupport(store);
   box.onSandboxStatus = text => { if (runId) addRunEvent(app, runId, "status", { text }); else console.warn(text); };
   if (!context.credentialState && !context.restricted) box.dataView = sandboxData(app, store.identity);
   if (overlay.ok) {

@@ -73,6 +73,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   const account = opts.ownSandbox ?? opts.sandbox;
   const npmrc = account && join(canonical(account.home), ".npmrc");
   const registryFile = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => under(npmrc, p)) ? npmrc : undefined;
+  let homeView: ReturnType<typeof openDataView> | undefined;
   let view: ReturnType<typeof openDataView> | undefined;
   let layer: ReturnType<typeof openHomeLayer> | undefined;
   try {
@@ -87,7 +88,11 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
         mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
       if (box.homeStore && !plan.ro.includes(box.home)) {
-        layer = openHomeLayer(box.homeStore, [...plan.hide, ...(box.masked ?? [])], [...plan.ro, ...plan.rw]);
+        try {
+          if (box.isolatedNetwork) homeView = openDataView({ data: box.home, socketsHidden: true }, []);
+          layer = openHomeLayer(box.homeStore, [...plan.hide, ...(box.masked ?? [])], [...plan.ro, ...plan.rw]);
+          if (homeView) layer.overlay.sources[0] = homeView.dir;
+        } catch (error) { box.onSandboxStatus?.("本轮 HOME 回退到只读挂载：" + (error as Error).message); }
       }
       if (box.dataView) {
         try { view = openDataView(box.dataView, [...plan.ro, ...plan.rw, ...plan.hide, ...(box.masked ?? []).filter(existsSync), ...(plan.pointers ?? []).map(p => p.path)], plan.links); }
@@ -112,6 +117,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
       return child;
     };
     const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, config ? 4 : 3) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
+    if (homeView) child.once("close", homeView.close);
     if (view) child.once("close", view.close);
     const saveHome = layer?.close;
     if (saveHome) child.once("close", () => {
@@ -122,6 +128,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
     child.stdin?.on("error", () => {});
     return child;
   } catch (error) {
+    homeView?.close();
     view?.close();
     layer?.close();
     throw error;

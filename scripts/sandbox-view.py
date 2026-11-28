@@ -18,11 +18,12 @@ fuse.fuse_python_api = (0, 2)
 host = os.pidfd_open(os.getppid())
 policy = json.load(sys.stdin)
 root = os.open(policy["data"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-owner = policy["spaces"] is None
-spaces = set(policy["spaces"] or [])
-repos = set(policy["repos"])
-artifacts = set(policy["artifacts"])
-files = set(policy["files"])
+home = policy.get("socketsHidden", False)
+owner = not home and policy["spaces"] is None
+spaces = set(policy.get("spaces") or [])
+repos = set(policy.get("repos", []))
+artifacts = set(policy.get("artifacts", []))
+files = set(policy.get("files", []))
 nodes = {"/": "dir"}
 links = dict(policy["links"])
 for path, kind in [*policy["mounts"], *((path, "link") for path in links)]:
@@ -72,6 +73,8 @@ def tracked(repo):
 
 
 def visible(path):
+    if home:
+        return True
     parts = PurePosixPath(path).parts[1:]
     if not parts:
         return True
@@ -163,9 +166,9 @@ class View(fuse.Fuse):
         fd = open_at(path, os.O_PATH)
         try:
             info = os.fstat(fd)
-            if stat.S_ISLNK(info.st_mode) and workspace_link(path):
+            if stat.S_ISLNK(info.st_mode) and (home or workspace_link(path)):
                 return info
-            if stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+            if stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode) and (home or info.st_nlink == 1):
                 return info
             return -errno.ENOENT
         finally:
@@ -186,6 +189,12 @@ class View(fuse.Fuse):
 
     @access
     def readlink(self, path):
+        if home:
+            parent = open_at(os.path.dirname(path), os.O_DIRECTORY)
+            try:
+                return os.readlink(os.path.basename(path), dir_fd=parent)
+            finally:
+                os.close(parent)
         return links.get(path) or workspace_link(path) or -errno.ENOENT
 
     @access
@@ -195,7 +204,7 @@ class View(fuse.Fuse):
         fd = open_at(path, os.O_PATH)
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            if not stat.S_ISREG(info.st_mode) or not home and info.st_nlink != 1:
                 return -errno.ENOENT
             reader = os.open("/proc/self/fd/" + str(fd), os.O_RDONLY)
             try:

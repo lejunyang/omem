@@ -64,7 +64,9 @@ describe("bubblewrap arguments", () => {
     const { args: a } = bwrapArgs({ hide: ["/"], ro: ["/w", "/"], rw: ["/w"], cwd: "/w", command: "/bin/true", args: [] });
     expect(a.filter((x) => x === "--ro-bind-try")).toEqual([]);
     expect(a).toContain("--bind");
-    expect(a.filter((x) => x === "--tmpfs").length).toBe(1);
+    const privatePaths = a.flatMap((arg, i) => arg === "--tmpfs" ? [a[i + 1]] : []);
+    expect(privatePaths).toContain("/tmp");
+    expect(privatePaths).not.toContain("/");
   });
 
   it("finds the install a command lives in", () => {

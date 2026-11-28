@@ -31,7 +31,11 @@ def merge(source, target):
     # Never traverse a link from either a current generation or an incoming delta.
     for entry in source.iterdir():
         dest = target / entry.name
-        directory = stat.S_ISDIR(entry.lstat().st_mode)
+        mode = entry.lstat().st_mode
+        # Sockets refer to running processes. They cannot become persistent state.
+        if stat.S_ISSOCK(mode) or stat.S_ISFIFO(mode):
+            continue
+        directory = stat.S_ISDIR(mode)
         opaque = directory and "user.overlay.opaque" in os.listxattr(entry)
         if directory and dest.is_dir() and not dest.is_symlink() and not opaque:
             merge(entry, dest)
@@ -39,7 +43,9 @@ def merge(source, target):
         else:
             discard(dest)
             if directory:
-                subprocess.run(["/bin/cp", "-al", "--", entry, dest], check=True)
+                dest.mkdir()
+                merge(entry, dest)
+                shutil.copystat(entry, dest)
             else:
                 os.link(entry, dest, follow_symlinks=False)
 

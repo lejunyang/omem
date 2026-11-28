@@ -1,5 +1,6 @@
 import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -44,6 +45,14 @@ it.skipIf(!support.ok)("并发 HOME 写入按结束顺序保留，删除保持�
     expect(existsSync(join(home, "first"))).toBe(false);
     await shell('cd "$HOME"; test "$(cat program)" = last; test -f first; test -f second; test ! -e folder/old; test -f folder/new').done;
     await shell('cd "$HOME"; test "$(cat program)" = host; test ! -e first', "member").done;
+    const socket = createServer();
+    await new Promise<void>(ok => socket.listen(join(home, "service.sock"), ok));
+    try {
+      app.config.security.egress.mode = "all-sandboxed";
+      await shell('cd "$HOME"; test ! -S service.sock; test "$(cat program)" = last; echo cached > new-file').done;
+    } finally { await new Promise<void>(ok => socket.close(() => ok())); }
+    app.config.security.egress.mode = "strict-only";
+    await shell('test -r "$HOME/new-file"').done;
     expect(homeLayers(store).find(row => row.identity === "owner")?.bytes).toBeGreaterThan(0);
     clearHomeLayer(store);
     await shell('cd "$HOME"; test "$(cat program)" = host; test -f folder/old; test ! -e second').done;

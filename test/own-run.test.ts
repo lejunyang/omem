@@ -58,7 +58,11 @@ it("沙箱状态只给本人主目录与完全访问授权清单，规则查询�
     expect(status.fullAccessGrants.rules).toEqual([{id:"grant",name:"完全访问规则"}]);
     expect(plans.some(p=>p.includes("rules_full_access"))).toBe(true);
     createUser(app,{id:"viewer",name:"查看成员",role:"admin"});
-    expect((await server.inject({url:"/api/security/sandbox",headers:{authorization:`Bearer ${createApiToken(app,"viewer")}`}})).statusCode).toBe(403);
+    const headers = { authorization: `Bearer ${createApiToken(app, "viewer")}` };
+    expect((await server.inject({ url: "/api/security/sandbox", headers })).statusCode).toBe(403);
+    const url = "/api/security/sandbox/layers/owner";
+    expect((await server.inject({ method: "DELETE", url, headers })).statusCode).toBe(403);
+    expect((await server.inject({ method: "DELETE", url })).statusCode).toBe(200);
   } finally {await server.close();app.db.close();rmSync(app.home,{recursive:true,force:true});rmSync(home,{recursive:true,force:true});}
 });
 

@@ -1,6 +1,6 @@
 import { commandMounts, sandboxGate } from "./command-mounts.ts";
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -160,7 +160,16 @@ export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
   for (const p of [...plan.hide, "/tmp"]) add(p, "tmpfs");
   if (plan.overlay) add(plan.overlay.home, "overlay");
   // External identity stores must also stay private to runs started before the first store exists.
-  if (!plan.network && !plan.minimalRoot) add("/var/tmp", "tmpfs");
+  if (!plan.network && !plan.minimalRoot && process.platform === "linux") {
+    const store = "/var/tmp/omem-home-" + process.getuid!();
+    if ([...plan.ro, ...plan.rw, ...(plan.pointers ?? []).map(p => p.source)].some(path => inside(path, store)))
+      throw new Error("不能挂载沙箱身份层的存储目录");
+    try {
+      mkdirSync(store, { recursive: true, mode: 0o700 });
+      const st = lstatSync(store);
+      add(st.isDirectory() && st.uid === process.getuid!() && !(st.mode & 0o077) ? store : "/var/tmp", "tmpfs");
+    } catch { add("/var/tmp", "tmpfs"); }
+  }
   for (const p of plan.ro) add(p, "ro");
   for (const p of plan.rw) add(p, "rw");
   // Project the existing names in a read-only parent. Newly created host logins stay
