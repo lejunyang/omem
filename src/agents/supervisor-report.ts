@@ -12,10 +12,8 @@ import type { UiField } from "./ui-blocks.ts";
 
 const labels: Record<Report["status"], string> = { "on-track": "按计划推进", drifting: "正在纠偏", stuck: "遇到阻塞", "needs-owner": "等你决定", done: "已完成" };
 
-export function supervisorProgressText(app: App, task: LongTask, report: Report) {
-  const facts = supervisorFacts(app, task);
+export function supervisorProgressText(app: App, task: LongTask, report: Report, facts = supervisorFacts(app, task), usage = supervisorUsage(app, task)) {
   const hours = Math.max(0, Date.now() - Date.parse(task.createdAt)) / 3600_000;
-  const usage = supervisorUsage(app, task);
   const section = (name: string, entries: string[]) => entries.length ? `**${name}**\n${entries.map(text => "- " + text).join("\n")}` : "";
   const status = task.status === "paused" ? "已暂停" : task.status === "ended" ? "已结束" : labels[report.status];
   const brief = task.sourceKind ? [

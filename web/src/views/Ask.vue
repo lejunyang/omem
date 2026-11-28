@@ -27,7 +27,7 @@ const messages = ref<Message[]>([]);
 const conversationSpace = ref<string | null>(null);
 const asks = ref<AskItem[]>([]);
 const stoppingFollow = ref<string | null>(null);
-const ownConversation = ref(false);
+const conversationOwner = ref<string | null>(null);
 async function detachFollow(taskId: string) {
   stoppingFollow.value = taskId;
   try {
@@ -91,7 +91,7 @@ async function loadConversation() {
     // A reply posted later (after an authorization or a delegated result) carries its run only in meta:
     // without it that run would look unanswered and its output would show a second time below.
     messages.value = r.messages.map((m) => (m.runId || typeof m.meta?.runId !== "string" ? m : { ...m, runId: m.meta.runId }));
-    ownConversation.value = "conversation" in r && r.conversation?.user_id === state.me?.id;
+    conversationOwner.value = "conversation" in r ? r.conversation?.user_id ?? null : null;
     conversationSpace.value = "conversation" in r ? r.conversation?.space_id ?? null : null;
   } finally {
     if (seq === convSeq) convLoading.value = false;
@@ -355,7 +355,7 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
             <div v-else class="msg bot">
               <RunActivity v-if="m.runId" :run-id="m.runId" :show-text="false" />
               <Markdown :source="m.text" />
-              <button v-if="ownConversation && m.meta?.autoFollowId" class="btn ghost sm" :disabled="!!stoppingFollow" @click="detachFollow(m.meta.autoFollowId)">不用跟进</button>
+              <button v-if="conversationOwner === state.me?.id && m.meta?.autoFollowId" class="btn ghost sm" :disabled="!!stoppingFollow" @click="detachFollow(m.meta.autoFollowId)">不用跟进</button>
               <UiView v-for="v in viewsFor(m.runId)" :key="v.id" :components="v.components" :title="v.title" :space="conversationSpace ?? undefined" />
               <AskCard v-for="a in formsFor(m.runId)" :key="a.id" :ask="a" @answered="loadAsks" />
               <AskCard v-for="a in suggestionsFor(m.runId)" :key="a.id" :ask="a" compact @answered="loadAsks" />

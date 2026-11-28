@@ -12,6 +12,7 @@ import { setupLarkBot } from "../src/channels/lark-bot.ts";
 import { handleCardAction } from "../src/channels/lark-actions.ts";
 import { onLarkSent, setLarkClient, setMentionResolver } from "../src/channels/lark-send.ts";
 import { setChatSettings } from "../src/agents/threads.ts";
+import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 const opened: App[] = [];
@@ -47,6 +48,12 @@ it("自动挂接只通知一次；首版报告生效，发起人可在进度卡�
   const [ask] = listAsks(app, { conversationId: task.threadId });
   await answerAsk(app, ask.id, { by: task.userId, value: { doneWhen: "原会话退出", outOfScope: "", scope: "src", constraints: "保持数据", mustAsk: "修改测试预算" } });
   expect(getLongTask(app, task.id).brief.mustAsk).toEqual(["修改测试预算"]);
+  const server = await startServer(app, { port: 0, quiet: true });
+  try {
+    const view = await server.inject("/api/long-tasks/" + task.id);
+    expect(view.json().progressText).toContain("修改测试预算");
+    expect(report).not.toContain("修改测试预算");
+  } finally { await server.close(); }
 });
 
 it("原会话退出后保留历史，重启时相同来源也不会再接管", async () => {
