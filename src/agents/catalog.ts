@@ -113,11 +113,11 @@ export const acpCatalog: CatalogEntry[] = [
   // Its own login needs a real terminal (it refuses to ask for the code when stdin is a pipe) and calls back to
   // a loopback port: from a page, only an API key works.
   {
-    id: "gemini", statePaths: ["~/.gemini"], egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli",
+    id: "gemini", statePaths: ["${GEMINI_CLI_HOME:-~}/.gemini"], egressHosts: ["generativelanguage.googleapis.com","cloudcode-pa.googleapis.com","oauth2.googleapis.com"], name: "Gemini CLI", command: "gemini", args: ["--acp"], npm: "@google/gemini-cli",
     account: { env: { GEMINI_CLI_HOME: "{home}" }, dirs: [".gemini"], owns: [".gemini"], tokenEnv: "GEMINI_API_KEY" },
   },
   {
-    id: "antigravity", name: "Antigravity CLI", command: "agy", args: ["acp"], statePaths: ["~/.gemini/antigravity-cli"], quota: "antigravity-usage",
+    id: "antigravity", name: "Antigravity CLI", command: "agy", args: ["acp"], statePaths: ["~/.gemini/antigravity-cli", "${XDG_CONFIG_HOME:-~/.config}/antigravity"], quota: "antigravity-usage",
     install: "见 antigravity.google/docs/getting-started 安装官方 CLI，再运行 agy acp --login 登录",
     // With a D-Bus session it keeps the login in the system keyring, one per system user whatever HOME is. With no
     // bus it keeps it in $XDG_CONFIG_HOME/antigravity: its own config and runtime folders and no bus make a login of its own.
@@ -130,40 +130,51 @@ export const acpCatalog: CatalogEntry[] = [
   },
   // `login --device-code` prints GitHub's device page and a code; there is no status command, so the login's exit code says.
   {
-    id: "copilot", statePaths: ["~/.copilot"], name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot",
+    id: "copilot", statePaths: ["${COPILOT_HOME:-~/.copilot}"], name: "GitHub Copilot CLI", command: "copilot", args: ["--acp"], npm: "@github/copilot",
     account: { env: { COPILOT_HOME: "{home}/.copilot" }, dirs: [".copilot"], owns: [".copilot"], login: { args: ["login", "--device-code"], url: LOGIN_URL, code: DEVICE_CODE, timeoutMs: 900_000 }, tokenEnv: "COPILOT_GITHUB_TOKEN" },
   },
   { id: "qwen", statePaths: ["~/.qwen"], name: "Qwen Code", command: "qwen", args: ["--acp", "--experimental-skills"], previousArgs: [["--acp"]], npm: "@qwen-code/qwen-code" },
-  { id: "cursor", name: "Cursor Agent", command: "cursor-agent", args: ["acp"], install: "curl https://cursor.com/install -fsS | bash（Windows 见 cursor.com/cli）" },
+  { id: "cursor", statePaths: ["${CURSOR_CONFIG_DIR:-~/.cursor}/chats", "${XDG_CONFIG_HOME:-~/.config}/cursor"], stateFiles: ["${CURSOR_CONFIG_DIR:-~/.cursor}/auth.json"], name: "Cursor Agent", command: "cursor-agent", args: ["acp"], install: "curl https://cursor.com/install -fsS | bash（Windows 见 cursor.com/cli）" },
   // The npm package opencode-ai stays on 1.x; 2.x ships as a program (ACP registry: binary).
-  { id: "opencode", statePaths: ["~/.local/share/opencode", "~/.local/state/opencode"], name: "OpenCode", command: "opencode", args: ["acp"], install: "curl -fsSL https://opencode.ai/install | bash（或从 ACP 注册表下载）" },
-  { id: "goose", name: "goose", command: "goose", args: ["acp"], install: "见 block.github.io/goose 安装说明" },
-  { id: "kimi", name: "Kimi Code", command: "kimi", args: ["acp"], npm: "@moonshot-ai/kimi-code" },
-  { id: "kilo", name: "Kilo", command: "kilo", args: ["acp"], npm: "@kilocode/cli" },
-  { id: "auggie", name: "Auggie (Augment)", command: "auggie", args: ["--acp"], env: { AUGMENT_DISABLE_AUTO_UPDATE: "1" }, npm: "@augmentcode/auggie" },
-  { id: "cline", name: "Cline", command: "cline", args: ["--acp"], npm: "cline" },
-  { id: "codebuddy", name: "CodeBuddy Code", command: "codebuddy", args: ["--acp"], npm: "@tencent-ai/codebuddy-code" },
-  { id: "qoder", name: "Qoder CLI", command: "qodercli", args: ["--acp"], npm: "@qoder-ai/qodercli" },
-  { id: "iflow", name: "iFlow CLI", command: "iflow", args: ["--experimental-acp"], npm: "@iflow-ai/iflow-cli" },
+  { id: "opencode", statePaths: ["${XDG_DATA_HOME:-~/.local/share}/opencode", "${XDG_STATE_HOME:-~/.local/state}/opencode"], name: "OpenCode", command: "opencode", args: ["acp"], install: "curl -fsSL https://opencode.ai/install | bash（或从 ACP 注册表下载）" },
+  { id: "goose", statePaths: ["${XDG_CONFIG_HOME:-~/.config}/goose", "${XDG_DATA_HOME:-~/.local/share}/goose", "${XDG_STATE_HOME:-~/.local/state}/goose"], name: "goose", command: "goose", args: ["acp"], install: "见 block.github.io/goose 安装说明" },
   {
-    id: "droid",
+    id: "kimi", name: "Kimi Code", command: "kimi", args: ["acp"], npm: "@moonshot-ai/kimi-code",
+    // Its bin/ and updates/ live alongside the session data.
+    statePaths: ["credentials", "sessions", "locks", "logs", "user-history"].map(dir => "${KIMI_CODE_HOME:-~/.kimi-code}/" + dir),
+    stateFiles: ["${KIMI_CODE_HOME:-~/.kimi-code}/session_index.jsonl"],
+  },
+  { id: "kilo", statePaths: ["${XDG_DATA_HOME:-~/.local/share}/kilo", "${XDG_STATE_HOME:-~/.local/state}/kilo"], name: "Kilo", command: "kilo", args: ["acp"], npm: "@kilocode/cli" },
+  { id: "auggie", statePaths: ["~/.augment/sessions"], stateFiles: ["~/.augment/session.json"], name: "Auggie (Augment)", command: "auggie", args: ["--acp"], env: { AUGMENT_DISABLE_AUTO_UPDATE: "1" }, npm: "@augmentcode/auggie" },
+  { id: "cline", statePaths: ["~/.cline/data"], name: "Cline", command: "cline", args: ["--acp"], npm: "cline" },
+  { id: "codebuddy", statePaths: ["~/.codebuddy/sessions", "~/.codebuddy/projects", "~/.codebuddy/logs", "~/.codebuddy/memories"], stateFiles: ["~/.codebuddy/history.jsonl"], name: "CodeBuddy Code", command: "codebuddy", args: ["--acp"], npm: "@tencent-ai/codebuddy-code" },
+  { id: "qoder", statePaths: ["${QODER_CONFIG_DIR:-~/.qoder}"], name: "Qoder CLI", command: "qodercli", args: ["--acp"], npm: "@qoder-ai/qodercli" },
+  { id: "iflow", statePaths: ["~/.iflow"], name: "iFlow CLI", command: "iflow", args: ["--experimental-acp"], npm: "@iflow-ai/iflow-cli" },
+  {
+    id: "droid", statePaths: ["~/.factory/sessions", "~/.factory/logs"], stateFiles: ["~/.factory/auth.v2.file", "~/.factory/auth.v2.key", "~/.factory/auth.encrypted", "~/.factory/auth.json"],
     name: "Factory Droid",
     command: "droid",
     args: ["exec", "--output-format", "acp-daemon"],
     env: { DROID_DISABLE_AUTO_UPDATE: "true", FACTORY_DROID_AUTO_UPDATE_ENABLED: "false" },
     npm: "droid",
   },
-  { id: "grok", name: "Grok Build", command: "grok", args: ["agent", "stdio"], npm: "@xai-official/grok" },
-  { id: "minimax", name: "MiniMax Code", command: "code-acp", args: ["acp"], npm: "@minimax-ai/code-acp" },
-  { id: "amp", name: "Amp", command: "amp-acp", npm: "amp-acp" },
-  { id: "vibe", name: "Mistral Vibe", command: "vibe-acp", install: "uv tool install mistral-vibe" },
-  { id: "junie", name: "Junie (JetBrains)", command: "junie", args: ["--acp=true"], install: "见 jetbrains.com/junie" },
-  { id: "devin", name: "Devin", command: "devin", args: ["acp"], install: "见 devin.ai/cli" },
-  { id: "pi", name: "pi", command: "pi-acp", npm: "pi-acp" },
-  { id: "deepagents", name: "DeepAgents", command: "deepagents-acp", npm: "deepagents-acp" },
-  { id: "kiro", name: "Kiro CLI", command: "kiro-cli", args: ["acp", "--agent-engine=v3"], install: "见 kiro.dev/cli（或从 ACP 注册表下载）" },
-  { id: "bob", name: "IBM Bob", command: "bob", args: ["acp"], npm: "@ibm/bob" },
-  { id: "glm", name: "GLM", command: "glm-acp-agent", npm: "glm-acp-agent" },
+  {
+    id: "grok", name: "Grok Build", command: "grok", args: ["agent", "stdio"], npm: "@xai-official/grok",
+    // The installer keeps the host executable under GROK_HOME/bin.
+    statePaths: ["${GROK_HOME:-~/.grok}/sessions", "${GROK_HOME:-~/.grok}/logs"],
+    stateFiles: ["${GROK_HOME:-~/.grok}/auth.json"],
+  },
+  { id: "minimax", statePaths: ["${MINIMAX_DATA_DIR:-~/.minimax}"], name: "MiniMax Code", command: "code-acp", args: ["acp"], npm: "@minimax-ai/code-acp" },
+  { id: "amp", statePaths: ["${XDG_DATA_HOME:-~/.local/share}/amp"], name: "Amp", command: "amp-acp", npm: "amp-acp" },
+  { id: "vibe", statePaths: ["${VIBE_HOME:-~/.vibe}/logs"], name: "Mistral Vibe", command: "vibe-acp", install: "uv tool install mistral-vibe" },
+  { id: "junie", statePaths: ["${JUNIE_HOME:-~/.junie}/sessions", "${JUNIE_HOME:-~/.junie}/logs"], name: "Junie (JetBrains)", command: "junie", args: ["--acp=true"], install: "见 jetbrains.com/junie" },
+  { id: "devin", statePaths: ["${XDG_CONFIG_HOME:-~/.config}/devin", "${XDG_DATA_HOME:-~/.local/share}/devin/cli"], name: "Devin", command: "devin", args: ["acp"], install: "见 devin.ai/cli" },
+  { id: "pi", statePaths: ["${PI_CODING_AGENT_DIR:-~/.pi/agent}/sessions", "~/.pi/pi-acp"], stateFiles: ["${PI_CODING_AGENT_DIR:-~/.pi/agent}/auth.json"], name: "pi", command: "pi-acp", npm: "pi-acp" },
+  // The npm ACP adapter keeps sessions in LangGraph MemorySaver.
+  { id: "deepagents", statePaths: [], name: "DeepAgents", command: "deepagents-acp", npm: "deepagents-acp" },
+  { id: "kiro", statePaths: ["~/.kiro/settings", "${XDG_DATA_HOME:-~/.local/share}/kiro-cli"], name: "Kiro CLI", command: "kiro-cli", args: ["acp", "--agent-engine=v3"], install: "见 kiro.dev/cli（或从 ACP 注册表下载）" },
+  { id: "bob", statePaths: ["~/.bob/tmp", "~/.bob/history", "~/.bob/logs"], stateFiles: ["~/.bob/settings/auth-secrets.json"], name: "IBM Bob", command: "bob", args: ["acp"], npm: "@ibm/bob" },
+  { id: "glm", statePaths: ["${XDG_CONFIG_HOME:-~/.config}/glm-acp-agent", "${XDG_STATE_HOME:-~/.local/state}/glm-acp-agent"], name: "GLM", command: "glm-acp-agent", npm: "glm-acp-agent" },
 ];
 
 /**

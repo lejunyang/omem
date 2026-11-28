@@ -1,8 +1,13 @@
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { openAcp, pickMode } from "../src/agents/acp.ts";
-import { acpCatalog, npxProfile, platformKey, registryOptions, type RegistryAgent } from "../src/agents/catalog.ts";
+import { accountOnlyCatalog, acpCatalog, npxProfile, platformKey, registryOptions, type RegistryAgent } from "../src/agents/catalog.ts";
 import { agentProfileSchema, builtinProfiles, allProfiles, configSchema } from "../src/core/config.ts";
+import { ownRun } from "../src/agents/own-run.ts";
+import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { testApp } from "./helpers.ts";
 import { codexArgs } from "../src/agents/cli.ts";
 
 describe("ACP agent catalog", () => {
@@ -29,6 +34,36 @@ describe("ACP agent catalog", () => {
     expect(ids).toEqual(expect.arrayContaining(["gemini", "antigravity", "copilot", "qwen", "cursor", "opencode", "goose", "kimi", "codebuddy", "droid"]));
     expect(builtinProfiles.find(p => p.id === "antigravity")).toMatchObject({ transport: "acp", command: "agy", args: ["acp"] });
     expect(acpCatalog.length).toBeGreaterThan(20);
+  });
+
+  it("declares the writable state of every built-in local backend", () => {
+    for (const entry of [...acpCatalog, ...accountOnlyCatalog]) {
+      expect(entry.statePaths ?? entry.sessionHistory?.root, entry.id).toBeDefined();
+    }
+  });
+
+  it.skipIf(process.platform !== "linux").each([
+    ["antigravity", "XDG_CONFIG_HOME", "antigravity"],
+    ["grok", "GROK_HOME", "sessions"],
+  ])("%s mounts its state without granting the entire parent", (id, variable, subdir) => {
+    const app = testApp();
+    const root = mkdtempSync(join(tmpdir(), "backend-layout-"));
+    setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+    try {
+      app.config.agents.ownSandbox.mode = "require";
+      const cwd = join(app.home, "workspaces", "sample");
+      mkdirSync(cwd, { recursive: true });
+      const backend = builtinProfiles.find(p => p.id === id)!;
+      const profile = { ...backend, env: { [variable]: root } };
+      const plan = ownRun(app, profile, cwd, true).box!.plan;
+      expect(plan.rw).toContain(join(root, subdir));
+      expect(plan.rw).not.toContain(root);
+    } finally {
+      setSandboxSupportForTests(undefined);
+      rmSync(root, { recursive: true, force: true });
+      app.db.close();
+      rmSync(app.home, { recursive: true, force: true });
+    }
   });
 
   it("npx profile and registry options", () => {
