@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 回补时回扫一段接一段（2026-11-28）
+
+`src/agents/outcome-review.ts` 的运行交完一段、回补还没完时立刻排下一段，不再等巡检的下一个节拍（原来一刻钟只跑一段，每段三四分钟）。这一段一次回答都没交时不接着排，留给巡检。
+
 ## 沙箱在启动前报告后端与命令的登录目录冲突（2026-11-28）
 
 从 `src/agents/credential-registry.ts` 的 `checkBackendCommandState` 读起。本人、成员及借用账号启动 Linux 沙箱时检查两个路径是否相同或互相包含。冲突时提示分开供给独立凭据或改用其他后端。
