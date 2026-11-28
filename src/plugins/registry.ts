@@ -612,17 +612,22 @@ setPluginSpecSource({
   raw: specRaw,
 });
 
-/** Seed missing skills and refresh untouched copies of bundled skills. */
+/**
+ * Seed missing skills and refresh the copies this plugin seeded that nobody edited since. Refreshing
+ * needs a built-in or trusted plugin (its trust covers the skill files); a plugin whose code changed
+ * without a new confirmation, or a pack without code, only fills in what is missing.
+ */
 function seedSkills(app: App, p: LoadedPlugin) {
   const added: string[] = [];
   const updated: string[] = [];
   const origin = `skills of plugin ${p.manifest.id}: `;
+  const refresh = p.source === "builtin" || p.trust === "trusted";
   for (const name of p.manifest.skills) {
     const src = join(p.dir, "skills", name, "SKILL.md");
     const dest = join(app.libraryDir, "_skills", name);
     if (!existsSync(src)) continue;
     const exists = existsSync(join(dest, "SKILL.md"));
-    if (exists && (p.source !== "builtin" || !canUpdateSeededSkill(app, name, dirname(src),
+    if (exists && (!refresh || !canUpdateSeededSkill(app, name, dirname(src),
       msg => ["omem: add " + origin, "omem: update " + origin].some(prefix => msg.startsWith(prefix) && msg.slice(prefix.length).split(", ").includes(name))))) continue;
     mkdirSync(dest, { recursive: true });
     // The files themselves, never what a link in the plugin points at (anything on this machine).

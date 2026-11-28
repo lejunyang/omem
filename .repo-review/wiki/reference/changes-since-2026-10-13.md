@@ -5,6 +5,11 @@ kind: reference
 updated: 2026-11-29
 ---
 
+## 已信任的插件也刷新自己播种的技能（2026-11-29）
+
+- `src/plugins/registry.ts` 的 `seedSkills`：原来只有内置插件刷新技能库里自己播种、没被改过的副本（`canUpdateSeededSkill`，按技能库 Git 记录里 `omem: add/update skills of plugin <id>: …` 那次的内容逐文件比），数据目录和链接的插件只补缺，插件里的技能改了也到不了技能库。现在信任状态是 `trusted`（含永久信任、按目录信任的链接插件）的也刷新；`changed` / `required` 和不带代码的场景包仍只补缺（信任的代码指纹覆盖 `skills/`）。
+- 技能库里同名、但不是这个插件播种的副本不刷新：要让它跟随插件，整目录移出后重新加载插件补进来。测试 `test/plugin-dev.test.ts`“技能：没信任时只补缺…”。
+
 ## 运行页能看提示词原文，Agent 页列表分组和搜索（2026-11-29）
 
 - **看提示词**：`sessionPrompt` 发出的 `prompt` 事件带上这一轮的说明和消息原文，`addRunEvent` 落库前把原文交给 `src/agents/prompt-log.ts`：按内容的 sha256 前 32 位存成 `<数据目录>/prompt-log/<前两位>/<哈希>.gz`，事件里只留 `kept: { system, message }` 两个哈希。同一份说明（后台角色几分钟跑一次）只有一个文件，再用到时刷新修改时间；超过 `agents.promptLog.days`（默认 14）没用到的由 `main.ts` 每小时清一次；单条超过 40 万字截断。这些文件只在本机，不进拉取和备份。

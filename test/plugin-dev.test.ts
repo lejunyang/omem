@@ -93,6 +93,32 @@ describe("omem plugin link", () => {
     expect(trustState(app, "devnotes", dir + "-copy", false)).toBe("changed");
   });
 
+  it("技能：没信任时只补缺；信任后刷新自己播种、没被改过的副本，改过的留着", async () => {
+    const dir = devPlugin();
+    writeFileSync(join(dir, "plugin.yaml"), "id: devnotes\nname: 开发中的笔记\nskills: [dev-guide, dev-notes]\n");
+    const skill = (root: string, name: string) => join(root, "skills", name, "SKILL.md");
+    for (const name of ["dev-guide", "dev-notes"]) {
+      mkdirSync(join(dir, "skills", name), { recursive: true });
+      writeFileSync(skill(dir, name), `${name} 第一版\n`);
+    }
+    await linkPlugin(app, dir);
+    await reloadLinked(app, "devnotes");
+    expect(getPlugin("devnotes").trust).toBe("required");
+    const lib = (name: string) => readFileSync(join(app.libraryDir, "_skills", name, "SKILL.md"), "utf8");
+    expect(lib("dev-guide")).toBe("dev-guide 第一版\n");
+    // Not trusted: a new version of the plugin's skill does not replace the copy.
+    writeFileSync(skill(dir, "dev-guide"), "dev-guide 第二版\n");
+    await reloadLinked(app, "devnotes");
+    expect(lib("dev-guide")).toBe("dev-guide 第一版\n");
+    // Trusted: the untouched copy follows the plugin; the one the owner edited stays his.
+    writeFileSync(join(app.libraryDir, "_skills", "dev-notes", "SKILL.md"), "我的笔记写法\n");
+    writeFileSync(skill(dir, "dev-notes"), "dev-notes 第二版\n");
+    await trustPlugin(app, "devnotes");
+    await reloadLinked(app, "devnotes");
+    expect(lib("dev-guide")).toBe("dev-guide 第二版\n");
+    expect(lib("dev-notes")).toBe("我的笔记写法\n");
+  });
+
   it("运行中的服务：改了文件自动重新加载，unlink 后卸下，目录不动", async () => {
     const dir = devPlugin();
     await linkPlugin(app, dir);
