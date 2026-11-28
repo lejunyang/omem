@@ -2,6 +2,7 @@ import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { App } from "../core/app.ts";
+import { credentialCommand } from "./credential-outcome.ts";
 import { gateOperation } from "./command-gate.ts";
 import { auditOperation, decide, digest, operationWho, type Operation } from "./operation-policy.ts";
 import { toolContextForToken, type ToolContext } from "./tools.ts";
@@ -52,7 +53,8 @@ export async function acpPermission(request: RequestPermissionRequest, opts: {
         const op = raw.kind === "command" ? { ...raw, executable: basename(raw.executable) } : raw;
         const { rule, action } = decide(opts.app, op, who);
         if (action === "log") auditOperation(opts.app, op, who, rule, action, allowed ? "允许" : "拒绝");
-        if (action === "deny" || (action === "approve" && allowed)) {
+        const judged = !rule && op.kind === "command" && op.argv && credentialCommand(op.executable, op.argv)?.command.judge;
+        if (action === "deny" || ((judged || action === "approve") && allowed)) {
           const wrapper = opts.guardedDir && op.kind === "command" ? resolve(opts.guardedDir, op.executable) : undefined;
           const throughWrapper = wrapper && raw.kind === "command" && existsSync(wrapper)
             && (raw.executable === basename(raw.executable) || resolve(raw.cwd!, raw.executable) === wrapper)

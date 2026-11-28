@@ -47,6 +47,8 @@ type CommandMatch = {
   /** Named options, e.g. { instance: "sample", verbose: true }. False requires absence. */
   options?: Record<string, string | boolean>;
 };
+export type CommandJudgeCall = { command: string; argv: readonly string[]; cwd: string; member: string; runId: string | null };
+export type CommandVerdict = { action: "allow" | "approve" | "deny" | "log"; title?: string; reason?: string; approver?: "caller" | "owner"; key?: string };
 /** One command-line tool the credential provides. */
 export type CredentialCommand = {
   name: string;
@@ -62,6 +64,8 @@ export type CredentialCommand = {
   state?: string[];
   /** Command login variable names (e.g. ACME_TOKEN) to restore for this invocation in the executor. */
   loginEnv?: string[];
+  /** Called after enabled operation rules, with the caller's read-only credential context. */
+  judge?(call: CommandJudgeCall, ctx: CredentialContext): Promise<CommandVerdict | null> | CommandVerdict | null;
   readOnly?: CommandMatch[];
   resource?: { match: CommandMatch; key: string }[];
   outcomes?: { unauthenticated?: CredentialOutcome[]; expired?: CredentialOutcome[]; denied?: CredentialOutcome[]; applyUrl?: string };

@@ -23,6 +23,7 @@ let app: ReturnType<typeof testApp>, server: Awaited<ReturnType<typeof startServ
 let token: string, runId: string, ownerHome: string, drop: () => void;
 const linuxSandbox = process.platform === "linux" && sandboxSupport().ok;
 const check = vi.fn<NonNullable<CredentialDef["check"]>>();
+const judge = vi.fn<NonNullable<import("../packages/plugin-sdk/credential.ts").CredentialCommand["judge"]>>();
 const verify = vi.fn<NonNullable<CredentialDef["precheck"]>>();
 /** The fixture's login; a test about a member who has not logged in yet keeps it waiting on the link. */
 let login: CredentialDef["login"] = async () => ({ user: "demo" });
@@ -49,6 +50,7 @@ beforeEach(async () => {
     const exact = req.command?.name === name && JSON.stringify(req.command.args) === JSON.stringify(args);
     return { allowed, verifiedRead: allowed && exact ? true : undefined };
   });
+  judge.mockReset().mockReturnValue(null);
   login = async () => ({ user: "demo" });
   drop = registerCredential("fixture", { id: "account", name: "示例账号", login: (ctx, show) => login(ctx, show),
     check, precheck: verify, provides: { commands: [{ name, readOnly: [{ subcommand: ["show"] }], state: [".sample"],
@@ -409,4 +411,15 @@ it("成员的运行说明里写明这些命令用谁的登录由 omem 决定，�
   expect(commandLoginNote(app, "reader")).not.toContain("接着查");
   app.config.credentials.ownerFallback = true;
   expect(commandLoginNote(app, "reader")).toContain("接着查");
+});
+
+it("借用流程先执行调用者的插件判定，拒绝时不预检或借用", async () => {
+  const remove = registerCredential("guard", { id: "commands", name: "接口判定", login,
+    provides: { commands: [{ name, subcommand: ["show"], judge: (call, ctx) => judge(call, ctx) }] } });
+  try {
+    judge.mockReturnValue({ action: "deny", reason: "测试目标不可读取" });
+    expect(await gate()).toMatchObject({ decision: "deny" });
+    expect(judge.mock.calls[0][0]).toMatchObject({ member: "reader", runId, argv: args });
+    expect(verify).not.toHaveBeenCalled();
+  } finally { remove(); }
 });

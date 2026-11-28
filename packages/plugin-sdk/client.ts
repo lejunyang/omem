@@ -21,7 +21,7 @@ export type * from "./server";
 export type { PluginObject, PluginObjectAction, PluginObjectState, PluginObjectContext, PluginObjectApi, PluginConnection, PluginSignal, PluginHook, PluginHookRequest, PluginHookResult } from "./objects";
 export type * from "./hook.ts";
 export type { AgentLoginApi, AgentLoginContext, AgentLoginDef, AgentLoginResult } from "./agent-login";
-export type { CredentialApi, CredentialCommand, CredentialContext, CredentialDef, CredentialOutcome } from "./credential";
+export type { CommandJudgeCall, CommandVerdict, CredentialApi, CredentialCommand, CredentialContext, CredentialDef, CredentialOutcome } from "./credential";
 
 export type Omem = {
   plugin: string;

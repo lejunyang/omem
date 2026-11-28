@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { z } from "zod";
-import type { CredentialContext } from "../../packages/plugin-sdk/credential.ts";
+import type { CommandJudgeCall, CommandVerdict, CredentialCommand, CredentialContext } from "../../packages/plugin-sdk/credential.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { activeUser, findUser, OWNER, userName } from "../core/users.ts";
@@ -215,6 +215,20 @@ function precheckSubject(app: App, user: string, kind: string) {
   const email = findUser(app, user)?.email ?? undefined;
   return { ...(account ? { account } : {}), ...(email ? { email } : {}) };
 }
+const verdictSchema = z.object({
+  action: z.enum(["allow", "approve", "deny", "log"]), title: z.string().max(300).optional(),
+  reason: z.string().max(1000).optional(), approver: z.enum(["caller", "owner"]).optional(), key: z.string().min(1).max(1024).optional(),
+}).strict().nullable();
+
+export async function judgeCredential(app: App, method: CredentialMethod, judge: NonNullable<CredentialCommand["judge"]>, call: CommandJudgeCall): Promise<CommandVerdict | null> {
+  try {
+    return await timed(method, 3000, async signal =>
+      verdictSchema.parse(await judge(call, context(app, call.member, method, signal, "check"))));
+  } catch {
+    return { action: "approve", title: "命令需要人工核对", reason: "插件判定失败（异常、超时或返回值无效）" };
+  }
+}
+
 export function precheckCredential(app: App, holder: string, m: CredentialMethod, resource: string, user: string, command?: { name: string; args: readonly string[] }) {
   const check = m.precheck!;
   const subject = precheckSubject(app, user, m.kind);
