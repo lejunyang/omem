@@ -41,6 +41,7 @@ import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE, doubaoFeatures } from "./doubao-c
 import { dropUnavailable, issueToolToken, onToolTokenRevoked, revokeToolToken, toolList } from "./tools.ts";
 import { agentRunError, aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
+import { pluginSourceSpaces } from "../plugins/registry.ts";
 import { trimTools } from "../auth/tools.ts";
 import { agentIndex, listAgentSpecs, DEFAULT_SPEC_TOOLS, skillIndex, skillsOutsideScope, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
 import { expandTools, ROLE_TOOLS } from "./tool-help.ts";
@@ -599,6 +600,7 @@ export function prepareRun(
   const allowed = scopeFor(app, userId, input.readScope ?? null);
   const related = guest ? [] : relatedSpaces(app, space.id).filter((r) => !allowed || allowed.includes(r.space));
   const readable = scoped ? [...new Set([...scoped, ...related.map((r) => r.space), ...(input.alsoRead ?? []).filter((id) => !allowed || allowed.includes(id))])] : null;
+  const sourceSpaces = spec?.plugin ? pluginSourceSpaces(app, spec.plugin, userId)?.filter(id => (!allowed || allowed.includes(id)) && (!input.spaces || input.spaces.includes(id))) : undefined;
   const writable = input.boardAccess === "read" ? [] : scoped ?? undefined;
   trimTools(app, userId, tools, { spaces: readable, writable });
   // Feishu posting: the owner's own runs may post anywhere they are asked to; others only where their thread lives.
@@ -693,7 +695,7 @@ export function prepareRun(
   // Both processes see this turn's /tmp; the executor keeps its own scratch below it.
   const privateTmp = commandSandbox && canonical(mkdtempSync(join(tmpdir(), "omem-command-")));
   if (commandSandbox) commandSandbox.workspace.privateTmp = privateTmp;
-  const token = issueToolToken({ commandSandbox, commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const token = issueToolToken({ commandSandbox, commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, sourceSpaces, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
   if (privateTmp) {
     const off = onToolTokenRevoked(token, () => {
       off();

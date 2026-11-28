@@ -2585,6 +2585,7 @@ export const migrations: readonly string[] = [
      where status='pending' and json_extract(context,'$.supervisorTaskId') is not null;
    create index item_flows_unfinished on item_flows(item_id) where ended_at is null;
    create index if not exists runs_done_code_verdict on runs(json_extract(output,'$.verdict')) where kind='code' and status='done';`,
+  `create index if not exists sources_recent_in_space on sources(space_id, updated_at desc) where deleted_at is null;`,
 ];
 
 export type Db = DatabaseSync;

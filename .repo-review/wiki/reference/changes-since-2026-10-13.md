@@ -5,6 +5,16 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 英语陪练的默认读范围和跨设备出处（2026-11-28）
+
+- 材料空间留空时沿用档案读范围，选定后可读所选空间及插件自己的空间。读范围从 `src/plugins/blocks.ts` 的 `materialSpaceScope` 看起。
+- 设备拉取重排聊天行号后，开题时按本地行号核对单行出处，题目和画像都保存完整行号区间。见 `plugins/english/materials.ts`。
+
+## 英语陪练用材料出题与今日学习（2026-11-28）
+
+- 从 `plugins/english/server.ts` 看题目、口语简报、评价及每日课程，从 `materials.ts` 看引用核对与去重。表达跟着画像里的知识点复习，语音模型收到匿名简述。
+- `src/plugins/settings.ts` 和 `src/agents/runner.ts` 限定材料读取范围。规则 `plugins/english/rules/daily-lesson.yaml` 初次导入停用；启用后每天准备课程并用宿主通知发链接。页面数据约定在 `docs/v2/plugins.md` 的“材料出处和今日学习”。
+
 ## 交回的报告只存报告本身，网页上折叠（2026-11-28）
 
 `run_agent` 的报告交回会话时（`src/agents/wakes.ts` 的 `returnChildReport`），会话里那条消息的正文只有报告；“按报告给本会话写回复……stay_quiet”这段说明放在 `meta.wake.note`，`meta.wake.report` 记下是哪个 Agent、哪次运行。助手那一轮看到的内容没变：`renderMessages` 把说明拼回报告前面，署名“<Agent> 交回的报告（宿主转交，不是本人说的）”；摘要和 `read_conversation` 也按这个署名，不再记成“助理”。问答页把交回的报告、多 Agent 工作里各轮的报告和定时唤醒都收成一行，点开看正文；旧数据里正文带着说明的，展示时去掉说明只留报告。这类消息本来就不发到飞书。

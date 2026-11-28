@@ -8,9 +8,10 @@ space:
   kind: learning
   description: 英语学习的材料、练习记录和复习卡片
 agents: [tutor]
+rules: [daily-lesson]
 skills: [english-item-writing, english-speaking]
 voice: true
-tools: [search, read_source, list_sources, recall, remember, supersede, create_card, learning_progress]
+tools: [search, read_source, list_sources, recall, remember, supersede, create_card, learning_progress, notify]
 page:
   title: 英语练习
 settings:
@@ -47,3 +48,8 @@ settings:
     min: 5
     max: 300
     default: 30
+  - key: materialSpaces
+    label: 材料来自哪些空间
+    description: 选中的空间只供陪练读原件。留空按场景和画像练习。
+    type: source-spaces
+    default: []

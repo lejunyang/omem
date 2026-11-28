@@ -32,7 +32,7 @@ export type AgentLoginContext = {
   /** One secret omem keeps for the plugin per person and backend (in its vault, never in the account folder), such as a refresh token. */
   secret: { get(): Promise<string | null>; set(value: string | null): Promise<void> };
   /** The plugin's own settings (the owner's values from 设置 → 插件, manifest `settings`, defaults filled in). */
-  settings: Record<string, string | number | boolean>;
+  settings: Record<string, string | number | boolean | string[]>;
   /** Aborted when the login times out (11 minutes) or the person cancels or logs out. */
   signal: AbortSignal;
 };
@@ -52,5 +52,5 @@ export type AgentLoginDef = {
 export type AgentLoginApi = {
   agentLogin(def: AgentLoginDef): void;
   /** The owner's values of this plugin's settings; read when needed so a change takes effect without reloading. In-process plugins only. */
-  settings(): Record<string, string | number | boolean>;
+  settings(): Record<string, string | number | boolean | string[]>;
 };

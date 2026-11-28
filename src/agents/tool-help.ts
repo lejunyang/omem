@@ -83,6 +83,7 @@ export const TOOL_GROUPS: { capability: ToolCapability; id: string; label: strin
   { id: "plugins", capability: "owner", label: "插件", doc: "plugins", tools: ["plugin_query", "plugin_put"] },
   // Filled by the plugin of the same id when it loads (connect_list, connect_read…): roles name the group
   // before the plugin is there, and its tools come with it.
+  { id: "english", capability: "owner", label: "英语练习与今日学习", doc: "learning", tools: [] },
   { id: "connect", capability: "owner", label: "已连接平台的读取与同步", doc: "connect", tools: [] },
   // Filled by plugins whose object kinds declare actions (github_merge_pull_request…): the same tools as
   // the buttons on an item's object cards, each under its own approval rung (src/flows/object-actions.ts).

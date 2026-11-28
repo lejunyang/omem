@@ -751,6 +751,12 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 本人的设置存在插件记录的保留集合 `_settings` 里，按清单 `settings` 校验（单选只能是列出的值，数字在范围内），插件代码用 `ctx.settings()` 读，Agent 和 `plugin_query` 读不到这个集合。
 
+英语等内置插件升级时，宿主会刷新仍与最初播种或上次更新一致的技能。本人编辑过的技能继续使用本人版本。
+
+清单可以声明一个材料范围设置（如 `{ key: materialSpaces, label: 材料来自哪些空间, type: source-spaces, default: [] }`）。设置接口的 `fields[].options` 是当前用户可选的 `{ value: 空间id, label: 名称 }` 列表，保存值为 id 数组。留空时，三个原件工具 `search`、`list_sources`、`read_source` 沿用档案原有的只读范围。选择材料空间后，这三个工具可读所选空间和插件自己的空间，仍受用户权限及本轮授权约束。取消材料授权当场生效，清空选择后恢复档案范围。外壳的多选控件待接入。
+
+进程内插件用 `ctx.materialSources(ids)` 批量核对当前可读原件的标题和行数。内容块的 `prepare(data, ctx, warnings)` 可以规范引用并向调用者报告被去掉的出处。需要一起提交的多条插件记录可放在 `ctx.store.transaction(() => …)` 的同步回调中。
+
 逐题的作答、统计这类数据放插件存储，不写进记忆；偏好（“想多练听力”“喜欢商务场景”）由档案写成专属记忆。
 
 ## 页面
@@ -794,6 +800,14 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 档案 `english-tutor` 按学习者画像出题、看提交结果点评、调整下一组。
 
+### 材料出处和今日学习
+
+- 题目、口语块、口语记录和评价可带 `material: { ref, title, summary }`。ref 保存为 `src:<id>#L起-L止`。从设备快照拉取的单行简写（如 `#L8`）核对后写作 `#L8-L8`。title 取自原件，summary 是陪练改写的中文简述。语音说明只采用简述。材料题的 `expression: { zh, en }` 随作答计入第一个知识点；口语评分按各 point 的 expression 记录。画像里 weak / due 的 expression 还含 material。
+- `english_snapshot({ format: "json" })` 提供 `settings.materialSpaces`、`recentMaterials: [{ sourceId, ref, title, summary, lastUsedAt }]`、最近课程场景 recentScenes，以及 `todayLesson: { date, ready, theme?, link }`。题组提交、入题库、编课或安排口语时更新使用记录，同一原件取最新一次，最多 60 份。
+- 规则“英语 · 今日学习”首次导入后停用，默认本人时区 08:00。启用后陪练先用 `list_sources(space, recent_days: 2)` 找近期原件，按行阅读，在 `english_lesson` 交课成功后用 `notify` 发送链接 `#/plugin/english?lesson=YYYY-MM-DD`。
+- 页面用 `GET /api/plugins/english/data/lessons?key=YYYY-MM-DD` 读取 `{ data: { date, updatedAt, theme, expressions: [{ zh, en, material? }], quiz: { title, intro?, items }, speaking: { scene, goal?, material? } } | null }`。题目沿用题库形状，含参考答案；练习时用 `english_next({ session_id, lessonDate })` 打开隐藏答案的题组，口语用 `english_speaking_start({ session_id, ...speaking })`。材料链接、课程卡片与多选设置由页面接入。
+- 集合 lessons 每天一份；同日重生成同时替换当天的题库条目（bank 条目的 lessonDate 为日期）。满库时，旧课程题仍可从对应日期练习；优先腾出旧课程在题库里的位置。普通备题占满 300 条时，另保留当天这一组（最多 20 题）。
+
 **题型**（`english_quiz` 的 `items[].type`）：
 
 | 类型 | 页面 | 判分 |
@@ -807,7 +821,7 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 **口语对话**（页面上“新练习”里和做题并列的一种方式）：选场景（可写这次想刻意练的说法），和语音模型把场景演一遍。
 
-- 一次口语练习是一个内容块 `speaking`（`{ scene, goal? }`）：页面用 `english_speaking_start` 放进会话（会话标题以“口语 · ”开头），陪练也可以用 `english_speaking` 交出一个。
+- 一次口语练习是一个内容块 `speaking`（`{ scene, goal?, material? }`）：页面用 `english_speaking_start` 放进会话（会话标题以“口语 · ”开头），陪练也可以用 `english_speaking` 交出一个。
 - 开始时页面调 `english_speaking_brief` 取给语音模型的说明：扮演场景里的另一个人、按本人的口语等级说话（还没有就用练得最多的那项技能的等级）、把薄弱的单词和短语自然地带进对话、口音跟设置走、本人用中文问时简短用中文答再回到英文、中途不逐句纠错。然后 `omem.voice()`。
 - 结束后对话记录作为这个块的答案提交：插件存进 `speaking` 记录，消息“【口语练习】……对话记录……”交给陪练；一句没说的不交，块留着可以再开始。
 - 陪练按技能 `english-speaking` 评价，用 `english_speaking_grade` 交：CEFR 等级、四项 1–5 分（流利度、语法、词汇、得体，看不出的写 null）、给本人看的评价、涉及的知识点。等级把画像里的“口语”分数拉向它（第一次直接定，之后每次走 40%）；知识点按对错进画像，薄弱的之后会出现在题里。同一次再交一遍是更正，不重复计入。
@@ -826,7 +840,7 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 **出题方式**（设置“出题方式”，默认题库）：
 
-- **题库**：陪练用 `english_bank_add` 提前往题库（插件记录 `bank`，最多 300 题）里补题，标好场景、技能、等级和知识点。本人点“下一组”时，页面调 `english_next`，宿主当场按画像挑题放进会话，不用等模型：薄弱知识点 +3、该复习的 +2、同场景 +2、等级与本人相同或高一级 +1、低于本人 −1；同一类题不超过一半（翻译不超过四分之一，它要等陪练评分），同一知识点尽量不重复；挑走的题从题库删掉。题库里这个场景的题不到半组、或总数不够一组时不出，页面改请陪练现出。提交后的消息告诉陪练“不要出下一组，题库剩多少，补到约三组的量”，陪练这一轮只点评和补题。选了“侧重”的新练习也交给陪练现出。
+- **题库**：陪练用 `english_bank_add` 提前往题库（插件记录 `bank`，普通备题最多 300 题）里补题，标好场景、技能、等级和知识点。本人点“下一组”时，页面调 `english_next`，宿主当场按画像挑题放进会话，不用等模型：薄弱知识点 +3、该复习的 +2、同场景 +2、等级与本人相同或高一级 +1、低于本人 −1；同一类题不超过一半（翻译不超过四分之一，它要等陪练评分），同一知识点尽量不重复；挑走的题从题库删掉。题库里这个场景的题不到半组、或总数不够一组时不出，页面改请陪练现出。提交后的消息告诉陪练“不要出下一组，题库剩多少，补到约三组的量”，陪练这一轮只点评和补题。选了“侧重”的新练习也交给陪练现出。
 - **陪练现出**：每组由陪练用 `english_quiz` 出，最贴合刚才的结果，但每组要等一两分钟。
 
 其余设置：每组题数、朗读口音（美式 / 英式）和语速、每天目标题数（学习情况里显示今天完成了多少）。

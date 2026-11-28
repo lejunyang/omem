@@ -1,5 +1,5 @@
 import type { App } from "../core/app.ts";
-import { all, one, run } from "../core/db.ts";
+import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError, json, newId, now } from "../core/util.ts";
 
 /**
@@ -24,6 +24,7 @@ export function pluginStore(app: App, plugin: string, userId: string, spaceId: s
     return collection;
   };
   return {
+    transaction<T>(fn: () => T): T { return withinTx(app.db, fn); },
     get<T = Record<string, unknown>>(collection: string, key: string): T | null {
       const r = one<Row>(app.db, "select * from plugin_records where id = ?", recordId(plugin, userId, check(collection), key));
       return r ? toRecord<T>(r).data : null;

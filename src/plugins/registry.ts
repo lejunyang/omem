@@ -19,14 +19,14 @@ import { saveConfig } from "../core/config.ts";
 import { commitLibrary } from "../core/git.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
-import { agentSpecSchema, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
+import { agentSpecSchema, canUpdateSeededSkill, setPluginSpecSource, splitFrontmatter, type AgentSpec } from "../agents/specs.ts";
 import { CORE_TOOLS, TOOL_GROUPS, expandTools } from "../agents/tool-help.ts";
 import { registerTool, saveSourceFor, toolList, unregisterTools, watchesFor, type ToolContext } from "../agents/tools.ts";
 import { platformList, registerPlatform } from "./platforms.ts";
 import { pluginObjectKinds, registerObject, withObjectActions } from "./objects.ts";
 import { describeHooks, registerHook } from "./hooks.ts";
 import { htmlToMarkdown } from "../sources/html.ts";
-import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
+import { blockTool, materialSpaceScope, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
 import { acceptCredentialDeclarations, codeHash, setTrust, setTrustPermanent, trustMode, trustPermanent, trustState, type RunMode } from "./trust.ts";
@@ -185,12 +185,18 @@ export function getPlugin(id: string) {
   return p;
 }
 
+/** Only source-reading tools receive this per-user grant. */
+export function pluginSourceSpaces(app: App, id: string, userId: string): string[] | undefined {
+  const p = findPlugin(id);
+  if (p?.env.sourceSetting) return materialSpaceScope(p.env, p.env.settings(app, userId));
+}
+
 /** A plugin's `whenConnected` tools: for people with a working connection to one of its connectors. */
 export const connectedTo = (plugin: string) => (app: App, userId: string) => listConnections(app, userId).some((c) => c.status === "active" && c.provider.startsWith(`${plugin}-`));
 
 /** The ToolContext of a plugin tool's call, narrowed to what server.ts may see. */
 function asPlugin(env: PluginEnv, ctx: ToolContext) {
-  return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input), watches: watchesFor(ctx) };
+  return { ...pluginContext(ctx.app, env, { userId: ctx.userId ?? OWNER, spaceId: ctx.spaceId, runId: ctx.runId, actor: ctx.actor, sourceSpaces: ctx.sourceSpaces ?? ctx.spaces }), saveSource: (input: PluginSourceInput) => saveSourceFor(ctx, input), watches: watchesFor(ctx) };
 }
 
 async function importServer(dir: string, m: PluginManifest, source: LoadedPlugin["source"]): Promise<PluginRegister | null> {
@@ -235,6 +241,8 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     env: {
       id: manifest.id,
       title: manifest.page?.title ?? manifest.name,
+      spaceId: manifest.space?.id,
+      sourceSetting: manifest.settings.find(f => f.type === "source-spaces")?.key,
       def: (kind) => blocks.get(kind),
       settings: (app, userId) => pluginSettings(app, manifest.id, manifest.settings, userId),
       sessionFor: (spec) => {
@@ -491,7 +499,10 @@ function unloadCode(p: LoadedPlugin) {
   p.slots.splice(0);
   stopPluginServices(p.manifest.id);
   const group = TOOL_GROUPS.findIndex((g) => g.id === p.manifest.id);
-  if (group >= 0) TOOL_GROUPS.splice(group, 1);
+  if (group >= 0) {
+    if (TOOL_GROUPS[group].doc) TOOL_GROUPS[group].tools = [];
+    else TOOL_GROUPS.splice(group, 1);
+  }
 }
 
 /** Its services and streams are usable only when its code may run. */
@@ -595,19 +606,25 @@ setPluginSpecSource({
   raw: specRaw,
 });
 
-/** Skills ship with the plugin and are copied into the library once, like the built-in ones. */
+/** Seed missing skills and refresh untouched copies of bundled skills. */
 function seedSkills(app: App, p: LoadedPlugin) {
   const added: string[] = [];
+  const updated: string[] = [];
+  const origin = `skills of plugin ${p.manifest.id}: `;
   for (const name of p.manifest.skills) {
     const src = join(p.dir, "skills", name, "SKILL.md");
     const dest = join(app.libraryDir, "_skills", name);
-    if (!existsSync(src) || existsSync(join(dest, "SKILL.md"))) continue;
+    if (!existsSync(src)) continue;
+    const exists = existsSync(join(dest, "SKILL.md"));
+    if (exists && (p.source !== "builtin" || !canUpdateSeededSkill(app, name, dirname(src),
+      msg => ["omem: add " + origin, "omem: update " + origin].some(prefix => msg.startsWith(prefix) && msg.slice(prefix.length).split(", ").includes(name))))) continue;
     mkdirSync(dest, { recursive: true });
     // The files themselves, never what a link in the plugin points at (anything on this machine).
     cpSync(dirname(src), dest, { recursive: true, filter: (from) => !lstatSync(from).isSymbolicLink() });
-    added.push(name);
+    (exists ? updated : added).push(name);
   }
-  if (added.length) commitLibrary(app.libraryDir, `omem: add skills of plugin ${p.manifest.id}: ${added.join(", ")}`);
+  if (added.length) commitLibrary(app.libraryDir, `omem: add ${origin}${added.join(", ")}`, added.map(name => `_skills/${name}`));
+  if (updated.length) commitLibrary(app.libraryDir, `omem: update ${origin}${updated.join(", ")}`, updated.map(name => `_skills/${name}`));
 }
 
 /**

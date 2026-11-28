@@ -1,0 +1,11 @@
+name: 英语 · 今日学习
+description: 每天早上按最近的材料和学习进度准备一组题、几条表达和一个口语场景。
+enabled: false
+spaceId: english
+trigger: { event: schedule, cron: '0 8 * * *' }
+judge: code
+actions:
+  - type: agent
+    spec: tutor
+    reply: none
+    task: 准备今日学习。先看 english_snapshot，按档案说明挑选材料和新场景，调用 english_lesson。保存成功后用 notify 通知本人一次，link 照抄工具返回的课程链接。通知成功后用 stay_quiet 结束。

@@ -2,20 +2,27 @@ import { describe, expect, it } from "vitest";
 import { deleteAgentSpec, findAgentSpec, listAgentSpecs, listSkills, readRaw, saveAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { all, one, run } from "../src/core/db.ts";
-import { findSpace } from "../src/core/spaces.ts";
+import { mergeLibrary } from "../src/core/pull.ts";
+import { prepareRun } from "../src/agents/runner.ts";
+import { upsertSource } from "../src/sources/store.ts";
+import { listRules } from "../src/rules/store.ts";
+import { savePluginSettings } from "../src/plugins/settings.ts";
+import { createUser } from "../src/core/users.ts";
+import { createSpace, findSpace, relateSpaces, updateSpace } from "../src/core/spaces.ts";
 import { createSession, sessionView, submitBlock } from "../src/plugins/blocks.ts";
-import { describePlugin, getPlugin, loadPlugins, setPluginIcon } from "../src/plugins/registry.ts";
+import { describePlugin, getPlugin, loadPlugins, setPluginEnabled, setPluginIcon } from "../src/plugins/registry.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { webLink } from "../src/core/util.ts";
 import { levelOf, nextRating, normalize, pickFromBank, snapshot, wordAccuracy, type BankEntry } from "../plugins/english/learner.ts";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { commitLibrary, ensureLibraryRepo } from "../src/core/git.ts";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 async function englishApp() {
   const app = testApp();
-  await loadPlugins(app);
+  await loadPlugins(app, undefined, manifest => manifest.id === "english");
   return app;
 }
 
@@ -56,6 +63,20 @@ describe("plugins", () => {
     expect(findAgentSpec(app, "english-tutor")).toMatchObject({ description: "我的英语陪练", plugin: "english" });
     deleteAgentSpec(app, "english-tutor");
     expect(findAgentSpec(app, "english-tutor")!.description).not.toBe("我的英语陪练");
+  });
+
+  it("refreshes seeded tutor skills on upgrade and preserves an edited copy", async () => {
+    const app = await englishApp();
+    ensureLibraryRepo(app.libraryDir);
+    const skill = (name: string) => join(app.libraryDir, "_skills", name, "SKILL.md");
+    writeFileSync(skill("english-item-writing"), "old writing guide\n");
+    writeFileSync(skill("english-speaking"), "old speaking guide\n");
+    commitLibrary(app.libraryDir, "omem: add skills of plugin english: english-item-writing, english-speaking");
+    writeFileSync(skill("english-speaking"), "my speaking guide\n");
+    await setPluginEnabled(app, "english", false);
+    await setPluginEnabled(app, "english", true);
+    expect(readFileSync(skill("english-item-writing"), "utf8")).toContain("材料题");
+    expect(readFileSync(skill("english-speaking"), "utf8")).toBe("my speaking guide\n");
   });
 
   it("a quiz goes to the page without its answers; a submission is graded, recorded and reaches the tutor", async () => {
@@ -150,8 +171,8 @@ describe("plugins", () => {
     const server = await startServer(app, { port: 0, quiet: true });
     try {
       const got = (await server.inject({ url: "/api/plugins/english/settings" })).json();
-      expect(got.values).toEqual({ source: "bank", quizSize: "8", voice: "en-US", rate: "1", dailyGoal: 30 });
-      expect(got.fields.map((f: { key: string }) => f.key)).toEqual(["source", "quizSize", "voice", "rate", "dailyGoal"]);
+      expect(got.values).toEqual({ source: "bank", quizSize: "8", voice: "en-US", rate: "1", dailyGoal: 30, materialSpaces: [] });
+      expect(got.fields.map((f: { key: string }) => f.key)).toEqual(["source", "quizSize", "voice", "rate", "dailyGoal", "materialSpaces"]);
       expect((await server.inject({ method: "PUT", url: "/api/plugins/english/settings", payload: { quizSize: "7" } })).statusCode).toBe(400);
       expect((await server.inject({ method: "PUT", url: "/api/plugins/english/settings", payload: { dailyGoal: 1 } })).statusCode).toBe(400);
       expect((await server.inject({ method: "PUT", url: "/api/plugins/english/settings", payload: { nope: 1 } })).statusCode).toBe(400);
@@ -164,6 +185,150 @@ describe("plugins", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("limits tutor material tools to the selected readable spaces and keeps their writes in English", async () => {
+    const app = await englishApp();
+    app.baseUrl = "http://127.0.0.1:1";
+    const spec = findAgentSpec(app, "english-tutor")!;
+    const fields = getPlugin("english").manifest.settings;
+    const save = (ids: string[]) => savePluginSettings(app, "english", fields, "owner", "english", { materialSpaces: ids });
+    const turn = () => toolContextForToken(app, prepareRun(app, { actor: { spec }, runId: null, spaceId: "english" }).token)!;
+    const source = (spaceId: string) => upsertSource(app, { spaceId, kind: "note", title: "行程", uri: "note:itinerary", text: "Choose a return date." }).id;
+    createSpace(app, { id: "notes", name: "关联笔记", kind: "project" });
+    relateSpaces(app, "english", "notes", { origin: "owner" });
+    const selected = source("personal"), own = source("english"), related = source("notes");
+    const initial = turn();
+    expect((await callTool(initial, "list_sources", {})).isError).toBe(false);
+    expect((await callTool(initial, "read_source", { source: own })).text).toContain("Choose a return date.");
+    expect((await callTool(initial, "search", { query: "return", scope: "sources" })).text).toContain(related);
+    expect(() => save(["missing"])).toThrow("不可选");
+    const member = createUser(app, { name: "学习者" });
+    expect(() => savePluginSettings(app, "english", fields, member.id, "english", { materialSpaces: ["personal"] })).toThrow("不可选");
+    save(["personal"]);
+    const ctx = turn();
+    expect(ctx.writable).toEqual(["english"]);
+    createSpace(app, { id: "overlay", name: "分支索引", kind: "worktree" });
+    updateSpace(app, "overlay", { settings: { repo: "personal" } });
+    expect((await callTool(ctx, "read_source", { source: source("overlay") })).isError).toBe(true);
+    expect((await callTool(ctx, "search", { space: "personal", query: "return", branch: "sample" })).isError).toBe(true);
+    expect((await callTool(ctx, "read_source", { source: selected })).text).toContain("Choose a return date.");
+    expect((await callTool(ctx, "read_source", { source: own })).text).toContain("Choose a return date.");
+    expect((await callTool(ctx, "list_sources", { space: "english", recent_days: 1 })).text).toContain(own);
+    expect((await callTool(ctx, "search", { query: "return", space: "english" })).text).toContain(own);
+    expect((await callTool(ctx, "read_source", { source: related })).isError).toBe(true);
+    expect((await callTool(ctx, "search", { query: "return", scope: "sources" })).text).toContain(selected);
+    expect((await callTool(ctx, "remember", { space: "personal", kind: "preference", content: "学习者更喜欢用英文安排短途旅行。" })).isError).toBe(true);
+    save([]);
+    expect((await callTool(ctx, "list_sources", { recent_days: 1 })).text).toContain(own);
+    expect((await callTool(ctx, "read_source", { source: related })).isError).toBe(false);
+    expect((await callTool(ctx, "read_source", { source: selected })).isError).toBe(true);
+  });
+
+  it("keeps verified citations and bilingual points, and drops invalid quiz and bank citations with a reason", async () => {
+    const app = await englishApp();
+    const { ctx, conversationId } = await tutorTurn(app);
+    const { env, manifest } = getPlugin("english");
+    createSpace(app, { id: "notes", name: "笔记", kind: "project" });
+    savePluginSettings(app, "english", manifest.settings, "owner", "english", { materialSpaces: ["notes"] });
+    const source = (spaceId: string) => upsertSource(app, { spaceId, uri: "packing", title: "打包笔记", kind: "note", text: "收拾剩下的饭菜。\n想请店员打包。" }).id;
+    const id = source("english"), other = source("personal");
+    const material = { ref: `src:${id}#L2-L2`, title: "打包笔记", summary: "请店员打包。" };
+    const expression = { zh: "打包", en: "to go" };
+    const items = [
+      { ...quiz.items[0], material: { ...material, title: "标题以原件为准" }, expression },
+      ...["bad", "src:missing#L1-L1", `src:${id}#L2-L1`, `src:${id}#L1-L3`, `src:${other}#L1-L1`].map(ref => ({ ...quiz.items[1], material: { ...material, ref } })),
+      { ...quiz.items[2], material: { title: "缺少引用" } },
+    ];
+    for (const tool of ["english_bank_add", "english_quiz"]) {
+      const out = await callTool(ctx, tool, { title: "打包", items });
+      expect(out.isError, out.text).toBe(false);
+      expect(out.text).toContain("去掉 6 处");
+    }
+    const store = pluginStore(app, "english", "owner", "english");
+    expect(store.list<BankEntry>("bank").filter(r => r.data.item.material)).toHaveLength(1);
+    const block = sessionView(app, env, conversationId, "owner").blocks[0];
+    expect(block.data.items[0].material).toEqual(material);
+    expect(block.data.items[0]).not.toHaveProperty("expression");
+    expect(block.data.items.slice(1).every((it: { material?: unknown }) => !it.material)).toBe(true);
+    await submitBlock(app, env, { userId: "owner", blockId: block.id, answers: { q1: 0 } });
+    expect(store.get("points", "phrase:to-go")).toMatchObject({ lastCorrect: false, expression: { ...expression, material } });
+    expect(snapshot(store).recentMaterials).toMatchObject([{ sourceId: id, ...material }]);
+  });
+
+  it("keeps a pulled single-line chat citation when opening and answering a bank quiz", async () => {
+    const app = await englishApp();
+    const peer = testApp();
+    createSpace(peer, { id: "english", name: "英语", kind: "learning" });
+    const chat = { spaceId: "english", kind: "chat" as const, uri: "chat:packing", title: "点餐讨论" };
+    const line = "请帮我把剩下的饭菜打包。";
+    const remote = upsertSource(peer, { ...chat, text: line }).id;
+    const local = upsertSource(app, { ...chat, text: [...Array.from({ length: 7 }, (_, i) => `讨论 ${i + 1}`), line].join("\n") }).id;
+    const material = { ref: `src:${remote}#L1-L1`, title: chat.title, summary: "请店员打包。" };
+    const expression = { zh: "打包", en: "to go" };
+    const remoteBank = pluginStore(peer, "english", "owner", "english");
+    const items = [{ ...quiz.items[0], material, expression }, ...quiz.items.slice(1), ...quiz.items.slice(1, 3)];
+    items.forEach((item, i) => remoteBank.put("bank", `q${i}`, { item, scene: "点餐", addedAt: new Date().toISOString() }));
+    peer.db.close();
+    mergeLibrary(app, peer.home);
+    const store = pluginStore(app, "english", "owner", "english");
+    expect(store.get("bank", "q0")).toMatchObject({ item: { material: { ref: `src:${local}#L8` } } });
+
+    const { manifest, env } = getPlugin("english");
+    savePluginSettings(app, "english", manifest.settings, "owner", "english", { materialSpaces: ["english"], quizSize: "6" });
+    const { conversationId, ctx } = await tutorTurn(app);
+    const opened = await callTool(ctx, "english_next", { session_id: conversationId, scene: "点餐" });
+    expect(opened.isError, opened.text).toBe(false);
+    const block = sessionView(app, env, conversationId, "owner").blocks[0];
+    const question = block.data.items.find((it: { type: string }) => it.type === "choice");
+    const canonical = { ...material, ref: `src:${local}#L8-L8` };
+    expect(question.material).toEqual(canonical);
+    await submitBlock(app, env, { userId: "owner", blockId: block.id, answers: { [question.id]: 1 } });
+    expect(store.get("points", "phrase:to-go")).toMatchObject({ expression: { ...expression, material: canonical } });
+  });
+
+  it("imports a disabled morning lesson rule, updates the same day's bank and opens the notified lesson", async () => {
+    const app = await englishApp();
+    const { ctx, conversationId } = await tutorTurn(app);
+    const { env, manifest } = getPlugin("english");
+    expect(listRules(app).find(rule => rule.origin?.plugin === "english")).toMatchObject({
+      enabled: false, trigger: { event: "schedule", cron: "0 8 * * *" }, actions: [{ type: "agent", spec: "english-tutor", task: expect.stringContaining("notify") }],
+    });
+    const expr = { zh: "留出时间", en: "leave time for" };
+    const lesson = { theme: "留出时间", expressions: [expr], quiz, speaking: { scene: "和同事安排一次试用" } };
+    const first = await callTool(ctx, "english_lesson", lesson);
+    expect(first.isError, first.text).toBe(false);
+    const store = pluginStore(app, "english", "owner", "english");
+    expect(store.count("bank")).toBe(4);
+    const date = store.list("lessons")[0].key;
+    const link = `#/plugin/english?lesson=${date}`;
+    expect(first.text).toContain(link);
+    expect((await callTool(ctx, "notify", { title: lesson.theme, body: "今天练习安排时间。", link })).isError).toBe(false);
+    expect(all(app.db, "select link from notifications where link=?", link)).toEqual([{ link }]);
+    const id = upsertSource(app, { spaceId: "english", kind: "doc", uri: "schedule", title: "安排", text: "预留答疑时间。" }).id;
+    savePluginSettings(app, "english", manifest.settings, "owner", "english", { materialSpaces: ["english"] });
+    expect((await callTool(ctx, "list_sources", { recent_days: 2 })).text).toContain(id);
+    const material = { ref: `src:${id}#L1-L1`, title: "安排", summary: "要留出答疑时间。" };
+    const update = await callTool(ctx, "english_lesson", { ...lesson, expressions: [{ ...expr, material }], speaking: { ...lesson.speaking, material }, quiz: { ...quiz, items: [{ ...quiz.items[0], material }] } });
+    expect(update.isError, update.text).toBe(false);
+    expect(store.count("lessons")).toBe(1);
+    expect(store.list("bank")).toMatchObject([{ key: `${date}:1`, data: { lessonDate: date, item: { material } } }]);
+    expect(store.get("lessons", date)).toMatchObject({ expressions: [{ ...expr, material }], speaking: { material } });
+    const bad = await callTool(ctx, "english_lesson", { ...lesson, quiz: { ...quiz, items: [{ ...quiz.items[0], answer: 99 }] } });
+    expect(bad.isError).toBe(true);
+    expect(store.count("bank")).toBe(1);
+    const snap = JSON.parse((await callTool(ctx, "english_snapshot", { format: "json" })).text);
+    expect(snap.todayLesson).toEqual({ date, ready: true, theme: lesson.theme, link });
+    const drawn = JSON.parse((await callTool(ctx, "english_next", { session_id: conversationId, lessonDate: date })).text);
+    expect(drawn).toMatchObject({ drawn: true, bank: 0 });
+    expect(sessionView(app, env, conversationId, "owner").blocks[0].data.items[0].material).toEqual(material);
+    for (let i = 0; i < 300; i++) store.put("bank", `ordinary-${i}`, { item: quiz.items[0], scene: "点餐" });
+    store.put("bank", "2000-01-01:1", { item: quiz.items[0], lessonDate: "2000-01-01", scene: "点餐" });
+    expect((await callTool(ctx, "english_lesson", lesson)).isError).toBe(false);
+    expect(store.get("bank", "2000-01-01:1")).toBeNull();
+    expect(store.count("bank")).toBe(304);
+    expect((await callTool(ctx, "english_lesson", lesson)).isError).toBe(false);
+    expect(store.count("bank")).toBe(304);
   });
 
   it("questions and views in a plugin session are its page's blocks: a form is checked and answered, a view is only shown", async () => {

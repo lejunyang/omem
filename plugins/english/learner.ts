@@ -1,3 +1,4 @@
+import { recentMaterials, type LearnedExpression, type Material } from "./materials.ts";
 import type { PluginStore } from "../../src/plugins/types.ts";
 
 /**
@@ -63,6 +64,7 @@ export type Attempt = {
   skill: Skill;
   level: Level;
   points: string[];
+  expression?: LearnedExpression;
   prompt: string;
   given: string;
   expected: string;
@@ -74,7 +76,7 @@ export type Attempt = {
   at: string;
 };
 export type SkillState = { rating: number; attempts: number; lastAt: string };
-export type PointState = { seen: number; correct: number; streak: number; lastScore: number; lastCorrect: boolean; lastAt: string; errors: Record<string, number> };
+export type PointState = { expression?: LearnedExpression; seen: number; correct: number; streak: number; lastScore: number; lastCorrect: boolean; lastAt: string; errors: Record<string, number> };
 
 /** Fold one graded attempt into the skill rating and its knowledge points. */
 export function applyAttempt(store: PluginStore, a: Attempt) {
@@ -82,15 +84,15 @@ export function applyAttempt(store: PluginStore, a: Attempt) {
   const s = store.get<SkillState>("skills", a.skill) ?? { rating: START_RATING, attempts: 0, lastAt: a.at };
   store.put("skills", a.skill, { rating: nextRating(s.rating, a.level, a.score), attempts: s.attempts + 1, lastAt: a.at });
   // The question's own verdict (a dictation needs 0.9), falling back to the pass line.
-  for (const point of a.points) applyPoint(store, point, a.correct ?? a.score >= PASS, a.score, a.errorTags, a.at);
+  for (const point of a.points) applyPoint(store, point, a.correct ?? a.score >= PASS, a.score, a.errorTags, a.at, point === a.points[0] ? a.expression : undefined);
 }
 
 /** One sighting of a knowledge point: in a question, or in what the learner said in a speaking practice. */
-export function applyPoint(store: PluginStore, point: string, ok: boolean, score: number, errorTags: string[], at: string) {
+export function applyPoint(store: PluginStore, point: string, ok: boolean, score: number, errorTags: string[], at: string, expression?: LearnedExpression) {
   const p = store.get<PointState>("points", point) ?? { seen: 0, correct: 0, streak: 0, lastScore: 0, lastCorrect: false, lastAt: at, errors: {} };
   const errors = { ...p.errors };
   for (const t of errorTags) errors[t] = (errors[t] ?? 0) + 1;
-  store.put("points", point, { seen: p.seen + 1, correct: p.correct + (ok ? 1 : 0), streak: ok ? p.streak + 1 : 0, lastScore: score, lastCorrect: ok, lastAt: at, errors });
+  store.put("points", point, { expression: expression ?? p.expression, seen: p.seen + 1, correct: p.correct + (ok ? 1 : 0), streak: ok ? p.streak + 1 : 0, lastScore: score, lastCorrect: ok, lastAt: at, errors });
 }
 
 /**
@@ -108,6 +110,7 @@ export function applySpeaking(store: PluginStore, level: Level, at: string) {
 /** A speaking practice as kept in the store (collection `speaking`, keyed by its block). */
 export type SpeakingRecord = {
   scene: string;
+  material?: Material;
   goal?: string;
   startedAt: string;
   endedAt: string;
@@ -115,7 +118,7 @@ export type SpeakingRecord = {
   transcript: { role: "user" | "assistant"; text: string }[];
   assessment: SpeakingAssessment | null;
 };
-export type SpeakingAssessment = { level: Level; scores: Record<string, number | null>; review: string; at: string };
+export type SpeakingAssessment = { material?: Material; level: Level; scores: Record<string, number | null>; review: string; at: string };
 
 const DAY = 86400_000;
 const localDate = (at: string | number) => {
@@ -143,13 +146,13 @@ export function snapshot(store: PluginStore, at = Date.now()) {
   const points = store.list<PointState>("points", { limit: 5000 });
   const weak = points
     .filter((p) => (p.data.seen >= 2 && p.data.correct / p.data.seen < 0.6) || !p.data.lastCorrect)
-    .map((p) => ({ point: p.key, seen: p.data.seen, accuracy: Math.round((p.data.correct / p.data.seen) * 100) / 100, lastScore: p.data.lastScore, lastAt: p.data.lastAt, errors: p.data.errors }))
+    .map((p) => ({ point: p.key, ...(p.data.expression ? { expression: p.data.expression } : {}), seen: p.data.seen, accuracy: Math.round((p.data.correct / p.data.seen) * 100) / 100, lastScore: p.data.lastScore, lastAt: p.data.lastAt, errors: p.data.errors }))
     .sort((a, b) => a.accuracy - b.accuracy || b.lastAt.localeCompare(a.lastAt))
     .slice(0, 15);
   // Answered right a few times in a row, then not seen for a while (1, 2, 4 … days, at most 30).
   const due = points
     .filter((p) => p.data.streak >= 1 && p.data.lastCorrect && at - Date.parse(p.data.lastAt) >= Math.min(30, 2 ** (p.data.streak - 1)) * DAY)
-    .map((p) => ({ point: p.key, streak: p.data.streak, lastAt: p.data.lastAt }))
+    .map((p) => ({ point: p.key, ...(p.data.expression ? { expression: p.data.expression } : {}), streak: p.data.streak, lastAt: p.data.lastAt }))
     .sort((a, b) => a.lastAt.localeCompare(b.lastAt))
     .slice(0, 15);
   const errorCount = new Map<string, number>();
@@ -170,6 +173,7 @@ export function snapshot(store: PluginStore, at = Date.now()) {
     return { date, count: mine.length, accuracy: rate(mine) };
   });
   return {
+    recentMaterials: recentMaterials(store),
     total: store.count("attempts"),
     today: daily[daily.length - 1].count,
     skills,
@@ -209,7 +213,7 @@ export function snapshotText(s: ReturnType<typeof snapshot>) {
 // ---------------------------------------------------------------- question bank
 
 /** A question the tutor wrote ahead of time; drawn into a set when the owner wants the next one. */
-export type BankEntry = { item: Record<string, unknown> & { type: string; skill: Skill; level: Level; points: string[] }; scene: string; addedAt: string };
+export type BankEntry = { item: Record<string, unknown> & { type: string; skill: Skill; level: Level; points: string[] }; scene: string; addedAt: string; lessonDate?: string };
 
 const TYPE_ORDER = ["choice", "cloze", "dictation", "translate"];
 

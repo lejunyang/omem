@@ -13,7 +13,7 @@ export type BlockStatus = "open" | "submitted" | "shown";
 export type PluginBlockState = { id: string; kind: string; data: any; status: BlockStatus; answers: Record<string, unknown> | null; result: any; conversationId: string; createdAt: string };
 
 /** The owner's settings for a plugin, as the manifest declares them (strings, numbers, booleans). */
-export type PluginSettings = Record<string, string | number | boolean>;
+export type PluginSettings = Record<string, string | number | boolean | string[]>;
 /** Messages from a plugin's platform enter the same inbox as built-in chat channels. */
 export type PluginChannelMessage = { chatId: string; topicId?: string; isGroup: boolean; senderId: string; text: string; messageId?: string; addressed?: boolean };
 export type PluginChannel = {
@@ -41,6 +41,8 @@ export type PluginContext = {
   store: PluginStore;
   /** The owner's settings for this plugin, defaults filled in. */
   settings(): PluginSettings;
+  /** Resolve source metadata in the material spaces this user granted to this call. */
+  materialSources(ids: string[]): Map<string, { title: string; lines: number }>;
   /** One of this plugin's blocks for this user (null when missing or someone else's). */
   block(id: string): PluginBlockState | null;
   /** Replace a block's result (after grading the open questions, say); the page refreshes. */
@@ -176,7 +178,7 @@ export type PluginBlock<S extends z.ZodObject = z.ZodObject> = {
   /** Display only (a chart): stored as shown, nothing to hand in. */
   display?: boolean;
   /** Normalize and check before storing (fill in ids…); throw to send the agent a reason. */
-  prepare?: (data: z.infer<S>) => z.infer<S>;
+  prepare?: (data: z.infer<S>, ctx: PluginContext, warnings: string[]) => z.infer<S>;
   /** What the page may see before submission: leave out the answers. */
   publicView?: (data: z.infer<S>) => unknown;
   grade?: (ctx: PluginContext & { blockId: string }, data: z.infer<S>, answers: Record<string, unknown>) => BlockGrade | Promise<BlockGrade>;

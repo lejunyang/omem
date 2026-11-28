@@ -129,6 +129,8 @@ export type ToolContext = {
   spaceId: string;
   /** Spaces the caller may read; null = all. */
   spaces: string[] | null;
+  /** Selected material spaces at the start of a plugin turn, for source tools only. */
+  sourceSpaces?: string[];
   /** Spaces the caller may write, when narrower than `spaces` (related spaces are read-only). */
   writable?: string[];
   /** Cross-device board writes include memories, pages and items only. */
@@ -242,6 +244,7 @@ function space(ctx: ToolContext, requested?: string | null) {
 /** In this run's read scope; a branch or delegation index goes with the repository it is over. */
 function canRead(ctx: ToolContext, id: string) {
   if (!ctx.spaces || ctx.spaces.includes(id)) return true;
+  if (ctx.sourceSpaces) return false;
   const repo = overlayRepo(ctx.app, id);
   return !!repo && ctx.spaces.includes(repo);
 }
@@ -831,6 +834,7 @@ def({
     "按目录浏览某空间的原件（不是全文检索）。不给 under 时列出顶层目录（知识库、飞书云文档、各类会话、网站、会议……）；under 给节点 key 列它下面 depth 层（默认 1），每行带节点 key、数量和关注程度。query/kind/level 筛选（level：focus 重点关注 / normal 一般 / reference 仅检索 / ignore 忽略）；给了 query 但没给 under 时按标题/路径平铺列出原件。",
   schema: z.object({
     space: z.string().optional(),
+    recent_days: z.number().int().min(1).max(30).optional().describe("列出最近几天新增或更新的原件，最新在前，可配 kind 或 query"),
     under: z.string().optional().describe("目录节点 key，如 wiki:<知识库id>、wn:<节点>、chat:group、chat:<会话id>、lark-drive、site:<域名>、dir:<路径>"),
     depth: z.number().int().min(1).max(4).optional(),
     query: z.string().optional(),
@@ -840,11 +844,12 @@ def({
   }),
   handler: (ctx, a) => {
     const sp = space(ctx, a.space);
-    if (a.under !== undefined || !a.query) return catalogListing(ctx, sp, a.under ?? "", a.depth ?? 1, { hiddenSources: hiddenSourceIds(ctx.app, ctx.userId ?? OWNER, sp), kind: a.kind, level: a.level, q: a.query }, a.limit ?? 200);
-    const r = listSources(ctx.app, { userId: ctx.userId, spaceId: sp, q: a.query, kind: a.kind, level: a.level, limit: a.limit ?? 200 });
+    if (a.recent_days && a.under !== undefined) throw new HttpError(400, "recent_days 按整个空间列出，请去掉 under");
+    if (a.under !== undefined || (!a.query && !a.recent_days)) return catalogListing(ctx, sp, a.under ?? "", a.depth ?? 1, { hiddenSources: hiddenSourceIds(ctx.app, ctx.userId ?? OWNER, sp), kind: a.kind, level: a.level, q: a.query }, a.limit ?? 200);
+    const r = listSources(ctx.app, { userId: ctx.userId, spaceId: sp, q: a.query, kind: a.kind, level: a.level, updatedSince: a.recent_days ? new Date(Date.now() - a.recent_days * 86400000).toISOString() : undefined, limit: Math.max(1, a.limit ?? 200) });
     // A replay arm does not see what was captured after the question or levels it was told to leave out.
     if (ctx.view) r.sources = r.sources.filter((s) => !sourceHidden(ctx.view, { captured_at: s.capturedAt, level: s.level?.level ?? null }));
-    return `共 ${r.total} 个原件${r.total > r.sources.length ? `，显示前 ${r.sources.length} 个` : ""}\n` + r.sources.map((s) => `- ${s.id} ${s.uri} (${s.kind}, ${s.lines} 行${s.attention ? `，${LEVEL_LABELS[s.attention as Level]}` : ""})`).join("\n");
+    return `共 ${r.total} 个原件${r.total > r.sources.length ? `，显示前 ${r.sources.length} 个` : ""}\n` + r.sources.map((s) => `- ${s.id} ${s.uri}${a.recent_days ? `「${s.title}」 ${s.updatedAt.slice(0, 10)}` : ""} (${s.kind}, ${s.lines} 行${s.attention ? `，${LEVEL_LABELS[s.attention as Level]}` : ""})`).join("\n");
   },
 });
 
@@ -7925,6 +7930,21 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
   const tool = tools.find((t) => t.name === name);
   if (!tool && MERGED_TOOLS[name]) return { text: `工具 ${name} 已并入 ${MERGED_TOOLS[name].into}：${MERGED_TOOLS[name].how}`, isError: true };
   if (!tool) return { text: `工具 ${name} 不可用`, isError: true };
+  if (ctx.plugin && ["search", "list_sources", "read_source"].includes(name)) {
+    const { pluginSourceSpaces } = await import("../plugins/registry.ts");
+    const selected = pluginSourceSpaces(ctx.app, ctx.plugin, ctx.userId ?? OWNER);
+    if (selected) {
+      const ceiling = ctx.sourceSpaces ?? ctx.spaces;
+      const spaces = selected.filter(id => !ceiling || ceiling.includes(id));
+      if (!spaces.length) return { text: "本轮没有可读的材料空间。", isError: true };
+      if (name === "search" && args && typeof args === "object" && "branch" in args && args.branch)
+        return { text: "材料检索只读所选空间已收录的版本。", isError: true };
+      ctx = { ...ctx, spaces, sourceSpaces: spaces, spaceId: spaces[0], writable: [] };
+      if (name === "search" && args && typeof args === "object" && !("space" in args)) args = { ...args, space: "*" };
+    } else if (ctx.sourceSpaces) {
+      ctx = { ...ctx, sourceSpaces: undefined };
+    }
+  }
   const scope = memberToolAccess(ctx.app, ctx.userId ?? OWNER, ctx)(name);
   if ("deniedCapability" in scope) return {
     text: `工具 ${name} 不可用：${scope.reason}（${scope.deniedCapability}）。请勿重试。`,
@@ -8200,7 +8220,10 @@ export function retargetToolToken(token: string, runId: string | null, turn?: st
   if (!ctx) return;
   ctx.runId = runId;
   const next = turn && turn !== token ? tokens.get(turn) : undefined;
-  if (next) ctx.tools = next.tools;
+  if (next) {
+    ctx.tools = next.tools;
+    ctx.sourceSpaces = next.sourceSpaces;
+  }
 }
 export function beginCommandTurn(token: string) {
   const ctx = tokens.get(token);

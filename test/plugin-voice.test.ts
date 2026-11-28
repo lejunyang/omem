@@ -6,6 +6,8 @@ import { callTool, issueToolToken, toolContextForToken } from "../src/agents/too
 import { setKey } from "../src/core/ai-keys.ts";
 import { roleNames } from "../src/core/config.ts";
 import { one, run } from "../src/core/db.ts";
+import { upsertSource } from "../src/sources/store.ts";
+import { savePluginSettings } from "../src/plugins/settings.ts";
 import { setVoiceFetchForTests } from "../src/core/voice.ts";
 import { createSession, sessionView, submitBlock } from "../src/plugins/blocks.ts";
 import { getPlugin, loadPlugins } from "../src/plugins/registry.ts";
@@ -87,10 +89,13 @@ describe("voice for plugin pages", () => {
     const { id: sessionId } = await createSession(app, { plugin: "english", agent: "english-tutor", spaceId: "english", userId: "owner", title: "口语 · 在餐厅点餐 · 2026/11/11" });
     const page = (tool: string, args: unknown) => callTool({ app, runId: null, spaceId: "english", spaces: null, tools: new Set([tool]), actor: "user", userId: "owner", plugin: "english" }, tool, args);
 
-    const started = await page("english_speaking_start", { session_id: sessionId, scene: "在餐厅点餐", goal: "用 Could I… 点餐" });
+    const id = upsertSource(app, { spaceId: "personal", kind: "note", uri: "cafe", title: "咖啡店", text: "试着请店员少放冰块。" }).id;
+    savePluginSettings(app, "english", getPlugin("english").manifest.settings, "owner", "english", { materialSpaces: ["personal"] });
+    const material = { ref: `src:${id}#L1-L1`, title: "咖啡店", summary: "练习点单时说明偏好。" };
+    const started = await page("english_speaking_start", { session_id: sessionId, material, scene: "在餐厅点餐", goal: "用 Could I… 点餐" });
     const { blockId } = JSON.parse(started.text) as { blockId: string };
     const view = sessionView(app, env, sessionId, "owner");
-    expect(view.blocks).toEqual([expect.objectContaining({ id: blockId, kind: "speaking", status: "open", data: { scene: "在餐厅点餐", goal: "用 Could I… 点餐" } })]);
+    expect(view.blocks).toEqual([expect.objectContaining({ id: blockId, kind: "speaking", status: "open", data: { material, scene: "在餐厅点餐", goal: "用 Could I… 点餐" } })]);
 
     // Some weak words from earlier questions go into the brief; the accent follows the settings.
     const store = pluginStore(app, "english", "owner", "english");
@@ -99,6 +104,8 @@ describe("voice for plugin pages", () => {
     expect(brief.instructions).toContain("Scene: 在餐厅点餐");
     expect(brief.instructions).toContain("Could I");
     expect(brief.instructions).toContain("to go");
+    expect(brief.instructions).toContain(material.summary);
+    expect(brief.instructions).not.toContain("试着请店员");
     expect(brief.instructions).toContain("American English");
 
     // Nothing said: not handed in, the block stays open for another try.
@@ -119,7 +126,7 @@ describe("voice for plugin pages", () => {
     expect(msg.text).toMatch(/^【口语练习】在餐厅点餐，约 4 分钟，学习者说了 2 段/);
     expect(msg.text).toContain("learner: I want a coffee, no ice.");
     expect(msg.text).toContain(`english_speaking_grade(block_id="${blockId}")`);
-    expect(store.get("speaking", blockId)).toMatchObject({ scene: "在餐厅点餐", assessment: null });
+    expect(store.get("speaking", blockId)).toMatchObject({ scene: "在餐厅点餐", material, assessment: null });
 
     // The tutor grades it: the card shows the assessment, the profile gets a speaking level and the points.
     const spec = findAgentSpec(app, "english-tutor")!;
@@ -131,13 +138,14 @@ describe("voice for plugin pages", () => {
       level: "A2",
       scores: { fluency: 3, grammar: 2, vocab: 2, fit: null },
       review: "**一句话结论**：能把事办成，want 直接说偏生硬。",
-      points: [{ point: "phrase:light-ice", correct: false, error_tag: "word-choice" }, { point: "phrase:to-go", correct: true }],
+      points: [{ point: "phrase:light-ice", expression: { zh: "少冰", en: "light ice" }, correct: false, error_tag: "word-choice" }, { point: "phrase:to-go", correct: true }],
     });
     expect(graded.text).toMatch(/A2，口语水平和 2 个知识点已更新/);
     const block = sessionView(app, env, sessionId, "owner").blocks[0];
-    expect(block.result.assessment).toMatchObject({ level: "A2", scores: { fluency: 3, grammar: 2, vocab: 2, fit: null } });
+    expect(block.result.assessment).toMatchObject({ material, level: "A2", scores: { fluency: 3, grammar: 2, vocab: 2, fit: null } });
     const snap = snapshot(store);
     expect(snap.skills.find((k) => k.skill === "speaking")).toMatchObject({ level: "A2", attempts: 1 });
+    expect(store.get("points", "phrase:light-ice")).toMatchObject({ expression: { zh: "少冰", en: "light ice", material } });
     expect(snap.weak.map((w) => w.point)).toContain("phrase:light-ice");
     expect(snap.speaking).toMatchObject({ total: 1, last: { scene: "在餐厅点餐", level: "A2" } });
     // A correction of the same assessment does not count twice.

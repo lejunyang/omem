@@ -19,7 +19,7 @@ import { loadSlot, slotsAt } from "./slots.ts";
 import { packChoices, packPlugin, packSchema } from "./pack.ts";
 import { setTrust } from "./trust.ts";
 import { ensureService, serviceStatus, stopService, streamUse } from "./services.ts";
-import { savePluginSettings } from "./settings.ts";
+import { savePluginSettings, settingsFields } from "./settings.ts";
 import { pluginStore } from "./store.ts";
 import { createHookSecret, describeHooks, pluginHook, revokeHookSecret } from "./hooks.ts";
 import { recentHookDeliveries } from "./hook-inbox.ts";
@@ -127,13 +127,13 @@ export function registerPluginRoutes(server: FastifyInstance, app: App, who: (re
   });
   server.get("/api/plugins/:id/settings", async (req) => {
     const p = plugin(req);
-    return { fields: p.manifest.settings, values: p.env.settings(app, who(req)) };
+    return { fields: settingsFields(app, p.manifest.settings, who(req)), values: p.env.settings(app, who(req)) };
   });
   server.put("/api/plugins/:id/settings", async (req) => {
     const p = plugin(req);
     const values = savePluginSettings(app, p.manifest.id, p.manifest.settings, who(req), p.manifest.space?.id ?? "personal", parse(z.record(z.string(), z.unknown()), req.body));
     app.emit({ type: "plugin", plugin: p.manifest.id, conversationId: "", settings: true });
-    return { fields: p.manifest.settings, values };
+    return { fields: settingsFields(app, p.manifest.settings, who(req)), values };
   });
   server.get("/api/plugins/:id/data/:collection", async (req) => {
     const p = plugin(req);
