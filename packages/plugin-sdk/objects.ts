@@ -8,6 +8,8 @@ export type PluginObjectContext = {
   connection(provider: string): Promise<PluginConnection | null>;
   emit(signal: PluginSignal): Promise<void>;
   settings(): Record<string, string | number | boolean | string[]>;
+  /** Save some of this user's values of the plugin's settings (checked against the manifest's fields; null resets one). Tool calls only. */
+  saveSettings(patch: Record<string, unknown>): Promise<Record<string, string | number | boolean | string[]>>;
 };
 export type PluginConnection = { account: string; scopes: string[]; base: string | null; fetch(path: string, init?: RequestInit): Promise<Response> };
 export type PluginSignal = { kind: string; keys: Record<string, unknown>; payload?: unknown };

@@ -215,7 +215,7 @@ export default function register(api: PluginApi) {
 }
 ```
 
-- `api.tool`：注册工具，名字必须以 `<id>_` 开头；`page: true` 的工具页面也能调。`ctx` 里有本次运行的用户、空间、运行 id，限定在本插件、本用户的存储 `ctx.store`，本人的设置 `ctx.settings()`，以及 `ctx.present(kind, data, 会话)`：不经 Agent 直接往本人的某个插件会话里放一个块（题库出题就是这样）。
+- `api.tool`：注册工具，名字必须以 `<id>_` 开头；`page: true` 的工具页面也能调。`ctx` 里有本次运行的用户、空间、运行 id，限定在本插件、本用户的存储 `ctx.store`，本人的设置 `ctx.settings()` 和 `ctx.saveSettings(patch)`（保存这次调用的人的几项设置，校验同 设置 → 插件，`null` 恢复默认，返回保存后的值；适合本人在对话里说“把这个加进名单”这类工具，隔离运行的插件同样能用），以及 `ctx.present(kind, data, 会话)`：不经 Agent 直接往本人的某个插件会话里放一个块（题库出题就是这样）。
 - `api.block`：注册一种内容块，宿主自动生成同名工具 `<id>_<kind>` 让 Agent 交出这种块（见下）。`display: true` 的块只展示、不用提交；否则要有 `grade`。
 - `api.tool` 的 `approval: true`：Agent 每次调用都先等本人批准（问本人的卡片 / 今天页，和 `approvals.tools` 同一套），用于点击、输入这类在机器上动手的工具。
 - `api.service(name).ensure()`：启动（如果没在运行）清单里声明的服务，返回 `{ url, token }`；请求带 `authorization: Bearer <token>`。
@@ -749,7 +749,7 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 表 `plugin_blocks`：插件自己的内容块（含答案）、提交的答案、判分结果、状态（open / submitted / shown）。提问和展示在 `asks` 和 `ui_views`。
 
-本人的设置存在插件记录的保留集合 `_settings` 里，按清单 `settings` 校验（单选只能是列出的值，数字在范围内），插件代码用 `ctx.settings()` 读，Agent 和 `plugin_query` 读不到这个集合。
+本人的设置存在插件记录的保留集合 `_settings` 里，按清单 `settings` 校验（单选只能是列出的值，数字在范围内），插件代码用 `ctx.settings()` 读、工具用 `ctx.saveSettings()` 改，Agent 和 `plugin_query` 读写不到这个集合。
 
 英语等内置插件升级时，宿主会刷新仍与最初播种或上次更新一致的技能。本人编辑过的技能继续使用本人版本。
 

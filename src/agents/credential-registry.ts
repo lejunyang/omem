@@ -34,7 +34,7 @@ const providesSchema = z.object({
     resource: z.array(z.object({ match, key: z.string().min(1).max(1024) }).strict()).max(64).optional(),
     outcomes: z.object({ unauthenticated: z.array(outcome).optional(), expired: z.array(outcome).optional(),
       denied: z.array(outcome).optional(), applyUrl: z.string().startsWith("$.").optional() }).strict().optional(),
-  }).strict()).max(32).default([]),
+  }).strict()).max(128).default([]),
 }).strict();
 /** Declarations use the same canonical path restrictions as the machine-login sandbox. */
 function stateRel(path: string) {

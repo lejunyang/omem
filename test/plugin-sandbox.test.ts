@@ -29,7 +29,7 @@ describe("isolated plugins", async () => {
   await loadPlugins(app);
   const dir = join(app.home, "plugins", "probe2");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\nconnectors: [{ provider: connect-github }]\npermissions: { retriever: true, reranker: true, reviewProvider: true, events: [item.status], write: true, platforms: [connect-probe] }\n");
+  writeFileSync(join(dir, "plugin.yaml"), "id: probe2\nname: 探针\nconnectors: [{ provider: connect-github }]\npermissions: { retriever: true, reranker: true, reviewProvider: true, events: [item.status], write: true, platforms: [connect-probe] }\nsettings: [{ key: blocked, label: 黑名单, type: text }]\n");
   writeFileSync(
     join(dir, "server.mjs"),
     `import { readFileSync } from "node:fs";
@@ -64,6 +64,11 @@ export default function register(api) {
     const body = c ? await (await c.fetch("/user")).json() : null;
     const saved = await ctx.saveSource({ uri: "probe:note/" + a.n, title: "记一笔", text: "第 " + a.n + " 次" });
     return [ctx.userId, JSON.stringify(await ctx.store.get("visits", "last")), body?.name ?? "未连接", saved.created].join(" | ");
+  } });
+  api.tool({ name: "probe2_block", description: "把接口加进黑名单", schema: z.object({ v: z.string() }), write: true, handler: async (ctx, a) => {
+    const saved = await ctx.saveSettings({ blocked: a.v });
+    try { await ctx.saveSettings({ nope: 1 }); } catch (e) { return saved.blocked + " | " + ctx.settings().blocked + " | " + e.message; }
+    return "没拒绝";
   } });
   api.platform({ provider: "connect-probe", readers: [{ kind: "file", label: "文件", id: "key", read: async (c, id) => {
     const f = await (await c.fetch("/v1/files/" + id)).json();
@@ -139,6 +144,13 @@ export default function register(api) {
     // The token was added by omem; the plugin never had it.
     expect(seen.at(-1)).toEqual({ url: "https://api.github.com/user", auth: "Bearer tok-ann" });
     expect(one<{ space_id: string }>(app.db, "select space_id from sources where uri = 'probe:note/2'")?.space_id).toBe("personal-ann");
+  });
+
+  it("saves its own settings through omem, for the person of the call, checked against the manifest", async () => {
+    // ctx.settings() is the snapshot taken when the call started; the saved values come back from saveSettings.
+    expect(await call("owner", "probe2_block", { v: "Shop.UpdateOrder" })).toMatch(/^Shop\.UpdateOrder \| .*\| .*没有设置项 nope/);
+    expect(getPlugin("probe2").env.settings(app, "owner")).toEqual({ blocked: "Shop.UpdateOrder" });
+    expect(getPlugin("probe2").env.settings(app, "ann")).toEqual({ blocked: "" });
   });
 
   it("serves its platform readers to watches", async () => {

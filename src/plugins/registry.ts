@@ -28,7 +28,7 @@ import { describeHooks, registerHook } from "./hooks.ts";
 import { htmlToMarkdown } from "../sources/html.ts";
 import { blockTool, materialSpaceScope, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
-import { pluginSettings, settingFieldSchema } from "./settings.ts";
+import { pluginSettings, savePluginSettings, settingFieldSchema } from "./settings.ts";
 import { acceptCredentialDeclarations, codeHash, setTrust, setTrustPermanent, trustMode, trustPermanent, trustState, type RunMode } from "./trust.ts";
 import { startSandbox } from "./sandbox.ts";
 import { forgetPluginToolCapabilities, setPluginToolCapabilities } from "../auth/tools.ts";
@@ -245,6 +245,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
       sourceSetting: manifest.settings.find(f => f.type === "source-spaces")?.key,
       def: (kind) => blocks.get(kind),
       settings: (app, userId) => pluginSettings(app, manifest.id, manifest.settings, userId),
+      saveSettings: (app, userId, patch) => savePluginSettings(app, manifest.id, manifest.settings, userId, manifest.space?.id ?? "personal", patch),
       sessionFor: (spec) => {
         const s = p.specs.find((x) => x.name === spec) ?? p.specs[0];
         return s ? { agent: s.name, spaceId: s.space ?? manifest.space?.id ?? "personal" } : null;
@@ -422,6 +423,11 @@ async function loadIsolated(app: App, p: LoadedPlugin) {
     packageRoot: packageRoot(),
     connected: connectedTo(manifest.id),
     settings: (userId) => pluginSettings(app, manifest.id, manifest.settings, userId),
+    saveSettings: (userId, patch) => {
+      const values = savePluginSettings(app, manifest.id, manifest.settings, userId, manifest.space?.id ?? "personal", patch);
+      app.emit({ type: "plugin", plugin: manifest.id, conversationId: "", settings: true });
+      return values;
+    },
     services: (name) => manifest.services.find((s) => s.name === name),
   });
   p.connectors.push(() => sb.stop());

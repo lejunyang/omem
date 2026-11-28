@@ -9,7 +9,7 @@ import { listRules } from "../src/rules/store.ts";
 import { savePluginSettings } from "../src/plugins/settings.ts";
 import { createUser } from "../src/core/users.ts";
 import { createSpace, findSpace, relateSpaces, updateSpace } from "../src/core/spaces.ts";
-import { createSession, sessionView, submitBlock } from "../src/plugins/blocks.ts";
+import { createSession, pluginContext, sessionView, submitBlock } from "../src/plugins/blocks.ts";
 import { describePlugin, getPlugin, loadPlugins, setPluginEnabled, setPluginIcon } from "../src/plugins/registry.ts";
 import { pluginStore } from "../src/plugins/store.ts";
 import { webLink } from "../src/core/util.ts";
@@ -185,6 +185,20 @@ describe("plugins", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("a plugin tool saves its own settings through ctx.saveSettings, checked like the settings page", async () => {
+    const app = await englishApp();
+    const ctx = pluginContext(app, getPlugin("english").env, { userId: "owner", spaceId: "english", runId: null, actor: "agent" });
+    await expect(ctx.saveSettings({ quizSize: "7" })).rejects.toThrow(/不合适/);
+    await expect(ctx.saveSettings({ nope: 1 })).rejects.toThrow(/没有设置项/);
+    expect(await ctx.saveSettings({ dailyGoal: 40 })).toMatchObject({ dailyGoal: 40, source: "bank" });
+    expect(ctx.settings()).toMatchObject({ dailyGoal: 40 });
+    expect(await ctx.saveSettings({ dailyGoal: null })).toMatchObject({ dailyGoal: 30 });
+    // Kept per person: a member's change does not touch the owner's values.
+    createUser(app, { id: "bob", name: "Bob" });
+    await pluginContext(app, getPlugin("english").env, { userId: "bob", spaceId: "english", runId: null, actor: "agent" }).saveSettings({ dailyGoal: 50 });
+    expect(ctx.settings()).toMatchObject({ dailyGoal: 30 });
   });
 
   it("limits tutor material tools to the selected readable spaces and keeps their writes in English", async () => {
