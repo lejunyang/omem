@@ -1,12 +1,12 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, win32 } from "node:path";
+import { isAbsolute, join, relative, sep, win32 } from "node:path";
 import { z } from "zod";
 import type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome } from "../../packages/plugin-sdk/credential.ts";
 import type { App } from "../core/app.ts";
 import { run } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
-import { canonical, normalizeSandbox, under } from "./own-sandbox.ts";
+import { cachePaths, canonical, normalizeSandbox, under } from "./own-sandbox.ts";
 import { setBackendStateCheck } from "./sandbox.ts";
 import { commandNameSchema, loginEnvSchema } from "../core/protected-commands.ts";
 
@@ -43,11 +43,19 @@ function stateRel(path: string) {
     throw new Error("凭据状态目录必须相对 HOME，不能有 ..、反斜线或控制字符");
   return path;
 }
+function containsDirectory(parent: string, child: string) {
+  const rel = relative(parent, child);
+  return !isAbsolute(rel) && rel.split(sep)[0] !== "..";
+}
 export function declaredPaths(app: App, commands: CredentialCommand[]) {
   const home = process.platform === "win32" ? homedir() : canonical(homedir());
   const state = commands.flatMap(c => (c.state ?? []).map(p => join(home, stateRel(p))));
-  // Windows starts no sandbox, so nothing is mounted: only the relative-to-HOME and `..` rules apply
-  // (the mount checks below are POSIX paths and would reject every declaration there).
+  const caches = cachePaths.map(rel => join(home, rel));
+  for (const path of state) {
+    const login = canonical(path);
+    if (caches.some(cache => containsDirectory(path, cache) || containsDirectory(login, canonical(cache)))) throw new Error("登录路径不能覆盖缓存目录：" + path);
+  }
+  // Windows starts no sandbox. The POSIX mount checks below would reject every path there.
   if (process.platform === "win32") {
     const install = commands.flatMap(c => c.install ?? []).map(p => {
       if (p.split("/").includes("..")) throw new Error("安装目录不能包含 ..");

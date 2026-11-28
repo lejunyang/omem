@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -24,7 +24,7 @@ it("本人登记、修改、清除受保护命令，持久化和沙箱垫片随�
   const headers = (key: string) => ({ authorization: "Bearer " + key });
   const save = (commands: unknown[], key = owner) => server.inject({ url, method: "PUT", headers: headers(key), payload: { commands } });
   try {
-    const decl = { name: "sample-cli", state: [".sample"], loginEnv: ["SAMPLE_TOKEN"] };
+    const decl = { name: "sample-cli", state: [".cache/sample-cli/login"], loginEnv: ["SAMPLE_TOKEN"] };
     for (const key of [member, token]) {
       expect([401, 403]).toContain((await server.inject({ url, headers: headers(key) })).statusCode);
       expect([401, 403]).toContain((await save([decl], key)).statusCode);
@@ -37,15 +37,19 @@ it("本人登记、修改、清除受保护命令，持久化和沙箱垫片随�
     expect(existsSync(join(guarded, decl.name))).toBe(true);
     const invalid = [
       [{ ...decl, name: "../sample" }], [decl, decl], [{ ...decl, token: "value" }],
-      ...[".", "../parent", "/root", "C:/private", "~/.sample"].map(path => [{ ...decl, state: [path] }]),
+      ...[".", "../parent", "/root", "C:/private", "~/.sample", ".cache", ".npm", ".local/share/pnpm/store", ".local/share/pnpm", ".local"].map(path => [{ ...decl, state: [path] }]),
       ...["PATH", "OMEM_TOKEN", "OPENAI_API_KEY", "SAMPLE_TOKEN=value"].map(key => [{ ...decl, loginEnv: [key] }]),
     ];
     if (process.platform !== "win32") {
+      mkdirSync(join(home, ".npm"));
+      symlinkSync(join(home, ".npm"), join(home, "downloads"), "dir");
+      invalid.push([{ ...decl, state: ["downloads"] }]);
       symlinkSync(app.home, join(home, "outside"), "dir");
       invalid.push([{ ...decl, state: ["outside"] }]);
     }
     for (const payload of invalid) expect((await save(payload)).statusCode).toBe(400);
     expect((await server.inject({ url, headers: headers(owner) })).json()).toEqual({ commands: [decl] });
+    expect(loadConfig(app.home).security.protectedCommands).toEqual([decl]);
     expect(app.db.prepare("select count(*) as n from audit_events where action='command.protected.settings'").get()?.n).toBe(1);
     const approval = await server.inject({ method: "POST", url: "/api/command-gate", headers: headers(token),
       payload: { command: decl.name, args: [], cwd: home, stream: true } });
