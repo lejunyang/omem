@@ -160,7 +160,10 @@ export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
   for (const p of plan.rw) add(p, "rw");
   // Project the existing names in a read-only parent. Newly created host logins stay
   // outside the run, and no mountpoint has to be created in the real HOME.
-  const credentials = [...new Set(plan.masked)].filter(path => !plan.masked?.some(parent => parent !== path && inside(path, parent)));
+  // Real paths only: a login reached through a linked HOME would otherwise snapshot a parent whose
+  // entries resolve elsewhere, and the pinned mounts would (rightly) refuse to start.
+  const masked = [...new Set((plan.masked ?? []).map(canonicalPath))];
+  const credentials = masked.filter(path => !masked.some(parent => parent !== path && inside(path, parent)));
   const snapshots = new Map<string, "ro" | "rw">();
   const snapshotLinks: string[] = [];
   for (const path of credentials) {
@@ -286,6 +289,14 @@ const real = (p: string) => {
   }
 };
 
+/** The real path, also for a path that does not exist yet (its nearest existing parent is resolved). */
+function canonicalPath(p: string): string {
+  if (process.platform === "win32") return posix.normalize(p);
+  if (existsSync(p)) return realpathSync(p);
+  const parent = posix.dirname(p);
+  return parent === p ? p : posix.join(canonicalPath(parent), posix.basename(p));
+}
+
 /** omem's own install (the folder with its package.json), for the stdio MCP bridge and the `omem` shim. */
 export function omemInstallDir() {
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -340,7 +351,7 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    ...bwrapArgs({ privateTmp: workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: [...new Set(acct.masked?.flatMap(path => [path, real(path)]))], network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, registryFile),
+    ...bwrapArgs({ privateTmp: workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: acct.masked, network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, registryFile),
     env: sandboxEnv(baseEnv, runEnv, acct, hide, nodeBin),
   };
 }
