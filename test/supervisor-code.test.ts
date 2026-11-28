@@ -306,6 +306,29 @@ describe("助手的编码交办", () => {
     if (next.length) expect(getRun(app, next[0].id)).toMatchObject({ status: "queued", input: { longTaskId: task.id } });
   });
 
+  it("跟进对修改项答 later / skip 是放下或不做，理由取 basis；其他回答才是重做的做法", async () => {
+    const { app, task, delegate } = await setup();
+    const worker = delegate();
+    codeChainFor(app, worker);
+    const question = { question: "这个边界要处理吗？", options: ["处理", "不处理"], why: "评审提出" };
+    const ask = (title: string) => {
+      const t = addTask(app, worker.id, { kind: "fix", title }, "coder");
+      return { t, id: `task:${t.id}:${toDecide(app, worker.id, t.seq, question).origin.questionId}` };
+    };
+    const later = ask("只读 HOME 下的边界"), skip = ask("旧格式兼容"), redo = ask("缺参报错");
+    await answerWorkerQuestion(app, task.id, later.id, "later", undefined, "现在的用法碰不到，记成以后再做");
+    await answerWorkerQuestion(app, task.id, skip.id, "不做。", undefined, "旧格式已经没人用");
+    await answerWorkerQuestion(app, task.id, redo.id, "补上缺参时的用法提示");
+    expect(getTask(app, worker.id, later.t.seq)).toMatchObject({ state: "wontdo", origin: expect.objectContaining({ later: true }),
+      notes: expect.arrayContaining([expect.objectContaining({ by: "supervisor", text: "以后再做：现在的用法碰不到，记成以后再做" })]) });
+    expect(getTask(app, worker.id, skip.t.seq)).toMatchObject({ state: "wontdo",
+      notes: expect.arrayContaining([expect.objectContaining({ text: "不做：旧格式已经没人用" })]) });
+    expect(getTask(app, worker.id, redo.t.seq)).toMatchObject({ state: "todo",
+      notes: expect.arrayContaining([expect.objectContaining({ text: "重做：补上缺参时的用法提示" })]) });
+    // The same answer again is a no-op, not an error.
+    await answerWorkerQuestion(app, task.id, later.id, "later", undefined, "现在的用法碰不到，记成以后再做");
+  });
+
   it("跟进处理过的修改项不能再交本人回答；卡发出后修改项变了，本人的选择仍作为补充交给跟进", async () => {
     const { app, task, lead, delegate } = await setup();
     confirmLongTaskBrief(app, task.id, { doneWhen: ["说明已校对"] });

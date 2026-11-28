@@ -13,7 +13,7 @@ export const reportSchema = z.object({
   actions: lines,
   progress: z.object({ done: lines, doing: lines, next: lines }),
   askOwner: z.array(question).max(20),
-  answers: z.array(answer).max(20).optional().describe("授权内的问题，按宿主给的 questionId 写回"),
+  answers: z.array(answer).max(20).optional().describe("授权内的问题，按宿主给的 questionId 写回。修改项问题（task:…）的 answer 是让干活的重做的具体做法；要放到以后写 later，不做写 skip，理由写进 basis"),
   setAside: lines.optional(), overruled: lines.optional(),
   brief: z.object({ doneWhen: lines, outOfScope: lines, scope: lines, constraints: lines.optional() }).optional()
     .describe("草案或修改建议。自动跟进的首版任务书直接生效，手动创建和后续修改由本人确认，不要在 askOwner 中再问是否确认。scope 每项填一个仓库名、相对目录或文件路径（如 README.md），不要写说明句。"),
