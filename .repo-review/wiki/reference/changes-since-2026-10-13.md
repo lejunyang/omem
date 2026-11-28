@@ -5,6 +5,12 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 卡片预览画出 Markdown 表格；沙箱设置页跟上执行器（2026-11-28）
+
+- `scripts/card-preview.ts` 画之前把 Markdown 元素里的管道表格换成表格组件（每列 125px、每页 5 行），手机宽度下和客户端一样要横着滑；以前画成原样的竖线文字。在卡片搭建工具的手机视图里核对过客户端：JSON 2.0 的 Markdown 表格每页 5 行带翻页，每列约 125px，四列在手机上只露出前两列多一点。`skills/omem/references/owner.md` 的 `fold` 写明 fold 里的明细一项一行或只留两三列，列多的放成 fold 外的 `table`；`docs/v2/lark-cards.md` 同步。
+- 设置 → 安全 → 运行的沙箱（`web/src/components/SandboxSettings.vue`、`web/src/lib/sandbox.ts`）：加“只让这些运行进”“这些不进”两个多选（`agents.ownSandbox.includeKinds` / `excludeKinds`，选项是运行类型的中文名）；“默认藏起来”分清 omem 的数据目录和插件命令的登录（以前每一项都写成数据目录），能展开看常用登录文件和浏览器资料的清单（`defaults.loginPaths`，配置了 `loginPaths` 时用配置的）；帮助文字改成执行器之后的说法，“你加的可写目录”不再让人把登录目录加进来。操作规则卡的说明写明进了沙箱的运行里绝对路径和改过的 PATH 也落到垫片上，没进沙箱时才拦不住。截图 `settings-sandbox` 重拍。
+- `src/agents/own-sandbox.ts` 的 `canonical` 在 Windows 上按盘符路径的规则拆不存在的路径：以前把它当 POSIX 路径拆，成员账号下还没建的状态目录被判成“越界或含符号链接”，`scripts/doc-screens.ts` 在 Windows 上给演示成员登录时就退出。Linux 上不变。
+
 ## 研究可以重新交给跟进（2026-11-28）
 
 - 研究退出跟进后，或 `longTasks.auto.studies` 关着时，本人可以在事项页的流程块点“交给跟进”（`POST /api/items/:id/flow/follow`，权限 `flows.operate`），用设置里的跟进 AI 新开一份跟进（`source_generation` 加一）。`ensureAutoFollow` 多了 `explicit`：本人要求的不看自动开关，也不受之前退出的限制，设置不对时直接报错。

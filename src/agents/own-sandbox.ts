@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, posix } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
 import type { Config } from "../core/config.ts";
 import { stripCommandLogin, installRoot, type SandboxNetwork, type WorkspaceMounts } from "./sandbox.ts";
 
@@ -10,8 +10,10 @@ export const under = (path: string, root: string) => path === root || path.start
 // Resolve existing parents too: a directory added later must not turn an alias into a broad grant.
 export function canonical(path: string): string {
   if (existsSync(path)) return realpathSync(path);
-  const parent = posix.dirname(path);
-  return parent === path ? path : posix.join(canonical(parent), posix.basename(path));
+  // A Windows drive path (a member's account folder on a Windows host) splits by its own rules; the sandbox's POSIX paths keep posix's.
+  const p = process.platform === "win32" && /^[A-Za-z]:[\\/]/.test(path) ? win32 : posix;
+  const parent = p.dirname(path);
+  return parent === path ? path : p.join(canonical(parent), p.basename(path));
 }
 
 export function normalizeSandbox(settings: Settings, home: string, data: string, real = canonical): Settings {

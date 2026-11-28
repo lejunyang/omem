@@ -19,11 +19,20 @@ export type SandboxStatus = {
   support: { ok: boolean; bwrap?: string; version?: string; reason?: string };
   /** Each local backend profile and the directories (and files) it keeps its state in. */
   backends: { id: string; state: string[] }[];
-  defaults: { exampleBackend?: string; writable: string[]; hidden: string[] };
+  /**
+   * `hidden`: the data directory first, then the command state the trusted credential plugins declare.
+   * `loginPaths`: the built-in list of login files and browser profiles hidden from the Agent.
+   */
+  defaults: { exampleBackend?: string; writable: string[]; hidden: string[]; loginPaths?: string[] };
+  /** The owner's own list of login paths, replacing the built-in one (`[]`: none). */
+  loginPaths?: string[];
+  /** Only these run kinds go in (empty or absent: all); `excludeKinds` wins. */
+  includeKinds?: string[];
+  excludeKinds?: string[];
   visibility?: string;
   warning?: string;
 };
-export type SandboxSettings = { mode: SandboxMode; writable: string[]; hidden: string[]; fullAccess: FullAccessMode };
+export type SandboxSettings = { mode: SandboxMode; writable: string[]; hidden: string[]; fullAccess: FullAccessMode; includeKinds?: string[]; excludeKinds?: string[] };
 
 export const MODES: { value: SandboxMode; label: string; hint: string }[] = [
   { value: "off", label: "关", hint: "运行照原样在这台机器上跑，不进沙箱" },
@@ -112,4 +121,13 @@ export function fullAccessNote(s: Pick<SandboxStatus, "mode" | "fullAccess" | "s
   if (s.mode === "off") return "现在没有运行会进沙箱，这一档等于按角色。";
   if (!s.support.ok) return "这台机器隔离不了，没有运行会进沙箱，这一档在这台等于按角色。";
   return "";
+}
+
+/** A line of the default hidden list in the owner's words: the data directory, or a plugin command's login. */
+export const hiddenLabel = (path: string, data: string | null) => (path === data ? "omem 的数据目录" : "插件命令的登录");
+
+/** The run kinds to pick from: those the page has a name for, then any saved kind it has none for. */
+export function kindOptions(labels: Record<string, string>, saved: string[]): { value: string; label: string; hint?: string }[] {
+  const named = Object.entries(labels).map(([value, label]) => ({ value, label, hint: value }));
+  return [...named, ...saved.filter((k) => !Object.hasOwn(labels, k)).map((k) => ({ value: k, label: k }))];
 }

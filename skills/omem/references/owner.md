@@ -23,7 +23,7 @@
   - `table`（columns、rows，最多 200 行，数字列按数字排序、右对齐）、`compare`（方案对比：id、title、summary、pros、cons）、`timeline`、`heading`、`markdown`。
   - `list`（`title?`、`items`：每条 `title`、`text?`（标题下一两句）、`tag?`（标题前的短标签，如 新增、要你定、通过、P1，12 字以内）、`tone?`（标签颜色，同 callout 的五种，默认 neutral）、`url?`（点标题打开））：决定、发现、文件和产物、方向、待办这类一条一行的东西。
   - `fields`（`items`：`label`、`value`，最多 12 对）：状态、负责人、分支、轮次这类成对的值，排成几列。
-  - `fold`（`title`、`text`、`open?`）：收起的细节，依据、完整记录、长日志放这里，先看结论的人不用读。
+  - `fold`（`title`、`text`、`open?`）：收起的细节，依据、完整记录、长日志放这里，先看结论的人不用读。`text` 是 Markdown，里面的表格在飞书卡片上每页 5 行，手机上每列约 125px 宽，第三列起要横着滑才看得到：放进 fold 的明细一项一行写（`**名字**　状态 · 谁在做：说明`），或只留两三列短字段；列多的明细放成 fold 外的 `table`。
   - `image`（`url`（http(s) 地址）、`alt?`、`caption?`）：截图、示意图。飞书里由宿主下载后上传显示，下载不了的变成链接；本机地址不取。
   - 报告的顺序：先 `callout` 写结论，再 `metric` 放 2–6 个关键数字，然后图表，最后明细表格；口径、时间范围、来源写在各组件的 `note`。一次 3–6 个组件，不要把同一组数既画图又列表格（网页上图表下面本来就能看数据）。没有的数不写、不估，也不要用文字符号拼图表。
 - `ui_page(title, html | path, page_id?)`：写一个交互页（单个 HTML 文件：可以点的原型、几种交互方式的对比、参数可调的小计算），存下返回 `page_id`；带 `page_id` 存成新的一版。`path` 是编码工作区或 `$OMEM_ARTIFACTS` 里的 `.html` 文件。页面在沙箱里：不能联网（脚本、样式、图片都写在文件里，图片用 data:），读不到 omem 的数据。颜色用 CSS 变量 `--bg --panel --ink --ink-2 --muted --line --accent`，跟着本人的浅色 / 深色。页面里的 `window.omem`：`submit(value, summary)`（只在页面放进 `ask_user` 的 `view` 时能用，返回 Promise）、`draft(value)`、`onInit(fn)`（草稿、能否提交）、`onTheme(fn)`、`open("#/…")`。显示它：`show` 或 `ask_user` 的 `view` 放 `{type:"page", id}`；同一个提问里不能再有 `fields`。飞书里给“打开交互页”的链接。

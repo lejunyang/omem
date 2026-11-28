@@ -2251,10 +2251,11 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "settings-sandbox", path: "/settings?card=sandbox", before: async (p) => {
     const home = "/home/demo", data = `${home}/.omem`;
     await p.route("**/api/security/sandbox", (route) => route.request().method() !== "GET" ? route.fallback() : route.fulfill({ json: {
-      mode: "prefer", writable: [`${home}/work/tools`, `${home}/.config/acme`], hidden: [`${home}/.ssh`], fullAccess: "sandboxed",
+      mode: "prefer", writable: [`${home}/work/tools`, `${home}/.config/acme`], hidden: [`${home}/private`], fullAccess: "sandboxed", includeKinds: ["thread-summary", "memory-organize", "first-look"],
       support: { ok: true, bwrap: "/usr/bin/bwrap", version: "0.9.0" },
       backends: [{ id: "codex", state: [`${home}/.codex`] }, { id: "claude", state: [`${home}/.claude`, `${home}/.claude.json`] }],
-      defaults: { exampleBackend: "codex", writable: [`${home}/.codex`, `${home}/.cache`, `${home}/.npm`, `${home}/.local/share/pnpm/store`, `${data}/runs/example/scratch`, `${data}/artifacts/inbox/example`, `${data}/workspaces/example/1`, "/tmp"], hidden: [data] },
+      defaults: { exampleBackend: "codex", writable: [`${home}/.codex`, `${home}/.cache`, `${home}/.npm`, `${home}/.local/share/pnpm/store`, `${data}/runs/example/scratch`, `${data}/artifacts/inbox/example`, `${data}/workspaces/example/1`, "/tmp"], hidden: [data, `${home}/.config/acme-cli`],
+        loginPaths: ["~/.ssh", "~/.git-credentials", "~/.config/gh", "~/.lark-cli", "~/.aws", "~/.kube", "~/.docker/config.json", "~/.config/google-chrome", "~/.mozilla/firefox", "~/.npmrc", "/run/docker.sock"] },
     } }));
   }, prepare: async (p) => {
     await p.locator("#set-sandbox .sbx-line").first().waitFor();

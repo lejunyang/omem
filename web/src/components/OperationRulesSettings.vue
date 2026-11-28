@@ -269,7 +269,7 @@ function onPacksChanged() {
   <div class="stack">
     <SetCard id="set-operation-rules" title="操作规则">
       <template #help>
-        从上到下，第一条命中的规则生效；都没命中就放行。“放行”用来在更宽的规则前开个口子。命令规则能拦住 shell、脚本、Python 的 subprocess、Node 的 spawn 这类按名字找命令的调用；拦不住用绝对路径调用、Agent 自己改了 PATH、直接调命令背后的接口。它防的是误操作，不是有意绕开的 Agent：真正要保护的凭据不要放在 Agent 能读到的地方。保存后，之后新启动的 Agent 进程按新规则走。
+        从上到下，第一条命中的规则生效；都没命中就放行。“放行”用来在更宽的规则前开个口子。命令规则能拦住 shell、脚本、Python 的 subprocess、Node 的 spawn 这类按名字找命令的调用。没进沙箱的运行，用绝对路径调用、自己改 PATH、直接调命令背后的接口都拦不住，这时它只防误操作。进了<RouterLink to="/settings?card=sandbox">沙箱</RouterLink>的运行（Linux）里，受保护的命令在已知的安装位置都盖上了垫片，绝对路径和改过的 PATH 也落到垫片上；要用登录的命令在沙箱外的执行器里跑，运行读不到登录文件。沙箱里仍管不到的是运行自己装或复制进来的程序，它们只能用沙箱里看得到的文件和网络。保存后，之后新启动的 Agent 进程按新规则走。
         <template v-if="scopeChoices.platform === 'win32'">这台是 Windows：Node 不带 shell 的 execFile、Python 列表形式的 subprocess 只找 .exe，真正的命令是 .exe 时这两种拦不住。</template>
       </template>
       <template #aside><button class="btn ghost sm" :disabled="!drafts" @click="add"><Icon name="plus" :size="14" />规则</button></template>

@@ -11,11 +11,13 @@
  * fictional. CHROMIUM=path picks the browser, SCHEME=dark the dark theme.
  *
  * Where it differs from the Feishu client (checked 2026-11-27 against the card builder): an icon on a
- * Markdown element is not drawn; a Markdown table shows as raw `|` text (the client draws it); a column
- * set's grey background is left out; dropdowns are empty boxes; images show only as placeholders (no
- * img_key lookup); folds, forms and buttons are drawn but do nothing. HTML entities in Markdown (omem writes `:` as `&#58;`) are decoded
- * here, as the client does. The card builder (open.larkoffice.com/cardkit, “导入卡片”) is the closer
- * check when someone is signed in.
+ * Markdown element is not drawn; a column set's grey background is left out; dropdowns are empty boxes;
+ * images show only as placeholders (no img_key lookup); folds, forms and buttons are drawn but do
+ * nothing. Two things are put right before drawing, as the client shows them: HTML entities in Markdown
+ * (omem writes `:` as `&#58;`) are decoded, and a Markdown table, which this renderer leaves as raw `|`
+ * text, is drawn as a table component five rows a page, its columns as wide as the client's (on a
+ * phone the table scrolls sideways there; here the columns past the edge are cut off).
+ * The card builder (open.larkoffice.com/cardkit, “导入卡片”) is the closer check when someone is signed in.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -125,9 +127,57 @@ async function samples(): Promise<Record<string, Card>> {
   }
 }
 
-/** The client shows HTML entities in card Markdown as their characters (cardText writes `:` as `&#58;`). */
+/**
+ * A Markdown element's pipe tables as table components: the client draws a table in card Markdown
+ * (JSON 2.0: a grey header row, five data rows a page, at most four tables in one element) but the
+ * renderer here shows the raw `|` text. Null when the element has none.
+ */
+function withTables(el: Card): Card[] | null {
+  const lines = String(el.content).split("\n");
+  const cells = (l: string) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const rule = (l?: string) => !!l && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(l);
+  const { content: _, ...rest } = el;
+  const parts: Card[] = [];
+  let text: string[] = [];
+  const flush = () => {
+    if (text.join("").trim()) parts.push({ ...rest, content: text.join("\n").replace(/^\n+|\n+$/g, "") });
+    text = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    if (!(lines[i].trim().startsWith("|") && rule(lines[i + 1]))) {
+      text.push(lines[i]);
+      continue;
+    }
+    const head = cells(lines[i]);
+    const rows: string[][] = [];
+    for (i += 2; i < lines.length && lines[i].trim().startsWith("|"); i++) rows.push(cells(lines[i]));
+    i--;
+    flush();
+    parts.push({
+      tag: "table",
+      page_size: 5,
+      row_height: "auto",
+      header_style: { text_align: "left", background_style: "grey", bold: true },
+      // The client gives a Markdown table's column about 125px and scrolls the table sideways on a phone.
+      columns: head.map((h, n) => ({ name: `c${n}`, display_name: h, data_type: "lark_md", width: "125px" })),
+      rows: rows.map((r) => Object.fromEntries(head.map((_, n) => [`c${n}`, r[n] ?? ""]))),
+    });
+  }
+  if (!parts.some((p) => p.tag === "table")) return null;
+  flush();
+  return parts;
+}
+
+/**
+ * The card as the client shows it, where the renderer here differs: HTML entities in Markdown are
+ * their characters (cardText writes `:` as `&#58;`), and Markdown tables are tables (`withTables`).
+ */
 function decoded(card: unknown): unknown {
-  if (Array.isArray(card)) return card.map(decoded);
+  if (Array.isArray(card))
+    return card.flatMap((x) => {
+      const d = decoded(x) as Card;
+      return d && typeof d === "object" && d.tag === "markdown" ? (withTables(d) ?? [d]) : [d];
+    });
   if (!card || typeof card !== "object") return card;
   const o = Object.fromEntries(Object.entries(card).map(([k, v]) => [k, decoded(v)]));
   if (o.tag === "markdown" && typeof o.content === "string") o.content = o.content.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));

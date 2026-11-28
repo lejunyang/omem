@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkPath, defaultLabel, fullAccessNote, grantLinks, sandboxBody, splitDefaults, tilde } from "../web/src/lib/sandbox.ts";
+import { checkPath, defaultLabel, fullAccessNote, grantLinks, hiddenLabel, kindOptions, sandboxBody, splitDefaults, tilde } from "../web/src/lib/sandbox.ts";
 
 const home = "/home/xiaowang";
 const data = `${home}/.omem`;
@@ -47,5 +47,15 @@ describe("the owner's sandbox (web/src/lib/sandbox.ts)", () => {
     expect(fullAccessNote({ mode: "prefer", fullAccess: "sandboxed", support: { ok: false } })).toContain("这台");
     expect(fullAccessNote({ mode: "prefer", fullAccess: "sandboxed", support: { ok: true } })).toBe("");
     expect(fullAccessNote({ mode: "off", fullAccess: "per-role", support: { ok: true } })).toBe("");
+  });
+
+  it("names the default hidden entries and lists run kinds with saved unknown ones last", () => {
+    expect(hiddenLabel(data, data)).toBe("omem 的数据目录");
+    expect(hiddenLabel(`${home}/.config/acme-cli`, data)).toBe("插件命令的登录");
+    const opts = kindOptions({ "thread-summary": "会话摘要", ask: "问答" }, ["ask", "new-kind"]);
+    expect(opts.map((o) => o.value)).toEqual(["thread-summary", "ask", "new-kind"]);
+    expect(opts[0]).toEqual({ value: "thread-summary", label: "会话摘要", hint: "thread-summary" });
+    expect(opts[2]).toEqual({ value: "new-kind", label: "new-kind" });
+    expect(kindOptions({ ask: "问答" }, ["toString"]).map((o) => o.value)).toEqual(["ask", "toString"]);
   });
 });

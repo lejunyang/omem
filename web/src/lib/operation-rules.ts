@@ -56,7 +56,7 @@ export const KINDS: { value: Kind; label: string }[] = [
 export const kindLabel = (k: Kind) => KINDS.find((x) => x.value === k)?.label ?? k;
 /** Who applies a kind of rule, in the owner's words (operation-policy.ts `enforcedBy`). */
 export const ENFORCED: Record<Kind, string> = {
-  command: "Agent 和它的脚本经 PATH 执行命令时拦下来问；Agent 自己来请求许可时也按它判断",
+  command: "Agent 和它的脚本经 PATH 执行命令时拦下来问，进了沙箱的运行用绝对路径调用也一样；Agent 自己来请求许可时也按它判断",
   file: "Agent 自己来请求读写文件的许可时按它判断",
   tool: "Agent 调用 omem 工具时按它判断",
   http: "Agent 用 aad 操作的浏览器里，页面的请求发出前拦下来问（要带请求闸门的 aad 版本）；不经这个浏览器发出的请求管不到",
