@@ -45,6 +45,20 @@ function savePassive(patch: Record<string, unknown>) {
   const memory = config.value.memory;
   void saveConfig({ memory: { ...memory, passive: { ...memory.passive, ...patch } } }, "已保存相关记忆设置");
 }
+/** What a run is told at its start (runner.ts taskLessons, agents/skill-suggest.ts) and whether its texts are kept (agents/prompt-log.ts). */
+const num = (e: Event, min: number, max: number, fallback: number) => {
+  const n = Number((e.target as HTMLInputElement).value);
+  return Number.isFinite(n) && (e.target as HTMLInputElement).value.trim() ? Math.max(min, Math.min(max, n)) : fallback;
+};
+function saveLessonFloor(e: Event) {
+  void saveConfig({ memory: { ...config.value.memory, lessonFloor: num(e, 0, 0.9, 0.55) } }, "已保存经验的相似度门槛");
+}
+function saveSkillSuggest(patch: Record<string, unknown>) {
+  void saveConfig({ agents: { skillSuggest: { ...config.value.agents.skillSuggest, ...patch } } }, "已保存技能说明的设置");
+}
+function savePromptLog(patch: Record<string, unknown>) {
+  void saveConfig({ agents: { promptLog: { ...config.value.agents.promptLog, ...patch } } }, "已保存提示词原文的设置");
+}
 function saveReview(patch: Record<string, unknown>) {
   const memory = config.value.memory;
   void saveConfig({ memory: { ...memory, review: { ...memory.review, ...patch } } }, "已保存记忆复核设置");
@@ -88,6 +102,28 @@ function removeCompare(i: number) {
       <SetRow v-else-if="config.rerank?.enabled" label="重排门槛" :off="!config.memory.passive.enabled">
         <template #hint>云端接口和插件的分数不是本机模型的尺度，要按它们的分数另定；空着就只按上面的相似度门槛</template>
         <input class="input set-num" type="number" inputmode="decimal" step="any" aria-label="重排门槛" placeholder="不用" :value="config.rerank.pluginPassiveThreshold ?? ''" @change="setOtherThreshold" />
+      </SetRow>
+    </SetCard>
+
+    <SetCard v-if="config.memory && config.agents?.skillSuggest" id="set-run-context" title="每次运行带上的经验和技能" :keys="['memory', 'agents']">
+      <template #help>每次运行开始时，和它相近的偏好、经验和技能说明会放进给 Agent 的说明里，这里定多相近才带。实际带了什么，在运行页“上下文 → 看提示词”里看。需要开启向量检索：没有向量时，经验取最新的几条，技能给整份目录。</template>
+      <SetRow label="经验的相似度门槛" hint="0–0.9；后台任务和交办只带相似度过了它的偏好与经验（最多 8 条），越高带得越少，0 是不筛。对话照旧带全部偏好">
+        <input class="input set-num" type="number" inputmode="decimal" min="0" max="0.9" step="0.025" aria-label="经验的相似度门槛" :value="config.memory.lessonFloor" @change="saveLessonFloor" />
+      </SetRow>
+      <SetRow label="技能说明按相近程度带" hint="打开后说明里只列技能名字，和这条消息或任务相近的才附上说明；关掉就每次给整份目录">
+        <UiCheckbox :model-value="config.agents.skillSuggest.enabled" switch aria-label="技能说明按相近程度带" @change="(v) => saveSkillSuggest({ enabled: v })" />
+      </SetRow>
+      <SetRow label="技能的相似度门槛" hint="0.3–0.9；越高带得越少。名字看着对得上的技能，Agent 仍可以自己去读" :off="!config.agents.skillSuggest.enabled">
+        <input class="input set-num" type="number" inputmode="decimal" min="0.3" max="0.9" step="0.025" aria-label="技能的相似度门槛" :value="config.agents.skillSuggest.threshold" @change="(e) => saveSkillSuggest({ threshold: num(e, 0.3, 0.9, 0.55) })" />
+      </SetRow>
+      <SetRow label="每次最多带几个技能" hint="1–10" :off="!config.agents.skillSuggest.enabled">
+        <input class="input set-num" type="number" min="1" max="10" aria-label="每次最多带几个技能" :value="config.agents.skillSuggest.limit" @change="(e) => saveSkillSuggest({ limit: intIn(e, 1, 10, 4) })" />
+      </SetRow>
+      <SetRow label="保留提示词原文" hint="运行页“看提示词”要用；只存在这台机器上，同一份说明只存一次">
+        <UiCheckbox :model-value="config.agents.promptLog.enabled" switch aria-label="保留提示词原文" @change="(v) => savePromptLog({ enabled: v })" />
+      </SetRow>
+      <SetRow label="原文保留天数" hint="1–365；这么多天没再用到的清掉" :off="!config.agents.promptLog.enabled">
+        <input class="input set-num" type="number" min="1" max="365" aria-label="原文保留天数" :value="config.agents.promptLog.days" @change="(e) => savePromptLog({ days: intIn(e, 1, 365, 14) })" />
       </SetRow>
     </SetCard>
 

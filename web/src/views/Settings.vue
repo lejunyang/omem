@@ -95,7 +95,7 @@ const CARDS: Record<string, Tab> = {
   "auto-advance": "advance", "flow-follow": "advance", "gate-ladder": "advance", "commit-claim": "advance", design: "advance", "study-envs": "advance", "item-expiry": "advance", "item-sync": "advance",
   audit: "review", replay: "review",
   backends: "agents", "default-ai": "agents", fallback: "agents", "ai-say": "agents", "ai-rules": "agents", "ai-groups": "agents",
-  "memory-quality": "search", rerank: "search", embeddings: "search", "passive-memory": "search", "search-providers": "search",
+  "memory-quality": "search", rerank: "search", embeddings: "search", "passive-memory": "search", "run-context": "search", "search-providers": "search",
   "agent-accounts": "members", "credential-holds": "members", desktop: "peers", "web-url": "peers", "accept-work": "peers",
   "lark-docs": "connect", "lark-recent-docs": "connect", "lark-capture": "connect", platforms: "connect", "source-parsers": "connect",
   timezone: "schedules",

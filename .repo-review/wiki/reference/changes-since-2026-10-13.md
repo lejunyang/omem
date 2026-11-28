@@ -47,6 +47,7 @@ updated: 2026-11-29
 - **技能行不带路径**：`skillIndex` 每行只有“名字：说明”。技能有附带文件时，`read_skill` 的结果写出它所在的目录。
 - **技能说明按相关度带**（`src/agents/skill-suggest.ts`）：每个可用技能的“名字：说明”算一次向量，按文本哈希存在 `<数据目录>/cache/skill-vectors.json`（换向量模型后重算），后台补齐。`skillSuggestReady` 为真（开关开着、有向量模型、每个技能都有向量）时，`prepareRun` 让技能目录只列名字、分组只列“组名「标题」N 个”（主助手改用角色自己挂的技能作为带说明的那几个），并在 `PreparedRun.skillSuggest` 里留下已经带了说明的技能。任务运行（`runRole`）和对话每一轮（`sessions.ts` 的 `skillsForTurn`）用任务或消息的向量取余弦过 `agents.skillSuggest.threshold`（默认 0.55）的前 `limit`（默认 4）个，作为“可能用得上的技能”附在消息后面；对话里给过的记在 `skillSeen`，不重复。复盘的回放轮次不参与。
 - **没有条件时的退路**：没有向量模型、向量还没算完、插件向量提供者不能看本人的个人空间、或 `agents.skillSuggest.enabled` 关着时，目录是原来的写法（只是没有路径）。
+- **设置入口**：设置 → 检索与记忆 多一张“每次运行带上的经验和技能”卡片（`web/src/views/settings/Search.vue`，`#set-run-context`）：`memory.lessonFloor`、`agents.skillSuggest` 的开关、门槛和个数、`agents.promptLog` 的开关和天数。`agents` 下这两个子键单独提交，不带整个 `agents` 对象。
 - 没验的：门槛没在真实的技能说明上校准，没用真实模型看过“只有名字时会不会漏用技能”。上线后先在“看提示词”里对照。
 
 ## 运行页能看提示词原文，Agent 页列表分组和搜索（2026-11-29）
