@@ -8,7 +8,7 @@ import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { cachePaths, canonical, normalizeSandbox, under } from "./own-sandbox.ts";
 import { setBackendStateCheck } from "./sandbox.ts";
-import { commandNameSchema, loginEnvSchema } from "../core/protected-commands.ts";
+import { commandNameSchema, configuredCommandsForHome, loginEnvSchema } from "../core/protected-commands.ts";
 
 export type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome };
 const ID = /^[a-z][a-z0-9-]{0,31}$/;
@@ -85,9 +85,9 @@ export function commandDeclarations(configured: CredentialCommand[] = []): Crede
 }
 
 /** The backend starts its own tools in the same mount namespace. Check only when starting a sandbox. */
-export function checkBackendCommandState(backend: string, home: string, backendPaths: string[], configured: CredentialCommand[] = []) {
+export function checkBackendCommandState(backend: string, home: string, backendPaths: string[]) {
   const paths = [...new Set(backendPaths.map(canonical))];
-  for (const command of commandDeclarations(configured)) {
+  for (const command of commandDeclarations(configuredCommandsForHome(home))) {
     for (const rel of command.state ?? []) {
       const login = canonical(join(home, rel));
       const conflict = paths.find(path => under(path, login) || under(login, path));

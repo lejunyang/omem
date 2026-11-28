@@ -2,6 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { accountEntry, accountRun } from "../src/agents/accounts.ts";
+import { ownRun } from "../src/agents/own-run.ts";
+import { sandboxCommand, sandboxSupport } from "../src/agents/sandbox.ts";
 import { commandGateDir } from "../src/agents/command-gate.ts";
 import { issueToolToken, revokeToolToken } from "../src/agents/tools.ts";
 import { agentProfileSchema, loadConfig } from "../src/core/config.ts";
@@ -71,5 +74,32 @@ it("本人登记、修改、清除受保护命令，持久化和沙箱垫片随�
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
     rmSync(app.home, { recursive: true, force: true });
+  }
+});
+
+const support = sandboxSupport();
+it.skipIf(!support.ok)("本人和成员启动沙箱时读取最新的登记清单 " + (support.reason ?? ""), () => {
+  const home = mkdtempSync(join(tmpdir(), "login-home-"));
+  vi.stubEnv("HOME", home);
+  const app = testApp();
+  try {
+    const profile = agentProfileSchema.parse({ id: "sample", command: process.execPath, transport: "acp",
+      account: { owns: [".sample/backend"], dirs: [".sample/backend"] } });
+    app.config.agents.profiles = [profile];
+    app.config.agents.ownSandbox = { mode: "require", writable: [], hidden: [] };
+    const cwd = join(app.home, "workspaces", "sample");
+    mkdirSync(cwd, { recursive: true });
+    const member = accountRun(app, "member", accountEntry(app, profile.id)!);
+    const ownerLaunch = () => ownRun(app, profile, cwd, true);
+    const memberLaunch = () => sandboxCommand({ file: process.execPath, prefix: [] }, [], {}, cwd, member);
+    app.config.security.protectedCommands = [{ name: "sample-cli", state: [".sample"], loginEnv: [] }];
+    for (const launch of [ownerLaunch, memberLaunch]) expect(launch).toThrow(/后端 sample.*命令 sample-cli.*重合/);
+    app.config.security.protectedCommands = [];
+    for (const launch of [ownerLaunch, memberLaunch]) expect(launch).not.toThrow();
+  } finally {
+    app.db.close();
+    vi.unstubAllEnvs();
+    rmSync(app.home, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });

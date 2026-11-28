@@ -1,10 +1,8 @@
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { z } from "zod";
-
-// Backend API keys and the per-run tool token are needed by the backend itself.
-const backendLogin = /^(?:OPENAI|ANTHROPIC|CLAUDE|CODEX|TRAE|DOUBAO|GEMINI)_|^OMEM_TOKEN$/i;
-const commandLogin = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE_KEY|ACCESS_KEY|API_KEY)(?:_|$)|^(?:SSH_AUTH_SOCK|SSH_AGENT_PID|SSH_ASKPASS|GIT_ASKPASS|GIT_CONFIG_.+|GH_.+|GITHUB_.+|GITLAB_.+|GLAB_.+|DOCKER_AUTH_CONFIG|AWS_.+|AZURE_.+|CLOUDSDK_.+|GOOGLE_APPLICATION_CREDENTIALS|KUBECONFIG)$/i;
-
-export const commandCredentialVariable = (key: string) => !backendLogin.test(key) && commandLogin.test(key);
+import { commandCredentialVariable } from "../agents/sandbox.ts";
+import type { App } from "./app.ts";
 
 export const commandNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
 export const loginEnvSchema = z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
@@ -22,3 +20,20 @@ export const protectedCommandsSchema = z.array(z.object({
   const names = commands.map(c => process.platform === "win32" ? c.name.toLowerCase() : c.name);
   return new Set(names).size === names.length;
 }, "受保护命令不能重复登记");
+
+// The sandbox's existing clash check receives the physical login HOME. Keep declarations with
+// that HOME for the lifetime of its host, including changes to the open configuration.
+const hosts = new Map<App, string>();
+export function registerCommandHost(app: App) {
+  hosts.set(app, homedir());
+  app.events.once("close", () => hosts.delete(app));
+}
+
+export function configuredCommandsForHome(home: string) {
+  const commands = [];
+  for (const [app, machineHome] of hosts) {
+    if (home === machineHome || dirname(dirname(home)) === join(app.home, "accounts"))
+      commands.push(...app.config.security.protectedCommands);
+  }
+  return commands;
+}

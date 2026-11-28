@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { loadConfig, omemHome, type Config } from "./config.ts";
 import { openDb, type Db } from "./db.ts";
 import { disableGitFsmonitor, ensureLibraryRepo } from "./git.ts";
+import { registerCommandHost } from "./protected-commands.ts";
 import { useKeyHome } from "./ai-keys.ts";
 
 export type AppEvent =
@@ -51,6 +52,7 @@ export class App {
     this.runsDir = join(this.home, "runs");
     for (const dir of [this.libraryDir, this.filesDir, this.runsDir]) mkdirSync(dir, { recursive: true });
     ensureLibraryRepo(this.libraryDir);
+    registerCommandHost(this);
   }
 
   emit(event: AppEvent) {
