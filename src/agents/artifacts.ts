@@ -110,6 +110,42 @@ const store = (app: App, id = "") => join(app.home, "artifacts", id);
 /** Where an artifact's file (or a page's entry) is on this machine: for an agent that reads images. */
 export const artifactPath = (app: App, a: Pick<Artifact, "id" | "entry">) => join(store(app, a.id), ...a.entry.split("/"));
 
+type HashedArtifact = Pick<Row, "id" | "entry"> & { sha: string };
+
+/** Account for every link to the inode using distinct entries published with the same digest.
+ * This works for existing artifacts and for a store restored on a different filesystem. */
+function publishedLinks(app: App, rows: HashedArtifact[], allowed?: Set<string>) {
+  const groups = new Map<string, { count: bigint; stamp: string; entries: HashedArtifact[] }>();
+  for (const row of rows) {
+    const { id, entry, sha } = row;
+    if (basename(id) !== id || basename(entry) !== entry || id.startsWith(".") || entry.startsWith(".")) continue;
+    if (!lstatSync(store(app, id), { throwIfNoEntry: false })?.isDirectory()) continue;
+    const st = lstatSync(artifactPath(app, { id, entry }), { bigint: true, throwIfNoEntry: false });
+    if (!st?.isFile() || st.nlink < 2n) continue;
+    const stamp = `${st.dev}:${st.ino}:${st.ctimeNs}`;
+    const key = sha + ":" + stamp;
+    const group = groups.get(key) ?? { count: st.nlink, stamp, entries: [] };
+    group.entries.push(row);
+    groups.set(key, group);
+  }
+  const verified = new Map<string, string>();
+  for (const { count, stamp, entries } of groups.values()) {
+    if (BigInt(entries.length) !== count) continue;
+    for (const { id, entry } of entries) {
+      if (!allowed || allowed.has(id)) verified.set(`/artifacts/${id}/${entry}`, stamp);
+    }
+  }
+  return verified;
+}
+
+export function publishedArtifactLinks(app: App, ids: string[]) {
+  // Count siblings even if they belong to another run. Only return the caller's own grants.
+  const rows = all<HashedArtifact>(app.db, `select id, entry, sha from run_artifacts where sha in (
+    select sha from run_artifacts where sha in (select sha from run_artifacts where id in (select value from json_each(?)))
+    group by sha having count(*) > 1)`, JSON.stringify(ids));
+  return Object.fromEntries(publishedLinks(app, rows, new Set(ids)));
+}
+
 /** The delegation a run belongs to (a round, a review of it, a helper of a round), or null. */
 export async function workOf(app: App, runId: string): Promise<string | null> {
   const r = getRun(app, runId);
@@ -149,26 +185,25 @@ export async function attachText(app: App, runId: string, content: string, meta:
 const used = (app: App, runId: string, workId: string | null) =>
   one<{ n: number }>(app.db, workId ? "select coalesce(sum(size), 0) n from run_artifacts where work_id = ?" : "select coalesce(sum(size), 0) n from run_artifacts where run_id = ? and work_id is null", workId ?? runId)!.n;
 
-/** Files under a folder (no links, no hidden ones), bounded. */
-function filesUnder(dir: string, limit: number): { rel: string; size: number }[] | null {
-  const out: { rel: string; size: number }[] = [];
-  const walk = (d: string, prefix: string): boolean => {
-    for (const name of readdirSync(d).sort()) {
+/** Bound the report and reject hard links from the workspace before copying or moving it. */
+function pageSize(dir: string): number | string {
+  let size = 0, count = 0;
+  const walk = (folder: string): string | undefined => {
+    for (const name of readdirSync(folder)) {
       if (name.startsWith(".")) continue;
-      const full = join(d, name);
-      const st = lstatSync(full);
-      if (st.isSymbolicLink()) continue;
-      const rel = prefix ? `${prefix}/${name}` : name;
+      const path = join(folder, name);
+      const st = lstatSync(path);
       if (st.isDirectory()) {
-        if (!walk(full, rel)) return false;
+        const error = walk(path);
+        if (error) return error;
       } else if (st.isFile()) {
-        out.push({ rel, size: st.size });
-        if (out.length > limit) return false;
+        if (st.nlink !== 1) return `${relative(dir, path)} 不是独立的普通文件`;
+        if (++count > MAX_PAGE_FILES) return `文件超过 ${MAX_PAGE_FILES} 个`;
+        size += st.size;
       }
     }
-    return true;
   };
-  return walk(dir, "") ? out : null;
+  return walk(dir) ?? size;
 }
 
 /**
@@ -179,9 +214,9 @@ function filesUnder(dir: string, limit: number): { rel: string; size: number }[]
 function take(app: App, runId: string, workId: string | null, spaceId: string | null, from: string, name: string, meta: Meta, move: boolean): { artifact: Artifact | null; skipped?: string } {
   const st = lstatSync(from);
   const page = st.isDirectory();
-  const files = page ? filesUnder(from, MAX_PAGE_FILES) : null;
-  if (page && !files) return { artifact: null, skipped: `${name}：文件超过 ${MAX_PAGE_FILES} 个` };
-  const size = page ? files!.reduce((n, f) => n + f.size, 0) : st.size;
+  if (!page && (!st.isFile() || st.nlink !== 1)) return { artifact: null, skipped: `${name}：只收取独立的普通文件` };
+  const size = page ? pageSize(from) : st.size;
+  if (typeof size === "string") return { artifact: null, skipped: `${name}：${size}` };
   if (size > (page ? MAX_WORK / 4 : MAX_FILE)) return { artifact: null, skipped: `${name}：${Math.round(size / MB)} MB，超过上限` };
   if (used(app, runId, workId) + size > MAX_WORK) return { artifact: null, skipped: `${name}：这次交办的产物已到 ${MAX_WORK / MB} MB 上限` };
   const id = newId("af");
@@ -195,20 +230,25 @@ function take(app: App, runId: string, workId: string | null, spaceId: string | 
   // The same file handed in again (a screenshot that did not change, a recording copied twice) is
   // a link to the one already kept: rows stay apart, the bytes are stored once.
   const sha = page ? null : hashFile(from);
-  const same = sha ? one<Pick<Row, "id" | "entry">>(app.db, "select id, entry from run_artifacts where sha = ? limit 1", sha) : undefined;
+  const matches = sha ? all<HashedArtifact>(app.db, "select id, entry, sha from run_artifacts where sha = ?", sha) : [];
+  const same = matches[0];
   let linked = false;
   if (same) {
     try {
-      linkSync(artifactPath(app, same), target);
-      if (move) rmSync(from, { force: true });
-      linked = true;
+      const original = artifactPath(app, same);
+      const existing = lstatSync(original);
+      if (existing.isFile() && (existing.nlink === 1 || publishedLinks(app, matches).has(`/artifacts/${same.id}/${same.entry}`))
+          && hashFile(original) === sha) {
+        linkSync(original, target);
+        linked = true;
+      }
     } catch {
       // Another volume, or the kept file is gone: store a copy.
     }
   }
   try {
     if (linked) {
-      // already in place
+      if (move) rmSync(from, { force: true });
     } else if (move) {
       try {
         if (page) {

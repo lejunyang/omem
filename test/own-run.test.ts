@@ -58,7 +58,11 @@ it("沙箱状态只给本人主目录与完全访问授权清单，规则查询�
     expect(status.fullAccessGrants.rules).toEqual([{id:"grant",name:"完全访问规则"}]);
     expect(plans.some(p=>p.includes("rules_full_access"))).toBe(true);
     createUser(app,{id:"viewer",name:"查看成员",role:"admin"});
-    expect((await server.inject({url:"/api/security/sandbox",headers:{authorization:`Bearer ${createApiToken(app,"viewer")}`}})).statusCode).toBe(403);
+    const headers = { authorization: `Bearer ${createApiToken(app, "viewer")}` };
+    expect((await server.inject({ url: "/api/security/sandbox", headers })).statusCode).toBe(403);
+    const url = "/api/security/sandbox/layers/owner";
+    expect((await server.inject({ method: "DELETE", url, headers })).statusCode).toBe(403);
+    expect((await server.inject({ method: "DELETE", url })).statusCode).toBe(200);
   } finally {await server.close();app.db.close();rmSync(app.home,{recursive:true,force:true});rmSync(home,{recursive:true,force:true});}
 });
 
@@ -200,7 +204,8 @@ it.skipIf(process.platform !== "linux")("reports exactly the writable plan used 
     for (const path of [root, hidden, ro]) expect(box!.plan.rw).not.toContain(path);
     expect(box!.plan.links).toEqual(workspace.links);
     expect(box!.plan.pointers).toEqual(workspace.pointers);
-    expect(note).toBe("在 omem 沙箱里。可写：" + [...box!.plan.rw.map(p => shortPath(p, box!.home)), "/tmp（本轮临时目录）"].join("、") + "。写别处会失败，要放开在 设置 → 安全 里加可写目录。");
+    expect(note).toContain("HOME 只读");
+    for (const path of box!.plan.rw) expect(note).toContain(shortPath(path, box!.home));
     const child = launch(profile.command, [], { cwd: root, ownSandbox: box, env: { OMEM_ARTIFACTS: inbox } });
     let args = "";
     child.stdout.on("data", chunk => args += chunk);
@@ -227,7 +232,7 @@ it.skipIf(!support.ok)("获准的 Git 命令能从额外目录启动，也能通
   for (const path of [cwd, bin, repo, hidden, state]) mkdirSync(path, { recursive: true });
   for (const path of [hidden, state]) writeFileSync(join(path, "private"), "fixture");
   writeFileSync(join(repo, "marker"), "work");
-  writeFileSync(join(bin, "git"), '#!/bin/sh\nif test "$1" = -C; then cd "$2" || exit 2; fi\ntest -f /tmp/shared-marker && test -f marker && test ! -e ../hidden/private && test ! -e ../state/private && echo approved >> result\n', { mode: 0o755 });
+  writeFileSync(join(bin, "git"), '#!/bin/sh\nif test "$1" = -C; then cd "$2" || exit 2; fi\ntest ! -e /tmp/shared-marker && test -f marker && test ! -e ../hidden/private && test ! -e ../state/private && echo approved >> result\n', { mode: 0o755 });
   vi.stubEnv("HOME", home);
   vi.stubEnv("PATH", bin + ":" + process.env.PATH);
   vi.stubEnv("CODEX_HOME", state);
@@ -253,7 +258,7 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
   const home = mkdtempSync(join(tmpdir(), "tmp-cwd-"));
   const allowed = join(home, "allowed");
   mkdirSync(allowed);
-  writeFileSync(join(home, "host-file"), "host");
+  writeFileSync(join(app.home, "host-file"), "host");
   vi.stubEnv("HOME", home);
   app.baseUrl = "http://127.0.0.1:1";
   app.config.agents.ownSandbox = { mode: "require", writable: [allowed], hidden: [] };
@@ -263,12 +268,12 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
   try {
     const box = prep.isolation.box!;
     expect(box.readOnly).toBe(true);
-    const privateTmp = box.plan.work.privateTmp!;
+    const privateTmp = box.plan.privateTmp!;
     expect(existsSync(privateTmp)).toBe(true);
     expect([...box.plan.ro, ...box.plan.rw]).not.toContain("/tmp");
     expect(box.plan.rw).toContain(allowed);
     const name = "private-" + app.home.split("/").at(-1);
-    const child = launch(profile.command, ["-ec", 'test ! -e "$1/host-file"; echo private > "$2"; echo visible > "$1/allowed/result"', "sh", home, name],
+    const child = launch(profile.command, ["-ec", 'test ! -e "$3/host-file"; echo private > "$2"; echo visible > "$1/allowed/result"', "sh", home, name, app.home],
       { cwd: prep.cwd, ownSandbox: box });
     expect((await once(child, "close"))[0]).toBe(0);
     expect(existsSync(join("/tmp", name))).toBe(false);

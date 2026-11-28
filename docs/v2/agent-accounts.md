@@ -96,6 +96,12 @@ omem 支持多人登录以后，同事在 omem 里提问、交办，背后跑的
 
 所以 omem 能用同一个办法处理所有后端：**每个用户一个账号目录（当作他的 HOME），在沙箱里启动 Agent，把对应变量指向它**。差异写进 Agent 目录（`src/agents/catalog.ts`），运行时不按 Agent 名特判。豆包这一行也说明只换目录变量不够，沙箱（私有 `/tmp`、PID 视图）是必需的，不是加固项。
 
+### 验证本机后端能否建立空会话
+
+在 Linux 上把已安装后端的可执行文件放到 PATH，运行 `node scripts/check-backend-sessions.ts`。工具管理器的垫片依赖本人 HOME 时，PATH 要指向实际安装目录。只验指定后端可运行 `node scripts/check-backend-sessions.ts codex claude gemini`。
+
+脚本为每个后端新建临时 HOME、omem 数据目录和断网环境，按本人沙箱的实际挂载计划启动程序。它依次检查 ACP 的 `initialize` 和 `session/new`，收到会话 ID 就结束。输出逐项标明哪一步成功；需要有效账号的后端会给出认证错误，找不到命令的条目会标为跳过。修改挂载计划后重跑同一条命令。
+
 ## 设计
 
 ### 1. 账号目录

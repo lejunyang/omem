@@ -64,7 +64,9 @@ describe("bubblewrap arguments", () => {
     const { args: a } = bwrapArgs({ hide: ["/"], ro: ["/w", "/"], rw: ["/w"], cwd: "/w", command: "/bin/true", args: [] });
     expect(a.filter((x) => x === "--ro-bind-try")).toEqual([]);
     expect(a).toContain("--bind");
-    expect(a.filter((x) => x === "--tmpfs").length).toBe(1);
+    const privatePaths = a.flatMap((arg, i) => arg === "--tmpfs" ? [a[i + 1]] : []);
+    expect(privatePaths).toContain("/tmp");
+    expect(privatePaths).not.toContain("/");
   });
 
   it("finds the install a command lives in", () => {
@@ -210,13 +212,13 @@ describe("accounts of members", async () => {
       setSandboxSupportForTests({ ok: true, bwrap: "test-bwrap" });
       app.config.agents.accountIsolation = "require";
       launch.mockImplementation((cmd, args, env, _cwd, account) => ({
-        pinned: new Set(), npmrc: undefined, file: cmd.file, args: [...cmd.prefix, ...args], env: { ...env, HOME: account.home } as Record<string, string>,
+        pinned: new Set(), configs: [], file: cmd.file, args: [...cmd.prefix, ...args], env: { ...env, HOME: account.home } as Record<string, string>,
       }));
       // Bob cannot borrow the owner's Codex login in strict mode. The configured local ACP can run in his HOME.
       expect((await start("bob", "codex").result).profileId).toBe(fake.id);
       expect(launch.mock.calls.at(-1)?.[4]).toMatchObject({ userId: "bob", home: accountHome(app, "bob") });
       launch.mockImplementation(() => ({
-        pinned: new Set(), npmrc: undefined, file: process.execPath, args: ["-e", "console.error('bwrap: mount failed'); process.exit(1)"], env: {},
+        pinned: new Set(), configs: [], file: process.execPath, args: ["-e", "console.error('bwrap: mount failed'); process.exit(1)"], env: {},
       }));
       await expect(start("bob", fake.id).result).rejects.toThrow(/不能隔离成员的运行.*mount failed/);
       expect(accountBlocked(app, "bob", { ...fake, transport: "doubao" })).toContain("云端");

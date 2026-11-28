@@ -1,11 +1,11 @@
 import type { AcpHandle } from "./acp.ts";
 import type { App } from "../core/app.ts";
-import { one, run } from "../core/db.ts";
+import { all, one, run } from "../core/db.ts";
 import { accessibleSpaces, OWNER, userName } from "../core/users.ts";
 import { addRunEvent, cancelRun, queuedInLane, setRunOutput, stopRequested, updateQueuedRun } from "./runs.ts";
 import { renderMessages } from "./sessions.ts";
 import { recordWatchMaterial, watchSourceSpaces } from "../core/message-origins.ts";
-import { findThread, threadMessages } from "./threads.ts";
+import { findThread, guestSender, threadMessages } from "./threads.ts";
 
 /**
  * Messages sent to a conversation while its turn is running reach that turn at its next tool call
@@ -49,7 +49,7 @@ export function claimSteering(app: App, runId: string) {
   const msgs = threadMessages(app, conversationId, { limit: 400 }).filter((m) => ids.includes(m.id) && m.role === "user" && !m.meta.answer);
   if (!msgs.length || msgs.some((message) => message.meta.firstLookRequested)) return null;
   const turnUser = input.userId ?? OWNER, sender = (next.input.userId as string | undefined) ?? OWNER;
-  if (!mayJoinTurn(app, turnUser, sender, msgs)) return null;
+  if (!mayJoinTurn(app, turnUser, sender, msgs, input.messageIds ?? [input.messageId])) return null;
   const taken = new Set(msgs.map((m) => m.id));
   const text = [
     "",
@@ -93,7 +93,15 @@ export function claimSteering(app: App, runId: string) {
  * that user can (the owner always can): their words never reach further than their own access.
  * A colleague who is not a user (asker, a watched chat's speaker) never joins someone else's turn.
  */
-export function mayJoinTurn(app: App, turnUser: string, sender: string, msgs: { meta: Record<string, unknown> }[]) {
+export function mayJoinTurn(app: App, turnUser: string, sender: string, msgs: { meta: Record<string, unknown> }[], initialIds: unknown) {
+  // Guest questions in the owner’s group run under the same omem user as the owner.
+  // Keep their mounted /tmp bound to its original speaker when merging or steering.
+  if (turnUser === OWNER) {
+    const initial = all<{ meta: string }>(app.db, "select meta from messages where id in (select value from json_each(?))", JSON.stringify(initialIds));
+    const before = guestSender(initial.map(row => ({ meta: JSON.parse(row.meta) })));
+    const after = guestSender(msgs);
+    if (before === null || before !== after) return false;
+  }
   if (sender === turnUser) return true;
   if (msgs.some((m) => typeof m.meta.asker === "string" || typeof m.meta.speaker === "string")) return false;
   const theirs = accessibleSpaces(app, sender);

@@ -14,7 +14,7 @@ import { all, openDb, run, tx } from "./db.ts";
 import { commitLibrary, git } from "./git.ts";
 import { listSpaces } from "./spaces.ts";
 import { columns, pauseImportedLongTasks, prepareData, pullTables, rewriteLibrary, type Row } from "./pull-data.ts";
-import { installRepositories, readManifest, relocate } from "./pull-repos.ts";
+import { installRepositories, readManifest, registerPulledRepositories, relocate } from "./pull-repos.ts";
 import { sha256 } from "./util.ts";
 import { PULL_PARTS, type Fetched, type PullPart } from "./pull-transfer.ts";
 export { fetchRemote, fetchPeer, snapshotStream, filesStream, parseParts, PULL_PARTS, PULL_PART_LABELS, type Fetched, type PullPart, type PullSelection } from "./pull-transfer.ts";
@@ -157,7 +157,10 @@ export function overwriteLocal(home: string, fetched: Fetched | string) {
         run(db, "update memories set embedding = null where embedding is not null");
         for (const s of all<{ id: string; root_path: string }>(db, "select id, root_path from spaces where root_path is not null"))
           run(db, "update spaces set settings = json_set(settings, '$.remoteRootPath', root_path), root_path = null where id = ?", s.id);
-        const paths = installRepositories(home, db, dir, () => {});
+        // The old checkouts moved to the backup. Only checkouts restored here confer access.
+        run(db, "delete from pulled_repositories");
+        const { paths, copies } = installRepositories(home, db, dir, () => {});
+        registerPulledRepositories(db, copies);
         rewriteLibrary(join(home, "library"), { ids: new Map(), lines: new Map() }, paths);
         commitLibrary(join(home, "library"), "pull: relocate imported paths");
         for (const s of all<{ id: string; settings: string }>(db, "select id,settings from spaces where kind = 'worktree'"))
@@ -225,7 +228,7 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
     copyDirContents(files, app.filesDir);
   }
   // A dry run never fetches into existing checkouts or restores files.
-  const paths = opts.dryRun ? new Map<string, string>() : installRepositories(app.home, db, dir, log);
+  const { paths, copies } = opts.dryRun ? { paths: new Map<string, string>(), copies: [] } : installRepositories(app.home, db, dir, log);
   const prepared = prepareData(db, dir, paths);
   db.prepare("attach database ? as r").run(prepared.databasePath);
   try {
@@ -250,6 +253,7 @@ export function mergeLibrary(app: App, fetched: Fetched | string, opts: { dryRun
         if (s.root_path) run(db, "update spaces set settings = json_set(settings, '$.remoteRootPath', root_path), root_path = ? where id = ?", paths.get(s.root_path) ?? null, s.id);
         tally("spaces").added++;
       }
+      registerPulledRepositories(db, copies);
       for (const s of prepared.sources) {
         const id = prepared.ids.get(s.id)!;
         const have = db.prepare("select text, updated_at, deleted_at from sources where id = ?").get(id) as { text: string; updated_at: string; deleted_at: string | null } | undefined;

@@ -1,7 +1,29 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { git } from "./git.ts";
+
+export const PULLED_REPOSITORIES_MIGRATION = `create table pulled_repositories (
+  space_id text not null references spaces(id) on delete cascade,
+  checkout text not null, primary key(space_id, checkout)
+);`;
+
+type PulledRepository = { space: string; checkout: string };
+
+export function registerPulledRepositories(db: DatabaseSync, copies: PulledRepository[]) {
+  const insert = db.prepare("insert into pulled_repositories(space_id, checkout) values(?, ?) on conflict do nothing");
+  for (const copy of copies) insert.run(copy.space, copy.checkout);
+}
+
+/** Older pulls recorded the remote root on the space only when they adopted its checkout. */
+export function backfillPulledRepositories(db: DatabaseSync, home: string) {
+  const spaces = db.prepare(`select id, root_path from spaces where kind='repo' and root_path is not null
+    and json_type(settings, '$.remoteRootPath')='text'`).all() as { id: string; root_path: string }[];
+  const pulled = resolve(home, "repos", "pulled");
+  registerPulledRepositories(db, spaces.filter(s => dirname(s.root_path) === pulled
+    && existsSync(join(s.root_path, ".git", "omem-pull-revision")))
+    .map(s => ({ space: s.id, checkout: basename(s.root_path) })));
+}
 
 type Repository = { key: string; root: string; target: string | null; space: string | null; parent?: string | null; subpath?: string | null; origin?: string | null; branch: string | null; head: string | null; revision: string };
 /** `takenAt`: the other side's clock when the snapshot was taken; `since`: the moment it only holds changes after (null: everything). */
@@ -61,7 +83,8 @@ export function installRepositories(home: string, db: DatabaseSync, fetchedDir: 
   const manifest = readManifest(fetchedDir);
   const paths = new Map<string, string>();
   const targets = new Map<string, string>();
-  if (!manifest) return paths;
+  const copies: PulledRepository[] = [];
+  if (!manifest) return { paths, copies };
   for (const repo of manifest.repositories) {
     if (!/^\d+$/.test(repo.key) || !/^[a-f0-9]{20}$/.test(repo.revision)) throw new Error("仓库快照标识不合法");
     const asset = inside(join(fetchedDir, "repositories"), repo.key);
@@ -82,6 +105,7 @@ export function installRepositories(home: string, db: DatabaseSync, fetchedDir: 
     targets.set(repo.key, target);
     paths.set(repo.root, target);
     if (!repo.space) continue;
+    if (repo.parent == null && !repo.target) copies.push({ space: repo.space, checkout: basename(target) });
     if (local && existsSync(join(local, ".git"))) {
       const bundle = join(asset, "repo.bundle");
       if (existsSync(bundle)) {
@@ -105,7 +129,7 @@ export function installRepositories(home: string, db: DatabaseSync, fetchedDir: 
   }
   // Relocate only paths from imported records; callers apply this map to the private snapshot.
   paths.set(manifest.home + (manifest.home.includes("\\") ? "\\runs" : "/runs"), join(home, "runs"));
-  return paths;
+  return { paths, copies };
 }
 
 export function relocate(text: string, paths: Map<string, string>) {

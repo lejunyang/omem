@@ -5,6 +5,7 @@
 
 | 能力 | 状态 | 入口 |
 | --- | --- | --- |
+| 本机登录沙箱的身份 HOME 层和资料视图 | 已实现。缓存随身份层保留；允许清空指定层。跨设备拉取的仓库副本单独登记空间归属。资料按空间、运行及原件授权只读开放，能力不足时记录回退原因。 | `agents/sandbox-home.ts`、`agents/sandbox-data.ts`、`scripts/sandbox-view.py` |
 | 长任务自动跟进。研究、达到门槛的编码交办和多 Agent 工作按来源接入固定 AI。原会话可退出，进度卡可编辑任务书，设置按三类分别控制。 | 已实现；研究正常完成后可按新目标再开跟进；退出过或开关关着时，研究可在流程块“交给跟进”（`POST /api/items/:id/flow/follow`，`test/studies.test.ts`）。研究与编码均已用真实 Agent 跑完隔离样例（2026-11-28） | `src/agents/auto-follow.ts`、`src/agents/supervisor-report.ts` |
 | 长任务跟进入口：斜杠命令和主助手共用创建接口。创建任务和更换 AI 的命令与 /topic 共用 AI 解析，按发起人识别别名、密钥、设备和组。可在任务话题查看进展、暂停、继续、加时、换 AI 和结束，也可从其他会话转达补充。发起人在飞书群工作话题可直接发命令和补充，斜杠开头的接口路径也会逐字记入并立即唤醒。话题命令、HTTP 和卡片按钮共用进度卡刷新，暂停后可在原卡继续，结束后收起按钮。 | 已实现（2026-11-28） | `src/agents/supervisor-command.ts`、`src/agents/tools.ts`、`test/supervisor-entry.test.ts` |
 | 长任务执行和飞书进度：确认任务书后由指定助手协调交办、回答工作者的问题，按阶段更换会话。本人在汇总卡上的选择记入修改项决定和任务补充。工作轮次共用任务书预算，普通完成事件合批，跑偏信号和本人补充立即叫醒。报告更新话题进度卡、事项时间线和跟进笔记。 | 已实现（2026-11-27） | `src/agents/supervisor.ts`、`src/agents/supervisor-report.ts`、`src/agents/supervisor-code.ts`、`test/supervisor.test.ts` |

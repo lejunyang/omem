@@ -36,7 +36,7 @@ const network = proxy ? egressSupport() : support;
 it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取消 " + (proxy ? "（插件、出网代理）" : "（本人登记）") + (network.reason ?? ""), async () => {
   const app = testApp();
   const root = mkdtempSync(join(tmpdir(), "gate-integration-"));
-  const home = join(root, "account"), cwd = join(root, "work"), bin = join(root, "bin");
+  const home = join(root, "account"), cwd = join(root, "work"), bin = join(home, "bin");
   for (const dir of [join(home, ".fixture"), join(home, ".other"), cwd, bin]) mkdirSync(dir, { recursive: true });
   writeFileSync(join(home, ".fixture", "value"), "ready");
   writeFileSync(join(home, ".other", "login"), "other");
@@ -61,6 +61,10 @@ it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取
       launch("/bin/sh", ["-ec", command], { cwd, ownSandbox, env: prep.mcp.env }));
   }
   try {
+    if (prep.isolation.box?.homeStore) {
+      const local = launch("/bin/sh", ["-ec", 'echo alternate > "$HOME/bin/samplecli"'], { cwd, ownSandbox: prep.isolation.box });
+      expect((await once(local, "close"))[0]).toBe(0);
+    }
     const child = await invoke('test -z "$SAMPLE_TOKEN"; echo active > "$HOME/.backend/session"; test ! -e "$HOME/.fixture/value"; exec samplecli');
     let stderr = "";
     child.stderr.on("data", chunk => stderr += chunk);

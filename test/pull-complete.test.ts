@@ -1,16 +1,23 @@
 import { listLessons, proposeLesson, previousLessonMaterial } from "../src/agents/code-lessons.ts";
+import { once } from "node:events";
 import { execFileSync } from "node:child_process";
 import { chmodSync, createWriteStream, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { ownRun } from "../src/agents/own-run.ts";
+import { sandboxSupport } from "../src/agents/sandbox.ts";
+import { launch } from "../src/agents/spawn.ts";
+import { agentProfileSchema } from "../src/core/config.ts";
+import { addMember, createUser } from "../src/core/users.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { App } from "../src/core/app.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { all, one, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { cleanupFetched, fetchRemote, mergeLibrary, overwriteLocal, snapshotStream, type Fetched } from "../src/core/pull.ts";
+import { backfillPulledRepositories } from "../src/core/pull-repos.ts";
 import { pullTables } from "../src/core/pull-data.ts";
 import { createSpace, getSpace } from "../src/core/spaces.ts";
 import { remember } from "../src/memory/store.ts";
@@ -45,7 +52,7 @@ describe("complete portable pulls", () => {
     const app = testApp();
     // lark_message_lines: a pulled chat keeps its first copy in lark_messages.source_id / line; source_viewers is what this device saw.
     const derived = new Set(["stored_file_refs", "stored_file_backfill", "vector_log", "chunks", "symbols", "code_refs", "pages", "page_rowids", "page_links", "page_cites", "page_aliases", "memory_rowids", "req_rowids", "lark_message_lines", "source_viewers", "source_access"]);
-    const device = new Set(["cloud_tool_usage", "egress_runs", "kv", "api_tokens", "lark_cursors", "pull_aliases", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "peer_grants", "fed_outbox", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "agent_hosts", "remote_recordings", "remote_grants", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
+    const device = new Set(["cloud_tool_usage", "egress_runs", "kv", "api_tokens", "lark_cursors", "pull_aliases", "pulled_repositories", "lark_meetings", "lark_meeting_lines", "shares", "source_note_hits", "lark_kb_reads", "auth_sessions", "peer_grants", "fed_outbox", "auth_states", "invites", "login_links", "cli_logins", "audit_events", "peer_shares", "change_log", "peer_subscriptions", "peer_aliases", "session_cleanup", "agent_hosts", "remote_recordings", "remote_grants", "lark_doc_subscriptions", "platform_watches", "run_artifacts", "req_tests",
       "credential_kinds", "credential_holds", "credential_onboarding", "credential_access", "credential_run_grants",
       // Who agreed to a rule using their identity (rules/run-as.ts): tied to this machine's members and their logins; a pulled copy asks again.
       "rule_run_as",
@@ -107,6 +114,7 @@ describe("complete portable pulls", () => {
     for (const [app, commit] of [[local, "local_commit"], [remote, "remote_commit"]] as const)
       run(app.db, "insert into git_commit_cursors(space_id,branch,commit_id,updated_at,tip,tip_at) values('demo','main',?,'2026-11-15',?,'2026-11-15')", commit, commit);
     for (const [app, id] of [[local, "local"], [remote, "remote"]] as const) {
+      run(app.db, "insert into pulled_repositories(space_id,checkout) values('personal',?)", id);
       const item = upsertItem(app, undefined, { title: "外部事项" });
       run(app.db, `insert into plugin_hook_deliveries(id,plugin,name,received_at,status,format,body,envelope,due_at)
         values(?,'demo','events',0,'pending','webhook','{}','{}',0)`, id);
@@ -119,12 +127,16 @@ describe("complete portable pulls", () => {
     let localClosed = false;
     try {
       const copied = App.open(f.dbDir);
+      expect(all(copied.db, "select * from pulled_repositories")).toEqual([]);
+      // Even a snapshot containing another device's checkout registrations confers no local grant.
+      run(copied.db, "insert into pulled_repositories values('personal','foreign-copy')");
       expect(all(copied.db, "select id from plugin_hook_deliveries")).toEqual([]);
       expect(all(copied.db, "select * from item_provider_targets")).toEqual([]);
       expect(all(copied.db, "select * from item_provider_writes")).toEqual([]);
       try { expect(all(copied.db, "select * from flow_signals")).toEqual([]); expect(all(copied.db, "select * from item_follow_cursors")).toEqual([]); expect(all(copied.db, "select * from git_commit_cursors")).toEqual([]); }
       finally { copied.db.close(); }
       mergeLibrary(local, f);
+      expect(all(local.db, "select checkout from pulled_repositories")).toEqual([{ checkout: "local" }]);
       expect(all(local.db, "select id from plugin_hook_deliveries")).toEqual([{ id: "local" }]);
       expect(all(local.db, "select outcome from flow_signals")).toEqual([{ outcome: "local observation" }]);
       expect(all(local.db, "select source_id,line from item_follow_cursors")).toEqual([{ source_id: "local_source", line: 12 }]);
@@ -132,6 +144,7 @@ describe("complete portable pulls", () => {
       local.db.close(); localClosed = true;
       overwriteLocal(local.home, f);
       const after = App.open(local.home);
+      expect(all(after.db, "select * from pulled_repositories")).toEqual([]);
       expect(all(after.db, "select id,status from plugin_hook_deliveries")).toEqual([{ id: "local", status: "pending" }]);
       expect(all(after.db, "select id,cursor from item_provider_targets")).toEqual([{ id: "local", cursor: null }]);
       expect(all(after.db, "select * from item_provider_writes")).toEqual([]);
@@ -322,6 +335,12 @@ describe("complete portable pulls", () => {
       expect(existsSync(join(local.home, "repos"))).toBe(false);
       mergeLibrary(local, f);
       const dest = getSpace(local, "demo").rootPath!;
+      const expectedCopies = [{ space_id: "demo", checkout: basename(dest) }];
+      expect(all(local.db, "select * from pulled_repositories")).toEqual(expectedCopies);
+      // Upgrade a store whose only recorded checkout was the space's adopted root.
+      run(local.db, "delete from pulled_repositories");
+      backfillPulledRepositories(local.db, local.home);
+      expect(all(local.db, "select * from pulled_repositories")).toEqual(expectedCopies);
       expect(dest).not.toBe(root);
       expect(readFileSync(join(dest, "app.txt"), "utf8")).toBe("unstaged\n");
       expect(git(dest, ["show", ":app.txt"]).stdout).toBe("staged\n");
@@ -362,6 +381,66 @@ describe("complete portable pulls", () => {
       const saved = join(local.home, "repos/pulled", readdirSync(join(local.home, "repos/pulled"))[0]);
       expect(readFileSync(join(saved, "app.txt"), "utf8")).toBe("remote change\n");
     } finally { cleanupFetched(f); }
+  });
+
+  const support = sandboxSupport();
+  it.skipIf(!support.ok)("已有本地工作区时，沙箱按空间读取拉取的远端副本 " + (support.reason ?? ""), async () => {
+    const home = mkdtempSync(join(tmpdir(), "omem-pull-view-"));
+    vi.stubEnv("HOME", home);
+    const local = testApp(join(home, ".omem"));
+    const remote = testApp(join(home, "peer"));
+    const remoteRoot = repo();
+    const localRoot = join(home, "local");
+    const cwd = join(home, "other-project");
+    mkdirSync(cwd);
+    let fetched: Fetched | undefined;
+    try {
+      expect(git(home, ["clone", "-q", remoteRoot, localRoot]).ok).toBe(true);
+      for (const [app, rootPath] of [[local, localRoot], [remote, remoteRoot]] as const)
+        createSpace(app, { id: "demo", name: "示例仓库", kind: "repo", rootPath });
+      writeFileSync(join(localRoot, "app.txt"), "local edits");
+      writeFileSync(join(remoteRoot, "app.txt"), "remote edits");
+      writeFileSync(join(remoteRoot, "draft.txt"), "untracked");
+      writeFileSync(join(remoteRoot, ".env"), "fixture");
+      expect(git(remoteRoot, ["add", ".env"]).ok).toBe(true);
+
+      fetched = await snapshot(remote);
+      const pulled = join(local.home, "repos", "pulled");
+      mergeLibrary(local, fetched, { dryRun: true });
+      expect(existsSync(pulled)).toBe(false);
+      mergeLibrary(local, fetched);
+      const [checkout] = readdirSync(pulled);
+      mergeLibrary(local, fetched);
+      expect(all(local.db, "select space_id, checkout from pulled_repositories")).toEqual([{ space_id: "demo", checkout }]);
+      expect(getSpace(local, "demo").rootPath).toBe(localRoot);
+      expect(readFileSync(join(localRoot, "app.txt"), "utf8")).toBe("local edits");
+
+      // A previous copy beside the registered checkout has no verified space on this device.
+      mkdirSync(join(pulled, "old-copy"));
+      writeFileSync(join(pulled, "old-copy", "app.txt"), "old");
+      const profile = agentProfileSchema.parse({ id: "fixture", command: "/bin/sh", transport: "acp" });
+      local.config.agents.ownSandbox.mode = "require";
+      for (const id of ["reader", "visitor"]) createUser(local, { id, name: id });
+      addMember(local, "demo", "reader", "reader");
+      for (const userId of ["owner", "reader", "visitor"]) {
+        const { box } = ownRun(local, profile, cwd, false, undefined, { userId });
+        const script = userId === "visitor"
+          ? ['test -d "$1"', 'test -z "$(ls -A "$1")"', 'test ! -e "$1/pulled"', '! cat "$1/pulled/$2/app.txt" 2>/dev/null']
+          : ['test "$(ls -A "$1/pulled")" = "$2"', 'cd "$1/pulled/$2"', 'test "$(cat app.txt)" = "remote edits"',
+            'test ! -w app.txt', 'test ! -e draft.txt', 'test ! -e .env'];
+        const child = launch("/bin/sh", ["-ec", script.join("\n"), "sh", join(local.home, "repos"), checkout], { cwd, ownSandbox: box });
+        let errors = "";
+        child.stderr.on("data", b => errors += b);
+        expect((await once(child, "close"))[0], userId + " " + errors).toBe(0);
+      }
+    } finally {
+      if (fetched) cleanupFetched(fetched);
+      remote.db.close();
+      local.db.close();
+      vi.unstubAllEnvs();
+      rmSync(remoteRoot, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("restores a repository on the branch a new repository starts with, and keeps the attachments when a repository fails", async () => {

@@ -11,8 +11,16 @@ updated: 2026-11-28
 - `omem serve` 退出前先把宿主交出去（`detachHostsForShutdown`），再给正在回答的工具调用最多 5 秒（`src/server/http.ts` 的 `drainToolCalls`）。宿主在 omem 不在时让 Agent 照常跑：记下这一轮的 `session/update`，压着 Agent 问的权限，它对 omem 的调用在宿主的本机代理里等（MCP 地址和 `OMEM_URL` 都改成代理）；到时没人回来就取消这一轮、停掉 Agent。
 - 重启后运行的处理函数照常重跑，`openAcpOnce` 先按运行、角色或检查（`AgentRequest.hostSlot`，runner 填）、AI 和目录找留着的宿主（`claimHost`）：接回后重放输出（重启前已上报的只拼回复），发 `_omem/await_turn` 等原来那个 `session/prompt` 的结果，不重发提示。Agent 的旧工具令牌核对哈希后代表新的一轮（`tools.ts` 的 `aliasToolToken`），沙箱的 `/tmp` 沿用启动时那个。对不上的宿主停掉。
 - 表 `agent_hosts`（本机，不同步）。宿主持有的后端会话在清理账上记成宿主的 pid，活着时不会被清理；启动时和每分钟清一遍（`sweepAgentHosts`），只经套接字让宿主停，不按 pid 杀。
-- 不走宿主：API key 中转的后端、出网隔离的运行、云端 HTTP 工具的一轮、对话和后台复用的会话、探测。
+- 不走宿主：API key 中转的后端、出网隔离的运行、云端 HTTP 工具的一轮、对话和后台复用的会话、探测，以及用了 HOME 写时复制层或数据只读视图的本人沙箱运行（层和视图随 omem 进程结束，`src/agents/spawn.ts`）。
 - 测试：`test/agent-host.test.ts`，`test/fake-acp-agent.ts` 加 `FAKE_MODE=gap`；`OMEM_TEST_HOSTED=1` 让任何测试经宿主跑（`test/helpers.ts` 默认关）。设计在 `docs/v2/restart-hold.md`。
+
+## 沙箱可读取已有本地仓库的远端副本（2026-11-28）
+
+跨设备拉取后，本机记录每份仓库副本所属的空间。即使本地工作区有未提交的修改，本人和获准成员也能在沙箱中读取副本里的远端版本。重复拉取同一版本沿用原登记。实现见 `src/core/pull-repos.ts`，联合验收见 `test/pull-complete.test.ts`。
+
+## 本机沙箱按身份保存 HOME 并提供只读资料（2026-11-28）
+
+普通 HOME 修改和缓存保存在身份层，每个进程独立写入。状态接口给出大小和回退原因。代码、原件和产物经只读视图访问，成员按空间、原件和运行权限筛选。宿主预览仍从本人的交办页面启动。见 `docs/v2/sandbox-everyday.md`。
 
 ## 插件工具能改自己的设置（2026-11-28）
 

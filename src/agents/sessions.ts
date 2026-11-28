@@ -23,7 +23,7 @@ import { focusBlock } from "./turn-focus.ts";
 import { contextForTurn, explicitItemFocus, type ResolvedTurn } from "./turn-context.ts";
 import { createRun, runsInLane, type RunContext } from "./runs.ts";
 import { findAgentSpec } from "./specs.ts";
-import { chatSettings, describeThread, findThread, getThread, handedReportAgent, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
+import { chatSettings, describeThread, findThread, getThread, guestSender, handedReportAgent, threadMessages, updateThread, type Thread, type ThreadMessage } from "./threads.ts";
 import { retargetToolToken, revokeToolToken } from "./tools.ts";
 import { isAgentRunError, replyOf, sessionPrompt, type AgentEvent } from "./types.ts";
 import { autoTurnsSinceOwner, maxAutoTurns, progressMessages, refreshWork } from "./agent-work.ts";
@@ -395,7 +395,8 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   const addTools = ["stay_quiet", ...(situation ? ["update_situation"] : t.channel === "listen" ? ["track_problem"] : []),
     ...((situationReply === "draft" || situationReply === "auto") && !denyTools?.includes("lark_send") ? ["lark_send"] : []), ...(approvedStep ? ["submit_item_step"] : [])];
   // A turn answering a colleague in a group (ownerPresent gated / free) runs with the guest setting.
-  const guestTurn = messages.some((m) => typeof m.meta?.asker === "string");
+  const guestSenderId = guestSender(messages);
+  const guestTurn = guestSenderId !== undefined;
   const fullAccess = guestTurn ? app.config.lark.guests.fullAccess : undefined;
   // The AI of this thread: the owner's pick (/model, the thread's backend) if any; otherwise the one
   // chosen when its agent session started (choose-ai.ts), kept for as long as that session goes on.
@@ -462,7 +463,7 @@ export async function threadTurn(ctx: RunContext, threadId: string, messages: Th
   }
   const memberOptions = { userId, runId: ctx.run.id, threadId, messages, pinned: specified, signal: ctx.signal, revising: !!promptOverride };
   const profile = member ? await selectMemberRunAccount(app, raw, { ...memberOptions, alternatives: failoverProfiles(app, actor, raw, own, userId, scope ?? null).filter(p => accepts(p) && (p.id !== raw.id || p.model !== raw.model)) }) : undefined;
-  const prep = prepareRun(app, { ...profileArgs, profile, scene, spaceId: space, runId: ctx.run.id, userId, lark, denyTools, addTools, fullAccess, guestTurn });
+  const prep = prepareRun(app, { ...profileArgs, profile, scene, spaceId: space, runId: ctx.run.id, userId, lark, denyTools, addTools, fullAccess, guestTurn, guestSenderId: guestSenderId ?? undefined });
   // The account's plan limits a turn reports go to the numbers kept per account (agents/quota.ts), not the run.
   const limitFor = { profile: prep.profile };
   const emit = (e: AgentEvent) => {
@@ -723,7 +724,7 @@ ${WAKE_NOTE}`
       const candidate = chain[step];
       release(threadId);
       revokeToolToken(curPrep.token);
-      curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profile: member ? candidate : undefined, profileId: candidate.id, userId, lark, model: candidate.model, effort: candidate.effort, denyTools, addTools, fullAccess, guestTurn });
+      curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profile: member ? candidate : undefined, profileId: candidate.id, userId, lark, model: candidate.model, effort: candidate.effort, denyTools, addTools, fullAccess, guestTurn, guestSenderId: guestSenderId ?? undefined });
       // The fallback runs with this member's own account of it when they have one (prepareRun chose it).
       const used = curPrep.profile;
       limitFor.profile = used;
@@ -832,7 +833,7 @@ ${WAKE_NOTE}`
           release(threadId);
           emit({ type: "status", text: `之前的 Agent 会话不可用（${(e as Error).message.slice(0, 80)}），改为新会话` });
           const renewed = member ? await memberRetry(used) : undefined;
-          curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profile: renewed, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn });
+          curPrep = prepareRun(app, { actor, scene, spaceId: space, runId: ctx.run.id, profile: renewed, profileId: used.id, userId, lark, model: t.settings.model ?? used.model ?? undefined, effort: t.settings.effort ?? used.effort ?? undefined, denyTools, addTools, fullAccess, guestTurn, guestSenderId: guestSenderId ?? undefined });
           curPrep.profile = networkProfile(app, curPrep.profile);
           limitFor.profile = curPrep.profile;
           checkAccount(curPrep);

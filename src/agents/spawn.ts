@@ -1,5 +1,8 @@
 import type { Writable } from "node:stream";
+import { sandboxGitConfig } from "./sandbox-gitconfig.ts";
 import { sandboxNpmrc } from "./sandbox-npmrc.ts";
+import { openDataView } from "./sandbox-view.ts";
+import { openHomeLayer } from "./sandbox-home.ts";
 import { withPinnedBinds } from "./bwrap-spawn.ts";
 import { commandMounts } from "./command-mounts.ts";
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -71,8 +74,10 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   if (!resolved) throw new Error(`找不到命令 ${command}。请安装对应 Agent CLI 或在设置中修改命令。`);
   if (opts.directOnly && resolved.prefix.includes("/c")) throw new Error("命令需要经过 shell 才能启动");
   const account = opts.ownSandbox ?? opts.sandbox;
-  const npmrc = account && join(canonical(account.home), ".npmrc");
-  const registryFile = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => under(npmrc, p)) ? npmrc : undefined;
+  const configFiles = account && !opts.sandbox?.borrowed
+    ? [".npmrc", ".gitconfig", ".config/git/config"].map(rel => join(canonical(account.home), rel))
+      .filter(path => !opts.ownSandbox?.hidden.some(hidden => under(path, hidden)))
+    : [];
   const runtime = base.XDG_RUNTIME_DIR;
   const desktopPrivate = account && guarded ? [
     ...[".ai-auto-desktop", ".aad-request-gates", ".Xauthority", ".omem/remote/profiles"].map(name => join(canonical(account.home), name)),
@@ -80,47 +85,78 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
     ...(runtime && isAbsolute(runtime) ? [join(runtime, "at-spi"), join(runtime, "bus"),
       ...(base.WAYLAND_DISPLAY ? [isAbsolute(base.WAYLAND_DISPLAY) ? base.WAYLAND_DISPLAY : join(runtime, base.WAYLAND_DISPLAY)] : [])] : []),
   ] : [];
-  let boxed;
-  if (opts.ownSandbox) {
-    const box = opts.ownSandbox;
-    const cwd = canonical(opts.cwd);
-    const plan = box.plan;
-    for (const dir of [box.runDir, ...box.state]) {
-      if (!dir || !plan.rw.includes(dir)) continue;
-      if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-    }
-    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-      ...bwrapArgs({ ...plan, masked: [...(plan.masked ?? []), ...desktopPrivate], privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
-  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, { ...opts.sandbox, masked: [...(opts.sandbox.masked ?? []), ...desktopPrivate] }, opts.workspace, base, registryFile) : null;
-  // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
-  const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;
-  const start = (argv: string[], fds: number[]) => {
-    if (opts.host) {
-      if (opts.stdin !== undefined && opts.stdin !== "pipe") throw new Error("Agent 宿主只接管 stdin 是管道的进程");
-      const child = startHosted(boxed?.file ?? resolved.file, argv, { cwd: opts.cwd, env: boxed?.env ?? env, extra: [...(config ? ["pipe" as const] : []), ...fds] }, opts.host);
-      if (config) {
-        const input = child.stdio[3] as Writable;
+  let homeView: ReturnType<typeof openDataView> | undefined;
+  let view: ReturnType<typeof openDataView> | undefined;
+  let layer: ReturnType<typeof openHomeLayer> | undefined;
+  try {
+    let boxed;
+    if (opts.ownSandbox) {
+      const box = opts.ownSandbox;
+      const cwd = canonical(opts.cwd);
+      const plan = box.plan;
+      for (const dir of [box.runDir, ...box.state]) {
+        if (!dir || !plan.rw.includes(dir)) continue;
+        if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+      }
+      if (box.homeStore && !plan.ro.includes(box.home)) {
+        try {
+          if (box.isolatedNetwork) homeView = openDataView({ data: box.home, socketsHidden: true }, []);
+          layer = openHomeLayer(box.homeStore, [...plan.hide, ...(box.masked ?? [])], [...plan.ro, ...plan.rw]);
+          if (homeView) layer.overlay.sources[0] = homeView.dir;
+        } catch (error) { box.onSandboxStatus?.("本轮 HOME 回退到只读挂载：" + (error as Error).message); }
+      }
+      if (box.dataView) {
+        try { view = openDataView(box.dataView, [...plan.ro, ...plan.rw, ...plan.hide, ...(box.masked ?? []).filter(existsSync), ...(plan.pointers ?? []).map(p => p.path)], plan.links); }
+        catch (error) { box.onSandboxStatus?.("数据只读视图不可用，保留私有数据遮罩：" + (error as Error).message); }
+      }
+      boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
+        ...bwrapArgs({ ...plan, masked: [...(plan.masked ?? []), ...desktopPrivate], dataView: view && { source: view.dir, path: box.data }, overlay: layer?.overlay, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, ...configFiles) };
+    } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, { ...opts.sandbox, masked: [...(opts.sandbox.masked ?? []), ...desktopPrivate] }, opts.workspace, base, ...configFiles) : null;
+    // Read-only config pipes start at fd 3. Pinned mount descriptors follow them.
+    const configs = (boxed?.configs ?? []).map(path => path.endsWith("/.npmrc") ? sandboxNpmrc(path) : sandboxGitConfig(path));
+    // The HOME layer and the data view are tied to this omem process: their helpers discard a run's layer
+    // and stop the view once it is gone. A run that would outlive a restart under an agent host would then
+    // lose its HOME changes and its view mid-turn, so such a run starts directly instead.
+    const host = opts.host && !layer && !view && !homeView ? opts.host : undefined;
+    if (opts.host && !host) opts.ownSandbox?.onSandboxStatus?.("本轮用了 HOME 层或数据视图，不交给 Agent 宿主：omem 重启时这一轮会中断。");
+    const start = (argv: string[], fds: number[]) => {
+      const feed = (child: { stdio: unknown[] }) => configs.forEach((config, i) => {
+        const input = child.stdio[3 + i] as Writable;
         input.on("error", () => {});
         input.end(config);
+      });
+      if (host) {
+        if (opts.stdin !== undefined && opts.stdin !== "pipe") throw new Error("Agent 宿主只接管 stdin 是管道的进程");
+        const child = startHosted(boxed?.file ?? resolved.file, argv, { cwd: opts.cwd, env: boxed?.env ?? env, extra: [...configs.map(() => "pipe" as const), ...fds] }, host);
+        feed(child);
+        return child as unknown as ChildProcess;
       }
-      return child as unknown as ChildProcess;
-    }
-    const child = spawn(boxed?.file ?? resolved.file, argv, {
-      cwd: opts.cwd, env: boxed?.env ?? env,
-      stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...(config ? ["pipe" as const] : []), ...fds],
-      shell: false, windowsHide: true, detached: process.platform !== "win32",
+      const child = spawn(boxed?.file ?? resolved.file, argv, {
+        cwd: opts.cwd, env: boxed?.env ?? env,
+        stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...configs.map(() => "pipe" as const), ...fds],
+        shell: false, windowsHide: true, detached: process.platform !== "win32",
+      });
+      feed(child);
+      return child;
+    };
+    const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, 3 + configs.length) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
+    if (homeView) child.once("close", homeView.close);
+    if (view) child.once("close", view.close);
+    const saveHome = layer?.close;
+    if (saveHome) child.once("close", () => {
+      try {
+        if (saveHome()) opts.ownSandbox?.onSandboxStatus?.("同一身份有并发 HOME 修改，重叠路径采用后结束运行的改动。");
+      } catch (error) { opts.ownSandbox?.onSandboxStatus?.("保存 HOME 层失败：" + (error as Error).message); }
     });
-    if (config) {
-      const input = child.stdio[3] as Writable;
-      input.on("error", () => {});
-      input.end(config);
-    }
+    child.stdin?.on("error", () => {});
     return child;
-  };
-  const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, config ? 4 : 3) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
-  child.stdin?.on("error", () => {});
-  return child;
+  } catch (error) {
+    homeView?.close();
+    view?.close();
+    layer?.close();
+    throw error;
+  }
 }
 
 export class SandboxStartError extends Error {}

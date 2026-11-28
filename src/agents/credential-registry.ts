@@ -6,7 +6,7 @@ import type { App } from "../core/app.ts";
 import { run } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
-import { cachePaths, canonical, normalizeSandbox, under } from "./own-sandbox.ts";
+import { canonical, normalizeSandbox, under } from "./own-sandbox.ts";
 import { setBackendStateCheck } from "./sandbox.ts";
 import { commandNameSchema, configuredCommandsForHome, loginEnvSchema } from "../core/protected-commands.ts";
 
@@ -43,6 +43,11 @@ function stateRel(path: string) {
     throw new Error("凭据状态目录必须相对 HOME，不能有 ..、反斜线或控制字符");
   return path;
 }
+/**
+ * Everyday tool caches. A sandbox writes them into its HOME layer; a login path declared over one of them
+ * would hide the cache from every run, so declarations may not cover these.
+ */
+const cachePaths = [".cache", ".npm", ".local/share/pnpm/store"];
 function containsDirectory(parent: string, child: string) {
   const rel = relative(parent, child);
   return !isAbsolute(rel) && rel.split(sep)[0] !== "..";

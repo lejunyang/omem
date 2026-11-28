@@ -548,7 +548,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
     // From here a restart leaves this turn to the next omem (hosted.ts).
     if (hosted && hostLaunch && !taken && child instanceof hosted.HostedChild) {
       await Promise.race([child.ready, failed]);
-      hosted.recordHost(opts.app!, child, opts.host!, { profileId: profile.id, cwd: opts.cwd, sessionId, agent: init.agentInfo?.name ?? profile.command, caps, system: "systemPrompt" in system, resumed, token: opts.mcp?.token, privateTmp: opts.workspace?.privateTmp ?? opts.ownSandbox?.plan.work.privateTmp });
+      hosted.recordHost(opts.app!, child, opts.host!, { profileId: profile.id, cwd: opts.cwd, sessionId, agent: init.agentInfo?.name ?? profile.command, caps, system: "systemPrompt" in system, resumed, token: opts.mcp?.token, privateTmp: opts.workspace?.privateTmp ?? opts.ownSandbox?.plan.privateTmp ?? opts.ownSandbox?.plan.work.privateTmp });
     }
     touch();
     // Permission mode: prefer the role's choice when the agent offers it.
