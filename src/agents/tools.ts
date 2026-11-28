@@ -7941,6 +7941,8 @@ export async function callTool(ctx: ToolContext, name: string, args: unknown): P
         return { text: "材料检索只读所选空间已收录的版本。", isError: true };
       ctx = { ...ctx, spaces, sourceSpaces: spaces, spaceId: spaces[0], writable: [] };
       if (name === "search" && args && typeof args === "object" && !("space" in args)) args = { ...args, space: "*" };
+    } else if (ctx.sourceSpaces) {
+      ctx = { ...ctx, sourceSpaces: undefined };
     }
   }
   const scope = memberToolAccess(ctx.app, ctx.userId ?? OWNER, ctx)(name);

@@ -5,6 +5,11 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 英语陪练的默认读范围和跨设备出处（2026-11-28）
+
+- 材料空间留空时沿用档案读范围，选定后可读所选空间及插件自己的空间。读范围从 `src/plugins/blocks.ts` 的 `materialSpaceScope` 看起。
+- 设备拉取重排聊天行号后，开题时按本地行号核对单行出处，题目和画像都保存完整行号区间。见 `plugins/english/materials.ts`。
+
 ## 英语陪练用材料出题与今日学习（2026-11-28）
 
 - 从 `plugins/english/server.ts` 看题目、口语简报、评价及每日课程，从 `materials.ts` 看引用核对与去重。表达跟着画像里的知识点复习，语音模型收到匿名简述。

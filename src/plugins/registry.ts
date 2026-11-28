@@ -26,7 +26,7 @@ import { platformList, registerPlatform } from "./platforms.ts";
 import { pluginObjectKinds, registerObject, withObjectActions } from "./objects.ts";
 import { describeHooks, registerHook } from "./hooks.ts";
 import { htmlToMarkdown } from "../sources/html.ts";
-import { blockTool, pluginContext, type PluginEnv } from "./blocks.ts";
+import { blockTool, materialSpaceScope, pluginContext, type PluginEnv } from "./blocks.ts";
 import { ensureService, serviceSchema, stopPluginServices, streamSchema } from "./services.ts";
 import { pluginSettings, settingFieldSchema } from "./settings.ts";
 import { acceptCredentialDeclarations, codeHash, setTrust, setTrustPermanent, trustMode, trustPermanent, trustState, type RunMode } from "./trust.ts";
@@ -188,8 +188,7 @@ export function getPlugin(id: string) {
 /** Only source-reading tools receive this per-user grant. */
 export function pluginSourceSpaces(app: App, id: string, userId: string): string[] | undefined {
   const p = findPlugin(id);
-  const key = p?.env.sourceSetting;
-  if (p && key) return p.env.settings(app, userId)[key] as string[];
+  if (p?.env.sourceSetting) return materialSpaceScope(p.env, p.env.settings(app, userId));
 }
 
 /** A plugin's `whenConnected` tools: for people with a working connection to one of its connectors. */
@@ -242,6 +241,7 @@ async function register(app: App, dir: string, manifest: PluginManifest, source:
     env: {
       id: manifest.id,
       title: manifest.page?.title ?? manifest.name,
+      spaceId: manifest.space?.id,
       sourceSetting: manifest.settings.find(f => f.type === "source-spaces")?.key,
       def: (kind) => blocks.get(kind),
       settings: (app, userId) => pluginSettings(app, manifest.id, manifest.settings, userId),

@@ -102,30 +102,6 @@ const FLOW_SIGNAL_INDEXES = `create index flow_signal_stage on flow_signals(item
    create index flow_signal_age on flow_signals(at);
    create index doing_flow_stages on item_stages(item_id,stage_id) where state='doing';`;
 
-const LONG_TASKS_MIGRATION = `create table if not exists long_tasks (
-     id text primary key, space_id text not null references spaces(id), user_id text not null,
-     thread_id text not null unique references conversations(id) on delete cascade,
-     item_id text not null unique references items(id) on delete cascade,
-     goal text not null, ai text not null, status text not null default 'draft',
-     brief text not null, confirmed_at text, supplements text not null default '[]',
-     budget text not null, notifications text not null, notes text not null default '[]',
-     state text not null default '{}', created_at text not null, updated_at text not null
-   );
-   create index if not exists long_tasks_space on long_tasks(space_id, updated_at desc);
-   create index if not exists long_tasks_user on long_tasks(user_id, updated_at desc);
-   create index if not exists long_tasks_open_items on long_tasks(item_id) where status in ('draft','active','paused');
-   create index if not exists long_tasks_updated on long_tasks(updated_at desc);`;
-
-const LONG_TASK_SOURCES_MIGRATION = `alter table long_tasks add column source_kind text;
-   alter table long_tasks add column source_id text;
-   alter table long_tasks add column source_generation integer not null default 1;
-   create unique index long_tasks_source on long_tasks(source_kind,source_id,source_generation) where source_kind is not null;
-   create index conversation_children on conversations(parent_id) where parent_id is not null;
-   create index supervised_pending_asks on asks(json_extract(context,'$.supervisorTaskId'))
-     where status='pending' and json_extract(context,'$.supervisorTaskId') is not null;
-   create index item_flows_unfinished on item_flows(item_id) where ended_at is null;
-   create index if not exists runs_done_code_verdict on runs(json_extract(output,'$.verdict')) where kind='code' and status='done';`;
-
 export const migrations: readonly string[] = [
   `
   create table spaces (
@@ -2585,10 +2561,30 @@ export const migrations: readonly string[] = [
    alter table reply_outcomes add column sweep_tries integer not null default 0;
    create index reply_outcomes_task on reply_outcomes(task_id);
    create index reply_outcomes_unswept on reply_outcomes(at) where swept_at is null;`,
-  LONG_TASKS_MIGRATION,
+  `create table if not exists long_tasks (
+     id text primary key, space_id text not null references spaces(id), user_id text not null,
+     thread_id text not null unique references conversations(id) on delete cascade,
+     item_id text not null unique references items(id) on delete cascade,
+     goal text not null, ai text not null, status text not null default 'draft',
+     brief text not null, confirmed_at text, supplements text not null default '[]',
+     budget text not null, notifications text not null, notes text not null default '[]',
+     state text not null default '{}', created_at text not null, updated_at text not null
+   );
+   create index if not exists long_tasks_space on long_tasks(space_id, updated_at desc);
+   create index if not exists long_tasks_user on long_tasks(user_id, updated_at desc);
+   create index if not exists long_tasks_open_items on long_tasks(item_id) where status in ('draft','active','paused');
+   create index if not exists long_tasks_updated on long_tasks(updated_at desc);`,
   `create index if not exists supervised_code_rounds on runs(json_extract(input,'$.longTaskId'))
      where kind='code' and json_extract(input,'$.longTaskId') is not null;`,
-  LONG_TASK_SOURCES_MIGRATION,
+  `alter table long_tasks add column source_kind text;
+   alter table long_tasks add column source_id text;
+   alter table long_tasks add column source_generation integer not null default 1;
+   create unique index long_tasks_source on long_tasks(source_kind,source_id,source_generation) where source_kind is not null;
+   create index conversation_children on conversations(parent_id) where parent_id is not null;
+   create index supervised_pending_asks on asks(json_extract(context,'$.supervisorTaskId'))
+     where status='pending' and json_extract(context,'$.supervisorTaskId') is not null;
+   create index item_flows_unfinished on item_flows(item_id) where ended_at is null;
+   create index if not exists runs_done_code_verdict on runs(json_extract(output,'$.verdict')) where kind='code' and status='done';`,
   `create index if not exists sources_recent_in_space on sources(space_id, updated_at desc) where deleted_at is null;`,
 ];
 
@@ -2607,16 +2603,6 @@ export function openDb(path: string): Db {
   // for those databases before applying the idempotent egress migration.
   if (version === migrations.indexOf(CHANGE_LEDGER_MIGRATION) + 1 &&
       !db.prepare("select 1 from sqlite_schema where type='table' and name='owner_choices'").get()) {
-    version--;
-  }
-  // The English materials branch used the long_tasks version for its recent-sources index.
-  if (version === migrations.indexOf(LONG_TASKS_MIGRATION) + 1 &&
-      !db.prepare("select 1 from sqlite_schema where type='table' and name='long_tasks'").get()) {
-    version--;
-  }
-  // The English materials branch also used the long-task sources version for its index.
-  if (version === migrations.indexOf(LONG_TASK_SOURCES_MIGRATION) + 1 &&
-      !db.prepare("select 1 from pragma_table_info('long_tasks') where name='source_kind'").get()) {
     version--;
   }
   for (let i = version; i < migrations.length; i++) {

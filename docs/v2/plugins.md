@@ -753,7 +753,7 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 英语等内置插件升级时，宿主会刷新仍与最初播种或上次更新一致的技能。本人编辑过的技能继续使用本人版本。
 
-清单可以声明一个材料范围设置（如 `{ key: materialSpaces, label: 材料来自哪些空间, type: source-spaces, default: [] }`）。设置接口的 `fields[].options` 是当前用户可选的 `{ value: 空间id, label: 名称 }` 列表，保存值为 id 数组。空数组关闭材料读取。外壳的多选控件待接入。三个原件工具 `search`、`list_sources`、`read_source` 按选择和运行读权限取交集，其他工具保留原范围。首次授权从下一轮生效，移除空间当场生效。
+清单可以声明一个材料范围设置（如 `{ key: materialSpaces, label: 材料来自哪些空间, type: source-spaces, default: [] }`）。设置接口的 `fields[].options` 是当前用户可选的 `{ value: 空间id, label: 名称 }` 列表，保存值为 id 数组。留空时，三个原件工具 `search`、`list_sources`、`read_source` 沿用档案原有的只读范围。选择材料空间后，这三个工具可读所选空间和插件自己的空间，仍受用户权限及本轮授权约束。取消材料授权当场生效，清空选择后恢复档案范围。外壳的多选控件待接入。
 
 进程内插件用 `ctx.materialSources(ids)` 批量核对当前可读原件的标题和行数。内容块的 `prepare(data, ctx, warnings)` 可以规范引用并向调用者报告被去掉的出处。需要一起提交的多条插件记录可放在 `ctx.store.transaction(() => …)` 的同步回调中。
 
@@ -802,7 +802,7 @@ api.slot("item.panel", { block: "ci_summary", when: { object: "pull-request" } }
 
 ### 材料出处和今日学习
 
-- 题目、口语块、口语记录和评价可带 `material: { ref, title, summary }`。ref 用 `src:<id>#L起-L止`，title 取自原件，summary 是陪练改写的中文简述。语音说明只采用简述。材料题的 `expression: { zh, en }` 随作答计入第一个知识点；口语评分按各 point 的 expression 记录。画像里 weak / due 的 expression 还含 material。
+- 题目、口语块、口语记录和评价可带 `material: { ref, title, summary }`。ref 保存为 `src:<id>#L起-L止`。从设备快照拉取的单行简写（如 `#L8`）核对后写作 `#L8-L8`。title 取自原件，summary 是陪练改写的中文简述。语音说明只采用简述。材料题的 `expression: { zh, en }` 随作答计入第一个知识点；口语评分按各 point 的 expression 记录。画像里 weak / due 的 expression 还含 material。
 - `english_snapshot({ format: "json" })` 提供 `settings.materialSpaces`、`recentMaterials: [{ sourceId, ref, title, summary, lastUsedAt }]`、最近课程场景 recentScenes，以及 `todayLesson: { date, ready, theme?, link }`。题组提交、入题库、编课或安排口语时更新使用记录，同一原件取最新一次，最多 60 份。
 - 规则“英语 · 今日学习”首次导入后停用，默认本人时区 08:00。启用后陪练先用 `list_sources(space, recent_days: 2)` 找近期原件，按行阅读，在 `english_lesson` 交课成功后用 `notify` 发送链接 `#/plugin/english?lesson=YYYY-MM-DD`。
 - 页面用 `GET /api/plugins/english/data/lessons?key=YYYY-MM-DD` 读取 `{ data: { date, updatedAt, theme, expressions: [{ zh, en, material? }], quiz: { title, intro?, items }, speaking: { scene, goal?, material? } } | null }`。题目沿用题库形状，含参考答案；练习时用 `english_next({ session_id, lessonDate })` 打开隐藏答案的题组，口语用 `english_speaking_start({ session_id, ...speaking })`。材料链接、课程卡片与多选设置由页面接入。

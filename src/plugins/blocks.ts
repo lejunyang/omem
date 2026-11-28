@@ -27,8 +27,15 @@ export type PluginEnv = {
   /** Where a block handed in outside a plugin session goes: a new session with this agent. */
   sessionFor(spec: string | undefined): { agent: string; spaceId: string } | null;
   title: string;
+  spaceId?: string;
   sourceSetting?: string;
 };
+
+/** An explicit material selection includes the plugin's own space. Empty settings keep the profile's normal read scope. */
+export function materialSpaceScope(env: PluginEnv, values: PluginSettings): string[] | undefined {
+  const selected = env.sourceSetting && values[env.sourceSetting];
+  if (Array.isArray(selected) && selected.length) return env.spaceId ? [...new Set([...selected, env.spaceId])] : selected;
+}
 
 const toState = (r: Row): PluginBlockState => ({
   id: r.id,
@@ -95,8 +102,8 @@ export function pluginContext(app: App, env: PluginEnv, c: { userId: string; spa
   const settings = () => {
     const values = env.settings(app, c.userId);
     const key = env.sourceSetting;
-    const selected = key && values[key];
-    if (key && Array.isArray(selected) && c.sourceSpaces) values[key] = selected.filter(id => c.sourceSpaces!.includes(id));
+    const selected = materialSpaceScope(env, values);
+    if (key && selected) values[key] = c.sourceSpaces ? selected.filter(id => c.sourceSpaces!.includes(id)) : selected;
     return values;
   };
   return {
