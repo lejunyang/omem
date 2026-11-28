@@ -1,4 +1,5 @@
 import type { Writable } from "node:stream";
+import { sandboxGitConfig } from "./sandbox-gitconfig.ts";
 import { sandboxNpmrc } from "./sandbox-npmrc.ts";
 import { openDataView } from "./sandbox-view.ts";
 import { openHomeLayer } from "./sandbox-home.ts";
@@ -71,8 +72,10 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   if (!resolved) throw new Error(`找不到命令 ${command}。请安装对应 Agent CLI 或在设置中修改命令。`);
   if (opts.directOnly && resolved.prefix.includes("/c")) throw new Error("命令需要经过 shell 才能启动");
   const account = opts.ownSandbox ?? opts.sandbox;
-  const npmrc = account && join(canonical(account.home), ".npmrc");
-  const registryFile = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => under(npmrc, p)) ? npmrc : undefined;
+  const configFiles = account && !opts.sandbox?.borrowed
+    ? [".npmrc", ".gitconfig", ".config/git/config"].map(rel => join(canonical(account.home), rel))
+      .filter(path => !opts.ownSandbox?.hidden.some(hidden => under(path, hidden)))
+    : [];
   let homeView: ReturnType<typeof openDataView> | undefined;
   let view: ReturnType<typeof openDataView> | undefined;
   let layer: ReturnType<typeof openHomeLayer> | undefined;
@@ -99,24 +102,24 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
         catch (error) { box.onSandboxStatus?.("数据只读视图不可用，保留私有数据遮罩：" + (error as Error).message); }
       }
       boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-        ...bwrapArgs({ ...plan, dataView: view && { source: view.dir, path: box.data }, overlay: layer?.overlay, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
-    } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, registryFile) : null;
-    // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
-    const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;
+        ...bwrapArgs({ ...plan, dataView: view && { source: view.dir, path: box.data }, overlay: layer?.overlay, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, ...configFiles) };
+    } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, ...configFiles) : null;
+    // Read-only config pipes start at fd 3. Pinned mount descriptors follow them.
+    const configs = (boxed?.configs ?? []).map(path => path.endsWith("/.npmrc") ? sandboxNpmrc(path) : sandboxGitConfig(path));
     const start = (argv: string[], fds: number[]) => {
       const child = spawn(boxed?.file ?? resolved.file, argv, {
         cwd: opts.cwd, env: boxed?.env ?? env,
-        stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...(config ? ["pipe" as const] : []), ...fds],
+        stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...configs.map(() => "pipe" as const), ...fds],
         shell: false, windowsHide: true, detached: process.platform !== "win32",
       });
-      if (config) {
-        const input = child.stdio[3] as Writable;
+      configs.forEach((config, i) => {
+        const input = child.stdio[3 + i] as Writable;
         input.on("error", () => {});
         input.end(config);
-      }
+      });
       return child;
     };
-    const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, config ? 4 : 3) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
+    const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, 3 + configs.length) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
     if (homeView) child.once("close", homeView.close);
     if (view) child.once("close", view.close);
     const saveHome = layer?.close;

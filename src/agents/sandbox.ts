@@ -146,7 +146,7 @@ export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointer
  * (omem's data folder inside its checkout) stays hidden; at the same path writable wins. /tmp is
  * always private.
  */
-export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
+export function bwrapArgs(plan: SandboxPlan, ...configFiles: string[]) {
   const pinned = new Set<string>();
   const rank = { dir: 0, tmpfs: 1, overlay: 2, ro: 3, rw: 4 } as const;
   const ops = new Map<string, { path: string; kind: keyof typeof rank }>();
@@ -217,8 +217,8 @@ export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
   const links = (plan.links ?? []).flatMap(({ path, target }) => ["--symlink", target, path]);
   const pointers = (plan.pointers ?? []).flatMap(p => ["--ro-bind", p.source, p.path]);
   // Apply credential masks last, including inside writable caches or a mounted account HOME.
-  const npmrc = registryFile && credentials.includes(registryFile) && statSync(registryFile, { throwIfNoEntry: false })?.isFile() ? registryFile : undefined;
-  const masks = credentials.filter(path => path !== npmrc).flatMap(path => {
+  const configs = configFiles.filter(path => credentials.includes(path) && statSync(path, { throwIfNoEntry: false })?.isFile());
+  const masks = credentials.filter(path => !configs.includes(path)).flatMap(path => {
     const stat = statSync(path, { throwIfNoEntry: false });
     if (!stat) return [];
     return stat.isDirectory() ? ["--tmpfs", path] : ["--ro-bind", "/dev/null", path];
@@ -231,11 +231,11 @@ export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
   // the runtime directories and explicit run mounts, leaving host service sockets outside.
   const root = n || plan.minimalRoot ? ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].flatMap(p => ["--ro-bind-try", p, p]) : ["--ro-bind", "/", "/"];
   const args = ["--die-with-parent", "--unshare-pid", "--unshare-user", ...root, "--proc", "/proc", "--dev", "/dev", ...mounts, ...pointers, ...links, ...snapshotLinks, ...masks, ...(plan.commandMounts ?? []),
-    ...(npmrc ? ["--ro-bind-data", "3", npmrc] : []),
+    ...configs.flatMap((path, i) => ["--ro-bind-data", String(3 + i), path]),
     ...[...snapshots].flatMap(([p, access]) => access === "ro" ? ["--remount-ro", p] : []),
     ...(n ? ["--unshare-net", "--tmpfs", "/run", ...(n.secrets && existsSync(n.secrets) ? ["--tmpfs", n.secrets] : []), "--ro-bind", n.socket, "/tmp/omem-egress.sock", ...(n.bundle ? ["--ro-bind", n.bundle, "/tmp/omem-ca.pem"] : [])] : []),
     ...ca, "--chdir", plan.cwd, "--", ...relay, plan.command, ...plan.args];
-  return { args, pinned, npmrc };
+  return { args, pinned, configs };
 }
 
 export function egressRequested(config: import("../core/config.ts").Config, profile: object, own = false) {
@@ -330,7 +330,7 @@ export function omemInstallDir() {
  * What `launch` starts instead of the command, for a run of one user's own account: bwrap with
  * the mounts worked out from where the command really lives.
  */
-export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, registryFile?: string) {
+export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, ...configFiles: string[]) {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
   if (acct.backendState) backendStateCheck?.(acct.backend, acct.home, acct.backendState.map(rel => join(acct.home, rel)));
@@ -370,7 +370,7 @@ export function sandboxCommand(resolved: { file: string; prefix: string[] }, arg
   if (runEnv.OMEM_ARTIFACTS) rw.push(real(runEnv.OMEM_ARTIFACTS));
   return {
     file: s.bwrap,
-    ...bwrapArgs({ privateTmp: workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: acct.masked, network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, registryFile),
+    ...bwrapArgs({ privateTmp: workspace?.privateTmp, commandMounts: commandMounts(runEnv.OMEM_COMMAND_GATE, runEnv.PATH), masked: acct.masked, network: acct.network, hide, privateDirs, ro: [...roList, ...(workspace?.ro ?? [])], rw, links: workspace?.links, pointers: workspace?.pointers, cwd: real(cwd), command: resolved.file, args: [...resolved.prefix, ...args] }, ...configFiles),
     env: sandboxEnv(baseEnv, runEnv, acct, hide, nodeBin),
   };
 }
