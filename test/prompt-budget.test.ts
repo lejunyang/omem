@@ -69,8 +69,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "mention-triage": ["mention", 3242, 3242, 2242, 2242],
   "work-state": ["work-state", 6510, 6510, 3951, 3951],
   "listen-coach": ["listen-coach", 6049, 6154, 3044, 3044],
-  // 实测 2026-11-28：夜里复查改成回扫（分件、两种新标注、类型、查数记录）之后。
-  "outcome-reviewer": ["outcome-review", 5800, 5800, 3612, 3612],
+  // 实测 2026-11-28：夜里复查改成回扫（分件、两种新标注、类型、查数记录），再加分几次做完的事怎么判之后。
+  "outcome-reviewer": ["outcome-review", 5946, 5946, 3758, 3758],
   // 实测：首句、短要点和改写对照，加上 text 原样发出、evidence 分条之后，MCP 为 4871 字符，无工具为 2297。
   "first-look": ["first-look", 4871, 4871, 2297, 2297],
 };
