@@ -14,6 +14,7 @@ import { ROLE_TOOLS } from "./agents/tool-help.ts";
 import { READ_ONLY_TOOLS } from "./agents/peer-agent.ts";
 import { App, type AppEvent } from "./core/app.ts";
 import { configPath, omemHome } from "./core/config.ts";
+import { packageVersion } from "./core/version.ts";
 import { createSpace, ensurePersonalSpace, findSpace, getSpace, kindLabel, listSpaces, relatedIds, relatedSpaces, relateSpaces, setSpaceParent, spaceForDir, unrelateSpaces, updateSpace } from "./core/spaces.ts";
 import { initRepository } from "./core/repositories.ts";
 import { listItems, upsertItem } from "./items/store.ts";
@@ -28,7 +29,7 @@ import { importDirectory, importFile, importText, importUrl, syncDirectorySpace 
 import { listPages, readPage, syncWiki } from "./wiki/store.ts";
 
 const program = new Command();
-program.name("omem").description("个人记忆与助理：理解材料、带依据地回答、跟进事项、交办 Agent。").version("0.0.1");
+program.name("omem").description("个人记忆与助理：理解材料、带依据地回答、跟进事项、交办 Agent。").version(packageVersion());
 program.option("--home <dir>", "数据目录（默认 ~/.omem，或环境变量 OMEM_HOME）");
 
 const home = () => (program.opts().home ? resolve(program.opts().home) : omemHome());

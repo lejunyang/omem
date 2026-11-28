@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 版本号读自 package.json（2026-11-28）
+
+`omem --version`、ACP 和 MCP 的 `clientInfo` / 服务名里的版本原来写死成 `0.0.1`，发 0.0.2 后仍报 0.0.1。现在统一由 `src/core/version.ts` 的 `packageVersion()` 读包的 `package.json`（源码和 `dist/` 两种位置都认）。
+
 ## 重启不打断正在跑的一轮（2026-11-28）
 
 - 运行里经 `runRole` 跑的 ACP 一轮（交办编码、评审检查、跟进、课题试验、流程阶段等）的 Agent 放在 Agent 宿主下（`src/agents/agent-host.ts`）：omem 起一个启动器，启动器以独立会话起宿主后退出，宿主不在 omem 的进程树里，PM2 重启 omem 时停不到它。omem 经数据目录 `agent-hosts/` 下的套接字（Windows 是命名管道）说 ACP（`src/agents/hosted.ts` 的 `HostedChild`，帧格式在 `host-frames.ts`）。设置 `agents.restartHold`（默认开，留 5 分钟）。

@@ -1,5 +1,6 @@
 import { modelDisplayName } from "../core/ai-keys.ts";
 import { keyedModelEnv } from "../core/config.ts";
+import { packageVersion } from "../core/version.ts";
 import { ClientSideConnection, ndJsonStream, type McpServer, type SessionConfigOption } from "@agentclientprotocol/sdk";
 import { Readable } from "node:stream";
 import type { App } from "../core/app.ts";
@@ -445,7 +446,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       connection.initialize({
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-        clientInfo: { name: "omem", version: "0.0.1" },
+        clientInfo: { name: "omem", version: packageVersion() },
       }),
       failed,
     ]);
@@ -876,7 +877,7 @@ async function withAcpConnection<T>(profile: AgentProfile, cwd: string, env: Rec
   try {
     return await Promise.race([
       (async () => {
-        const init = await connection.initialize({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "omem", version: "0.0.1" } });
+        const init = await connection.initialize({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "omem", version: packageVersion() } });
         return work(connection, init.agentCapabilities as { sessionCapabilities?: { delete?: unknown; list?: unknown } } | undefined);
       })(),
       exited,

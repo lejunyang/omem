@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { packageVersion } from "../core/version.ts";
 
 export type ToolBackend = {
   list(): Promise<{ name: string; description: string; inputSchema: Record<string, unknown> }[]>;
@@ -9,7 +10,7 @@ export type ToolBackend = {
 /** An MCP server whose tools are served by a backend (in-process registry or HTTP). */
 export function createMcpServer(backend: ToolBackend) {
   const server = new Server(
-    { name: "omem", version: "0.0.1" },
+    { name: "omem", version: packageVersion() },
     { capabilities: { tools: {} }, instructions: "omem 知识库工具：检索与阅读原件/Wiki/记忆/事项，并在任务允许时写入。" },
   );
   // omem checks every call itself (the run's tools, spaces, chats; approvals.tools for the owner's OK)
