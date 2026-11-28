@@ -126,7 +126,7 @@
 | 四 | 严格运行的出网代理：主机级审批；限定域名的路径级审批试点 | 已做（`src/agents/egress-proxy.ts`、`egress-policy.ts`、`egress-run.ts`：要求隔离的成员运行在沙箱里断开直连，只经本机代理出网，按主机放行、拒绝或审批；`security.egress.inspect` 里的域名解密后按路径判定，默认空）。只在 Linux；借别的设备跑的运行不经这台的代理；网页在 设置 → 安全 的“出网代理” |
 | 五 | 本人的运行也进沙箱；完全访问有统一的开关 | 服务端已做（`src/agents/own-sandbox.ts`、`own-run.ts`：`agents.ownSandbox` 关 / 能用就用 / 不能用就拒绝，默认关；工作区、后端自己的状态目录、缓存和私有 /tmp 可写，omem 的数据目录看不到，可以加可写和隐藏的目录；`agents.fullAccess` 按角色 / 进了沙箱的都开 / 全部开，默认按角色）。只在 Linux；设置 → 安全 → 运行的沙箱、完全访问已接入（`SandboxSettings.vue`） |
 | 六 | 隔离受保护命令的凭据，增加执行器 | Linux 本人沙箱支持按类型分批开启，默认隐藏主流浏览器资料。飞书 CLI 的文件登录可在执行器内续签。Linux 沙箱已增加登录文件和插件状态遮挡，本人沙箱已接 all-sandboxed 出网代理。同身份命令走流式执行器，已知安装位置覆盖垫片。后端状态与插件命令登录目录重合时，沙箱在启动前提示分开供给。覆盖范围见 `command-gate.md`。 |
-| 七 | 日常都在沙箱里跑（[sandbox-everyday.md](sandbox-everyday.md)）：HOME 写时复制、跨轮的 `/tmp`、按身份的数据只读视图、git 配置快照、本人登记要登录的命令、桌面和浏览器经执行器、出网规则分清 Agent 直接发的和执行器里发的；之后 `includeKinds` 留空即全部进沙箱 | 设计已定，在做 |
+| 七 | 日常都在沙箱里跑（[sandbox-everyday.md](sandbox-everyday.md)）：HOME 写时复制、跨轮的 `/tmp`、按身份的数据只读视图、git 配置快照、本人登记要登录的命令、桌面和浏览器经执行器、出网规则分清 Agent 直接发的和执行器里发的；之后 `includeKinds` 留空即全部进沙箱 | 身份 HOME 层与按权限的数据视图已实现，其他部分进度见设计页 |
 
 ## 五、成员权限
 

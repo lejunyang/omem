@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 本机沙箱按身份保存 HOME 并提供只读资料（2026-11-28）
+
+普通 HOME 修改和缓存保存在身份层，每个进程独立写入。状态接口给出大小和回退原因。代码、原件和产物经只读视图访问，成员按空间、原件和运行权限筛选。宿主预览仍从本人的交办页面启动。见 `docs/v2/sandbox-everyday.md`。
+
 ## 卡片预览画出 Markdown 表格；沙箱设置页跟上执行器（2026-11-28）
 
 - `scripts/card-preview.ts` 画之前把 Markdown 元素里的管道表格换成表格组件（每列 125px、每页 5 行），手机宽度下和客户端一样要横着滑；以前画成原样的竖线文字。在卡片搭建工具的手机视图里核对过客户端：JSON 2.0 的 Markdown 表格每页 5 行带翻页，每列约 125px，四列在手机上只露出前两列多一点。`skills/omem/references/owner.md` 的 `fold` 写明 fold 里的明细一项一行或只留两三列，列多的放成 fold 外的 `table`；`docs/v2/lark-cards.md` 同步。
