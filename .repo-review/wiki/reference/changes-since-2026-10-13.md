@@ -15,6 +15,10 @@ updated: 2026-11-28
 - 从 `plugins/english/server.ts` 看题目、口语简报、评价及每日课程，从 `materials.ts` 看引用核对与去重。表达跟着画像里的知识点复习，语音模型收到匿名简述。
 - `src/plugins/settings.ts` 和 `src/agents/runner.ts` 限定材料读取范围。规则 `plugins/english/rules/daily-lesson.yaml` 初次导入停用；启用后每天准备课程并用宿主通知发链接。页面数据约定在 `docs/v2/plugins.md` 的“材料出处和今日学习”。
 
+## 研究里改缺陷的交办归研究自己的跟进（2026-11-28）
+
+`longTaskForRun`（`src/agents/supervisor-code.ts`）认交办的事项上开着的研究跟进；`followCodePlan` 不再因为“来自流程”给研究的每个修复交办各起一件跟进（事项有研究方向即算研究）。常驻服务器上线自动跟进时，服务启动补挂给两个研究的 11 个修复交办各起了一件跟进，同时排了十几轮强模型，已改回。
+
 ## 交回的报告只存报告本身，网页上折叠（2026-11-28）
 
 `run_agent` 的报告交回会话时（`src/agents/wakes.ts` 的 `returnChildReport`），会话里那条消息的正文只有报告；“按报告给本会话写回复……stay_quiet”这段说明放在 `meta.wake.note`，`meta.wake.report` 记下是哪个 Agent、哪次运行。助手那一轮看到的内容没变：`renderMessages` 把说明拼回报告前面，署名“<Agent> 交回的报告（宿主转交，不是本人说的）”；摘要和 `read_conversation` 也按这个署名，不再记成“助理”。问答页把交回的报告、多 Agent 工作里各轮的报告和定时唤醒都收成一行，点开看正文；旧数据里正文带着说明的，展示时去掉说明只留报告。这类消息本来就不发到飞书。

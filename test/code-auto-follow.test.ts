@@ -2,8 +2,11 @@ import { afterEach, expect, it } from "vitest";
 import { testApp } from "./helpers.ts";
 import type { App } from "../src/core/app.ts";
 import { all, run } from "../src/core/db.ts";
-import { autoFollowFor } from "../src/agents/auto-follow.ts";
-import { backfillCodeFollow } from "../src/agents/code-auto-follow.ts";
+import { autoFollowFor, ensureAutoFollow } from "../src/agents/auto-follow.ts";
+import { backfillCodeFollow, followCodePlan } from "../src/agents/code-auto-follow.ts";
+import { itemFlow } from "../src/flows/store.ts";
+import { stopFlow } from "../src/flows/engine.ts";
+import { studyFixture } from "./study-fixture.ts";
 import { codeChainFor, queueNextCodeRound, trySettleCodeChain } from "../src/agents/code-chain.ts";
 import { queueCodeWork } from "../src/agents/code-delegate.ts";
 import { reviewMetrics } from "../src/agents/code.ts";
@@ -216,4 +219,27 @@ it("网页发起的无会话交办完成时，把结果交回跟进助手", () =
   run(app.db, "update runs set status='done',output=json_object('verdict','approved') where id=?", root.id);
   trySettleCodeChain(app, root.id);
   expect(JSON.stringify(queuedInLane(app, "supervisor:" + task.id, "supervise")!.input.events)).toContain("approved");
+});
+
+it("研究里改缺陷的交办归研究的跟进，不另起一件；本人不让研究跟进时也不另起", async () => {
+  const f = await studyFixture();
+  try {
+    f.app.config.agents.profiles.push({ id: "demo", transport: "acp", command: process.execPath, args: [], env: {}, idleTimeoutMs: 60000 });
+    f.app.config.longTasks.supervisor = { profile: "demo" };
+    await f.finishTrial(); f.finding(); await f.beginFix();
+    const fix = f.stage().control.fixWorkId!;
+    const study = ensureAutoFollow(f.app, { kind: "study", sourceId: f.item.id, userId: "owner", spaceId: "project", goal: "示例研究" })!;
+    expect(longTaskForRun(f.app, fix)?.id).toBe(study.id);
+    expect(followCodePlan(f.app, fix)?.id).toBe(study.id);
+    expect(autoFollowFor(f.app, "code", fix)).toBeNull();
+    await changeLongTask(f.app, study.id, { action: "detach" });
+    expect(followCodePlan(f.app, fix)).toBeNull();
+    backfillCodeFollow(f.app);
+    expect(all(f.app.db, "select id from long_tasks where source_kind='code'")).toEqual([]);
+  } finally {
+    f.app.events.emit("close");
+    if (!itemFlow(f.app, f.item.id)?.endedAt) await stopFlow(f.app, f.item.id);
+    await new Promise((r) => setImmediate(r));
+    f.app.db.close();
+  }
 });
