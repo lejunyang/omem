@@ -1,4 +1,6 @@
 import type { AgentProfile, OperationRule } from "../core/config.ts";
+import { OWNER } from "../core/users.ts";
+import { refusedAddress } from "../remote/browser-guard.ts";
 import { entryForProfile } from "./catalog.ts";
 import { gateOperation, type Decision } from "./command-gate.ts";
 import { parsedBody } from "./http-gate.ts";
@@ -17,28 +19,31 @@ export function backendHosts(profile: AgentProfile) {
   return hosts;
 }
 
-export function egressPolicy(ctx: ToolContext, own: Set<string>, signal?: AbortSignal) {
+export function egressPolicy(ctx: ToolContext, own: Set<string>, signal?: AbortSignal, source: "agent" | "executor" = "agent") {
   const { app } = ctx;
   const who = operationWho(ctx);
   const pending = new Map<string, Promise<Decision>>();
   return {
     needsBody(url: URL) {
-      return currentRules(app).some(r => r.match.kind === "http" && r.match.body && ruleApplies(r, who) && hostMatches(r.match.host, url.hostname));
+      return currentRules(app).some(r => r.match.kind === "http" && (!r.match.source || r.match.source === source) && r.match.body && ruleApplies(r, who) && hostMatches(r.match.host, url.hostname));
     },
     async check(d: Destination) {
       const settings = app.config.security.egress;
-      const op: Operation = { kind: "http", method: d.method, url: d.url.href, tunnel: d.tunnel, body: parsedBody({ body: d.body?.toString(), contentType: d.contentType }) };
-      const backend = !d.private && own.has(d.url.host);
+      const op: Operation = { kind: "http", source, method: d.method, url: d.url.href, tunnel: d.tunnel, body: parsedBody({ body: d.body?.toString(), contentType: d.contentType }) };
+      const owner = who.member === OWNER;
+      const remote = !!d.ip && !refusedAddress(d);
+      const backend = source === "agent" && (!d.private || (owner && remote)) && own.has(d.url.host);
+      const explicit = d.private && !(owner && remote && source === "executor");
       if (backend) return { allowed: true, backend };
       function resolution() {
         const result = decide(app, op, who);
-        if (result.rule && result.action !== "unavailable" && (!d.private || result.action !== "log")) return { decision: result, fallback: false, summaryOnly: false };
+        if (result.rule && result.action !== "unavailable" && (!explicit || result.action !== "log")) return { decision: result, fallback: false, summaryOnly: false };
         const unsure = result.action === "unavailable";
         const config = app.config.security.egress;
-        const action = d.private ? "deny" : unsure ? config.tunnelWhenUnsure : config.default;
-        const title = d.private ? "内网地址需要显式放行" : unsure ? "隧道内的请求条件不可见" : "默认出网策略";
+        const action = explicit ? "deny" : unsure ? config.tunnelWhenUnsure : config.default;
+        const title = explicit ? "内网地址需要显式放行" : unsure ? "隧道内的请求条件不可见" : "默认出网策略";
         const rule: OperationRule = { id: "egress/" + digest([d.url.host, title, result.rule?.id, result.rule?.revision, action]), enabled: true, revision: 1, title, action, match: { kind: "http", host: d.url.hostname } };
-        return { decision: { rule, action }, fallback: true, summaryOnly: !d.private && !unsure && action === "allow" };
+        return { decision: { rule, action }, fallback: true, summaryOnly: !explicit && !unsure && action === "allow" };
       }
       const { decision: initial, fallback, summaryOnly } = resolution();
       const evaluate = () => resolution().decision;

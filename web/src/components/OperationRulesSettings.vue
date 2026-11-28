@@ -104,6 +104,7 @@ function clean(d: Draft): OperationRule {
     if (args !== undefined) match.argsRegex = args;
   } else if (m.kind === "http") {
     match = { kind: "http", host: m.host.trim() };
+    if (m.source) match.source = m.source;
     if (m.methods?.length) match.methods = [...m.methods];
     const path = keep("pathRegex", m.pathRegex);
     if (path !== undefined) match.pathRegex = path;

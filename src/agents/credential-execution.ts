@@ -91,7 +91,7 @@ async function runWith(ctx: ToolContext & { runId: string }, entry: Entry, args:
     if (owner && app.config.agents.ownSandbox.mode !== "off" && !ownBox) return "unavailable";
     const op = { kind: "command" as const, executable: command.name, argv: args, cwd };
     const signal = AbortSignal.any([runSignal, method.signal, AbortSignal.timeout(COMMAND_TIMEOUT_SEC * 1000)]);
-    const child = await launchRun(profile, { app, runId, context: ctx, signal, ownSandbox: ownBox }, (sandbox, ownSandbox) => {
+    const child = await launchRun(profile, { app, runId, source: "executor", context: ctx, signal, ownSandbox: ownBox }, (sandbox, ownSandbox) => {
       if (!eligible()) throw new Error("出借设置或运行已变化");
       const rule = decide(app, op, { ...operationWho(ctx), member: holder });
       if (rule.action !== "allow" && rule.action !== "log") throw new Error("持有人的命令规则需要另行放行");

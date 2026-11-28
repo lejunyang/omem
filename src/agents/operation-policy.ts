@@ -9,9 +9,10 @@ import { egressSupport } from "./sandbox.ts";
 import { audit } from "../auth/permissions.ts";
 import type { ToolContext } from "./tools.ts";
 
+export type HttpSource = NonNullable<Extract<OperationRule["match"], { kind: "http" }>["source"]>;
 export type Operation =
   | { kind: "command"; executable: string; argv?: string[]; cwd?: string }
-  | { kind: "http"; method: string; url: string; body?: unknown; tunnel?: boolean }
+  | { kind: "http"; source?: HttpSource; method: string; url: string; body?: unknown; tunnel?: boolean }
   | { kind: "file"; operation: "read"|"write"|"delete"|"rename"; path: string }
   | { kind: "tool"; server?: string; name: string; args: unknown };
 export type OperationWho = { member: string; role?: string; profile?: string; space?: string; backend?: string; runId?: string|null };
@@ -81,6 +82,7 @@ function target(m: OperationRule["match"], op: Operation): boolean | undefined {
   }
   if (m.kind === "http" && op.kind === "http") {
     const u = new URL(op.url);
+    if (m.source && m.source !== op.source) return false;
     if (!hostMatches(m.host,u.hostname)) return false;
     if (op.tunnel && (m.methods || m.pathRegex || m.body)) return undefined;
     return (!m.methods || m.methods.some(v => v.toUpperCase() === op.method.toUpperCase())) &&
@@ -122,7 +124,7 @@ export function digest(value: unknown) {
 export function fingerprint(op: Operation, rule: OperationRule) {
   if (op.kind === "http") {
     const u = new URL(op.url);
-    return digest([op.kind,op.method.toUpperCase(),u.host,u.pathname,rule.match.kind === "http" && rule.match.body ? field(op.body,rule.match.body.jsonPath) : null]);
+    return digest([op.kind,...(rule.match.kind === "http" && rule.match.source ? [op.source] : []),op.method.toUpperCase(),u.host,u.pathname,rule.match.kind === "http" && rule.match.body ? field(op.body,rule.match.body.jsonPath) : null]);
   }
   if (op.kind === "command") return digest([op.kind, executableName(op.executable), op.argv, op.cwd]);
   return digest(op.kind === "tool" ? [op.kind,op.server ?? "omem",op.name,op.args] : op);
@@ -130,5 +132,6 @@ export function fingerprint(op: Operation, rule: OperationRule) {
 export function auditOperation(app: App, op: Operation, who: OperationWho, rule: OperationRule|undefined, action: string, result: string, approver?: string) {
   const target = op.kind === "command" ? op.executable : op.kind === "file" ? op.path : op.kind === "tool" ? op.name : op.method + " " + new URL(op.url).host + new URL(op.url).pathname;
   audit(app, who.member, op.kind+"."+action, target.slice(0,300), { kind: op.kind, member: who.member, runId: who.runId, ruleId: rule?.id, revision: rule?.revision, action, result, approver,
+    ...(op.kind === "http" && { source: op.source }),
     ...(op.kind === "command" ? { argsHash: digest(op.argv ?? []), commandLine: [op.executable,...(rule?.match.kind === "command" ? rule.match.subcommand ?? [] : [])].join(" ").slice(0,200) } : {}) });
 }

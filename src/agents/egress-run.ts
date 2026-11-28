@@ -56,7 +56,7 @@ function summarize(app: App, runId: string, hosts: HostUsage[]) {
 }
 
 export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: AgentProfile,
-  req: { app?: App; ownSandbox?: OwnSandbox; context?: ToolContext; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount, ownSandbox?: OwnSandbox) => T) {
+  req: { app?: App; ownSandbox?: OwnSandbox; source?: "executor"; context?: ToolContext; mcp?: McpAccess; runId?: string | null; signal?: AbortSignal }, start: (account?: SandboxAccount, ownSandbox?: OwnSandbox) => T) {
   const account = accountOf(profile);
   const app = req.app;
   // Tool-less model calls still use the guarded entry points, which require a token.
@@ -83,7 +83,7 @@ export async function launchRun<T extends Pick<ChildProcess, "once">>(profile: A
   try {
     const tls = inspect.length ? await (await import("./egress-ca.ts")).inspection(app.home, dir, inspect) : undefined;
     const lifetime = new AbortController();
-    const policy = egressPolicy(ctx, backendHosts(profile), lifetime.signal);
+    const policy = egressPolicy(ctx, backendHosts(profile), lifetime.signal, req.source);
     const callback = req.mcp && { target: app.baseUrl ?? req.mcp.baseUrl, origin: new URL(req.mcp.baseUrl).origin, token: req.mcp.token };
     if (callback && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(callback.origin)) throw new Error("出网隔离需要本机 HTTP 工具入口");
     const envProxy = { ...profile.env, ...networkEnvironment(app, profile) };

@@ -197,3 +197,16 @@ it("凭据命令的宿主回调经过出网代理仍能收到预检开始的通�
   expect(res.statusCode).toBe(200);
   expect(notices).toEqual([102]);
 });
+
+it("内网命令只对本人执行器采用默认出网策略，旧规则和本机地址仍受限", async () => {
+  const { app } = fixture();
+  const ctx = { app, runId: null, userId: "owner", spaceId: "personal", spaces: [], actor: "agent" as const, tools: null };
+  const d = { url: new URL("https://internal.example/"), method: "CONNECT", private: true, tunnel: true, ip: "10.0.0.2", local: false };
+  const exec = egressPolicy(ctx, new Set(), undefined, "executor");
+  expect((await exec.check(d)).allowed).toBe(true);
+  expect((await exec.check({ ...d, local: true })).allowed).toBe(false);
+  expect((await egressPolicy(ctx, new Set()).check(d)).allowed).toBe(false);
+  expect((await egressPolicy({ ...ctx, userId: "member" }, new Set(), undefined, "executor").check(d)).allowed).toBe(false);
+  app.config.security.operationRules = [{ id: "all", enabled: true, revision: 1, action: "deny", match: { kind: "http", host: d.url.hostname } }];
+  expect((await exec.check(d)).allowed).toBe(false);
+});

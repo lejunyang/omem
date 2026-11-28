@@ -337,7 +337,7 @@ export const operationRuleSchema = z.object({
   match: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("command"), executable: z.string().max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/), subcommand: names.optional(),
       argv: z.array(z.object({ index: z.number().int().nonnegative(), regex: pattern })).max(100).optional(), argsRegex: pattern.optional() }).strict(),
-    z.object({ kind: z.literal("http"), methods: names.optional(), host: z.string().max(255).regex(/^(?:\*\.)?[a-zA-Z0-9.-]+$/), pathRegex: pattern.optional(), body: jsonPattern.optional() }).strict(),
+    z.object({ kind: z.literal("http"), source: z.enum(["agent", "executor", "browser"]).optional(), methods: names.optional(), host: z.string().max(255).regex(/^(?:\*\.)?[a-zA-Z0-9.-]+$/), pathRegex: pattern.optional(), body: jsonPattern.optional() }).strict(),
     z.object({ kind: z.literal("file"), operations: z.array(z.enum(["read","write","delete","rename"])).min(1), pathRegex: pattern }).strict(),
     z.object({ kind: z.literal("tool"), server: z.string().optional(), name: z.string().min(1), args: z.array(jsonPattern).max(100).optional() }).strict(),
   ]),

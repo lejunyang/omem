@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { audit } from "../auth/permissions.ts";
@@ -189,11 +190,17 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
       const support = sandboxSupport();
       if (!support.ok || !support.bwrap) throw new Error("命令执行器需要 Linux 沙箱");
       audit(app, user, "command.execute", call.command, { runId, argv: call.args, cwd: call.cwd });
-      const child = await launchRun(scope.profile, { app, ownSandbox: scope.own, runId, context: ctx, signal }, (account, own) => {
+      const child = await launchRun(scope.profile, { app, ownSandbox: scope.own, runId, source: "executor", context: ctx, signal }, (account, own) => {
         signal.throwIfAborted();
         const network = own?.network ?? account?.network;
         if (network) ro.push(realpathSync(egressRelayPath));
-        const { args: argv } = bwrapArgs({ ...scope.workspace, links, minimalRoot: true, network, privateDirs: [home], hide: [canonical(app.home), "/tmp/.omem-executor-tmp"],
+        const pointers = [...(scope.workspace.pointers ?? [])];
+        if (network && git && user === OWNER && !account) {
+          const proxy = new URL(import.meta.url.endsWith(".ts") ? "./git-ssh-proxy.ts" : "./git-ssh-proxy.js", import.meta.url);
+          pointers.push({ source: realpathSync(fileURLToPath(proxy)), path: "/tmp/.omem-ssh-proxy.mjs" });
+          env.GIT_SSH_COMMAND = "ssh -o 'ProxyCommand=node /tmp/.omem-ssh-proxy.mjs %h %p'";
+        }
+        const { args: argv } = bwrapArgs({ ...scope.workspace, pointers, links, minimalRoot: true, network, privateDirs: [home], hide: [canonical(app.home), "/tmp/.omem-executor-tmp"],
           masked, ro, rw, cwd: call.cwd, command: file, args: call.args });
         return withPinnedBinds(argv, undefined, (args, fds) => spawn(support.bwrap!, args,
           { env, cwd: "/", stdio: ["pipe", "pipe", "pipe", ...fds], detached: true }) as ChildProcessWithoutNullStreams);
