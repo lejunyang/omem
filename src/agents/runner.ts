@@ -9,9 +9,8 @@ export { toolSections } from "./instruction-sections.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import { lentByOthers, localOnly, meshNote } from "../core/mesh.ts";
 import { REVIEW_TOOLS } from "./review.ts";
-import { tmpdir } from "node:os";
-import { rm } from "node:fs/promises";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { acquireSandboxTmp } from "./sandbox-tmp.ts";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
@@ -526,7 +525,7 @@ const boardWrites = new Set(["remember", "write_page", "upsert_item"]);
 
 export function prepareRun(
   app: App,
-  input: { actor: Actor; investigationTools?: readonly string[]; itemTakeoverRead?: boolean; boardAccess?: "read" | "write"; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean; worktrees?: WorktreeRef[]; reviewTrees?: WorktreeRef[]; worktreeAccess?: "read" | "commit"; inbox?: string },
+  input: { actor: Actor; investigationTools?: readonly string[]; itemTakeoverRead?: boolean; boardAccess?: "read" | "write"; scene?: InstructionScene; awarenessNote?: (withTools: boolean) => string; profile?: AgentProfile; spaceId: string; spaces?: string[] | null; alsoRead?: string[]; readScope?: string[]; runId: string | null; cwd?: string; profileId?: string; userId?: string; model?: string; effort?: string; lark?: LarkAccess; shadow?: { parentRunId: string | null }; denyTools?: string[]; reviewCheck?: boolean; checkName?: string; guestTurn?: boolean; guestSenderId?: string; reviewLead?: boolean; addTools?: string[]; lessons?: string; recallNote?: string; lessonIds?: string[]; replay?: ReplayArm; fullAccess?: boolean; worktrees?: WorktreeRef[]; reviewTrees?: WorktreeRef[]; worktreeAccess?: "read" | "commit"; inbox?: string },
 ): PreparedRun {
   const userId = input.userId ?? runUser(app, input.runId);
   const spec = "spec" in input.actor ? input.actor.spec : null;
@@ -630,7 +629,7 @@ export function prepareRun(
   const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId,
     { workspace: mounts, userId, restricted: guestTurn || !!input.shadow || !!input.boardAccess || !!input.investigationTools || !!input.itemTakeoverRead, kind: userId === OWNER && !guestTurn && !input.shadow ? input.scene?.kind : null, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
   if (isolation.box?.isolatedNetwork) { base.hostname = "127.0.0.1"; toolBase = base.origin; }
-  const workspace = isolation.box?.plan ?? (account ? mounts(false) : undefined);
+  let workspace: WorkspaceMounts | undefined = isolation.box?.plan ?? (account ? mounts(false) : undefined);
   // An overlapping check can write its host-created detached snapshot, alongside the read-only originals.
   if (account && workspace && input.worktreeAccess === "read" && input.runId) {
     const dir = canonical(cwd);
@@ -692,19 +691,24 @@ export function prepareRun(
     return { ...work, rw: [...new Set([...work.rw, ...(input.inbox ? [canonical(input.inbox)] : [])])] };
   };
   const commandSandbox = isolation.box || account ? { profile, own: isolation.box, workspace: commandWork() } : undefined;
-  // Both processes see this turn's /tmp; the executor keeps its own scratch below it.
-  const privateTmp = commandSandbox && canonical(mkdtempSync(join(tmpdir(), "omem-command-")));
-  if (commandSandbox) commandSandbox.workspace.privateTmp = privateTmp;
+  const tmp = commandSandbox && acquireSandboxTmp(app, input.shadow || input.replay ? null : input.runId, userId, guestTurn, input.guestSenderId);
+  if (tmp) {
+    if (isolation.box) isolation.box.plan.privateTmp = tmp.path;
+    else {
+      const dir = canonical(cwd);
+      workspace = { ...(workspace ?? { ro: [], rw: dir === "/tmp" ? [] : [dir] }), privateTmp: tmp.path };
+    }
+  }
   const token = issueToolToken({ commandSandbox, commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, sourceSpaces, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
-  if (privateTmp) {
+  if (tmp) {
     const off = onToolTokenRevoked(token, () => {
       off();
-      void rm(privateTmp, { recursive: true, force: true }).catch(() => {});
+      tmp.release();
     });
   }
   return {
     isolation,
-    workspace: account ? { ...(workspace ?? { ro: [], rw: [canonical(cwd)] }), privateTmp } : workspace,
+    workspace,
     ...accessMode,
     profile,
     capabilities,

@@ -99,7 +99,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
         catch (error) { box.onSandboxStatus?.("数据只读视图不可用，保留私有数据遮罩：" + (error as Error).message); }
       }
       boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-        ...bwrapArgs({ ...plan, dataView: view && { source: view.dir, path: box.data }, overlay: layer?.overlay, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
+        ...bwrapArgs({ ...plan, dataView: view && { source: view.dir, path: box.data }, overlay: layer?.overlay, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
     } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, registryFile) : null;
     // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
     const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;

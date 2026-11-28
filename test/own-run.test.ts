@@ -232,7 +232,7 @@ it.skipIf(!support.ok)("获准的 Git 命令能从额外目录启动，也能通
   for (const path of [cwd, bin, repo, hidden, state]) mkdirSync(path, { recursive: true });
   for (const path of [hidden, state]) writeFileSync(join(path, "private"), "fixture");
   writeFileSync(join(repo, "marker"), "work");
-  writeFileSync(join(bin, "git"), '#!/bin/sh\nif test "$1" = -C; then cd "$2" || exit 2; fi\ntest -f /tmp/shared-marker && test -f marker && test ! -e ../hidden/private && test ! -e ../state/private && echo approved >> result\n', { mode: 0o755 });
+  writeFileSync(join(bin, "git"), '#!/bin/sh\nif test "$1" = -C; then cd "$2" || exit 2; fi\ntest ! -e /tmp/shared-marker && test -f marker && test ! -e ../hidden/private && test ! -e ../state/private && echo approved >> result\n', { mode: 0o755 });
   vi.stubEnv("HOME", home);
   vi.stubEnv("PATH", bin + ":" + process.env.PATH);
   vi.stubEnv("CODEX_HOME", state);
@@ -268,7 +268,7 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
   try {
     const box = prep.isolation.box!;
     expect(box.readOnly).toBe(true);
-    const privateTmp = box.plan.work.privateTmp!;
+    const privateTmp = box.plan.privateTmp!;
     expect(existsSync(privateTmp)).toBe(true);
     expect([...box.plan.ro, ...box.plan.rw]).not.toContain("/tmp");
     expect(box.plan.rw).toContain(allowed);

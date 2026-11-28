@@ -315,6 +315,14 @@ export function resetAgentSession(app: App, id: string) {
 }
 
 export type ThreadMessage = { id: string; role: string; text: string; createdAt: string; meta: Record<string, unknown> };
+/** undefined for a regular turn, null for a guest turn without one verified sender. */
+export function guestSender(messages: { meta: Record<string, unknown> }[]) {
+  if (!messages.some(({ meta }) => typeof meta.asker === "string")) return undefined;
+  const senders = new Set(messages.map(({ meta }) => meta.asker && (meta.larkSenderId ?? meta.askerId)));
+  const [id] = senders;
+  return senders.size === 1 && typeof id === "string" && id ? id : null;
+}
+
 export function threadMessages(app: App, id: string, opts: { limit?: number; after?: string | null; before?: string | null } = {}): ThreadMessage[] {
   const where = ["conversation_id = ?"];
   const params: (string | number)[] = [id];

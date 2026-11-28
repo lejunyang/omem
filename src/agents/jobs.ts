@@ -1,3 +1,4 @@
+import { logCleanupError, pruneSandboxTmp } from "./sandbox-tmp.ts";
 import { mergeOrigins, summaryOrigins, watchSourceSpaces } from "../core/message-origins.ts";
 import { kindBrief } from "../plugins/formats.ts";
 import { labelDecisions } from "../core/decision-log.ts";
@@ -1262,6 +1263,7 @@ registerHandler("heartbeat", async (ctx) => {
   queueDeadlineCheck(app, at);
   // Expired working files go too.
   expireWorkFiles(app);
+  await pruneSandboxTmp(app.home).catch(logCleanupError);
   await expireTemporaryRules(app);
   await (await import("../channels/listen.ts")).expireContexts(app);
   // Groups rules handed to a 关注 (`adopt`) whose problems are closed and that went quiet go back.
