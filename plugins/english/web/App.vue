@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef } from "vue";
 import { connect, type Omem, type VoiceStatus } from "@omem-ai/plugin-sdk";
 import Skeleton from "../../../web/src/components/Skeleton.vue";
 import UiSegmented from "../../../web/src/components/UiSegmented.vue";
 import GenericBlock from "./GenericBlock.vue";
+import LessonCard from "./LessonCard.vue";
 import Progress from "./Progress.vue";
 import QuizCard from "./QuizCard.vue";
 import SpeakingCard from "./SpeakingCard.vue";
-import { SPEAKING_PREFIX, type Block, type Message, type Session, type SessionInfo, type Snapshot, type SpeakingBlock } from "./types";
+import { SPEAKING_PREFIX, type Block, type Lesson, type Material, type Message, type Session, type SessionInfo, type Snapshot, type SpeakingBlock } from "./types";
 
 /**
  * 英语练习: a session with the tutor (english-tutor), in one of two ways. Questions: the tutor
@@ -20,6 +21,8 @@ import { SPEAKING_PREFIX, type Block, type Message, type Session, type SessionIn
  */
 let omem: Omem | null = null;
 const api = shallowRef<Omem | null>(null);
+// Source links (MaterialLink) open omem's pages through the shell.
+provide("omem", api);
 const sessions = ref<SessionInfo[]>([]);
 const current = ref<Session | null>(null);
 const snap = ref<Snapshot | null>(null);
@@ -129,8 +132,8 @@ async function start() {
 }
 
 /** A speaking practice in `id` (a new session, or once more in this one); its card starts the call. */
-async function practise(id: string, sceneName: string, goalText?: string) {
-  const r = JSON.parse((await omem!.post<{ text: string }>("call/english_speaking_start", { session_id: id, scene: sceneName, goal: goalText || undefined })).text) as { blockId: string };
+async function practise(id: string, sceneName: string, goalText?: string, material?: Material) {
+  const r = JSON.parse((await omem!.post<{ text: string }>("call/english_speaking_start", { session_id: id, scene: sceneName, goal: goalText || undefined, material })).text) as { blockId: string };
   autostart.value = r.blockId;
 }
 
@@ -158,7 +161,7 @@ async function again() {
   error.value = "";
   try {
     const last = [...current.value.blocks].reverse().find((b) => b.kind === "speaking") as unknown as SpeakingBlock | undefined;
-    await practise(id, last?.data.scene ?? sceneOf(current.value), last?.data.goal);
+    await practise(id, last?.data.scene ?? sceneOf(current.value), last?.data.goal, last?.data.material);
     await loadSession(id, true);
   } catch (e) {
     error.value = (e as Error).message;
@@ -203,6 +206,44 @@ async function next() {
   }
 }
 
+/** The day's lesson (the daily rule writes it; a notification links to ?lesson=<date>). */
+const lesson = ref<Lesson | null>(null);
+const lessonToday = ref("");
+async function loadLesson(date?: string) {
+  try {
+    const r = JSON.parse((await omem!.post<{ text: string }>("call/english_lesson_get", date ? { date } : {})).text) as { today: string; lesson: Lesson | null };
+    lesson.value = r.lesson;
+    lessonToday.value = r.today;
+  } catch {
+    lesson.value = null;
+  }
+}
+/** A new session for the lesson: its questions at once, or its speaking scene. */
+async function startLesson(kind: "quiz" | "speaking") {
+  const l = lesson.value;
+  if (!l) return;
+  sending.value = true;
+  error.value = "";
+  let id: string | null = null;
+  try {
+    const day = l.date.slice(5).replace("-", "/");
+    if (kind === "quiz") {
+      id = (await omem!.post<{ id: string }>("sessions", { title: `${l.theme} · 今日学习 ${day}` })).id;
+      const r = JSON.parse((await omem!.post<{ text: string }>("call/english_next", { session_id: id, lessonDate: l.date })).text) as { drawn: boolean; bank: number };
+      if (snap.value) snap.value = { ...snap.value, bank: { ...snap.value.bank, total: r.bank } };
+    } else {
+      id = (await omem!.post<{ id: string }>("sessions", { title: `${SPEAKING_PREFIX}${l.speaking.scene} · 今日学习 ${day}` })).id;
+      await practise(id, l.speaking.scene, l.speaking.goal, l.speaking.material);
+    }
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    sessions.value = await omem!.get<SessionInfo[]>("sessions").catch(() => sessions.value);
+    if (id) await loadSession(id, true).catch(() => {});
+    sending.value = false;
+  }
+}
+
 async function submit(block: Block, answers: Record<string, unknown>) {
   await omem!.post(`blocks/${block.id}/submit`, { answers });
   await loadSession(current.value!.id, true);
@@ -237,8 +278,10 @@ onMounted(async () => {
       else if (e.type === "run" && current.value.busy) refresh();
     });
     sessions.value = await omem.get<SessionInfo[]>("sessions");
-    // A link (a Feishu message) may name the session to open.
-    const wanted = omem.params.session && sessions.value.some((s) => s.id === omem!.params.session) ? omem.params.session : sessions.value[0]?.id;
+    // A link (a Feishu message) may name the session to open, or a day's lesson: that one opens on the start page.
+    const lessonDate = /^\d{4}-\d{2}-\d{2}$/.test(omem.params.lesson ?? "") ? omem.params.lesson : undefined;
+    await loadLesson(lessonDate);
+    const wanted = omem.params.session && sessions.value.some((s) => s.id === omem!.params.session) ? omem.params.session : lessonDate && lesson.value ? undefined : sessions.value[0]?.id;
     if (wanted) await loadSession(wanted, true);
     void loadSnapshot();
     // Events can be missed (a reconnect); while the tutor is working, look again now and then.
@@ -283,7 +326,8 @@ onBeforeUnmount(() => {
         <p v-if="error" class="card err">{{ error }}</p>
         <Skeleton v-if="loading" variant="cards" :rows="2" />
 
-        <section v-else-if="!current" class="welcome card">
+        <LessonCard v-if="!loading && !current && lesson" :lesson="lesson" :today="lessonToday" :busy="sending" :voice-ready="!!voice0?.ready" @quiz="startLesson('quiz')" @speaking="startLesson('speaking')" />
+        <section v-if="!loading && !current" class="welcome card">
           <div class="row wrap">
             <h2>练什么场景？</h2>
             <span class="spacer" />
@@ -316,7 +360,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <template v-else>
+        <template v-else-if="current">
           <div ref="timeline" class="timeline">
             <template v-for="e in entries" :key="e.kind === 'block' ? e.block.id : e.message.id">
               <QuizCard v-if="e.kind === 'block' && e.block.kind === 'quiz'" :block="e.block" :voice="voice" :submit="(a) => submit(e.block, a)" />

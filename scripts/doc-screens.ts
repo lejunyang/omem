@@ -28,7 +28,7 @@ import { createServer as createHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { invite, savePeers } from "../src/core/peers.ts";
 import { setKey } from "../src/core/ai-keys.ts";
-import { pluginStore } from "../src/plugins/store.ts";
+import { pluginStore, readSettingsRecord, writeSettingsRecord } from "../src/plugins/store.ts";
 import { registerFormats } from "../src/plugins/formats.ts";
 import type { PluginManifest } from "../src/plugins/registry.ts";
 import { applyAttempt, type Attempt } from "../plugins/english/learner.ts";
@@ -601,6 +601,38 @@ await callTool(talk.ctx, "english_speaking_grade", {
 });
 addMessage(app, talk.conversationId, "assistant", "这次最该改的是开口那句：点单时用 **Could I get…**，比 I want 自然得多。再练一次时试着每句都用它开头。", talk.runId);
 talk.done();
+// Today's lesson from the work materials (the daily rule's english_lesson): the start page's lesson card
+// (shot english-lesson). The materials are the refund project's own fictional sources.
+writeSettingsRecord(app, "english", "owner", "english", { ...readSettingsRecord(app, "english", "owner"), materialSpaces: ["refund"] });
+const review = upsertSource(app, { spaceId: "refund", kind: "meeting", uri: "lark:minutes:demo_refund_review", title: "妙记：退款对账上线复盘", text: [
+  "阿青：先说结论，周四的上线推迟到下周一。",
+  "小王：主要是分摊规则还没和财务对齐，尾差归最后一行这件事他们要再确认。",
+  "阿青：那我们先把灰度范围缩小到两个商家，跑一周看数据。",
+  "小王：可以，我今天把回滚步骤写进文档，明天上午发给大家过一遍。",
+  "阿青：有问题在群里说，不用等周会。",
+].join("\n") }).id;
+const lessonTurn = await pluginTurn("english", "english-tutor", "english", "今日学习", "r_english_lesson");
+const from = (a: number, b: number, summary: string) => ({ ref: `src:${review}#L${a}-L${b}`, title: "", summary });
+const lessonSaved = await callTool({ ...lessonTurn.ctx, sourceSpaces: ["refund", "english"] }, "english_lesson", {
+  theme: "推迟上线、缩小范围",
+  expressions: [
+    { zh: "上线推迟到下周一", en: "We're pushing the launch back to next Monday.", material: from(1, 1, "复盘会上宣布上线改期") },
+    { zh: "和财务对齐", en: "We still need to get finance on the same page.", material: from(2, 2, "改期是因为规则还没和另一个团队确认") },
+    { zh: "缩小灰度范围", en: "Let's narrow the rollout to two merchants first.", material: from(3, 3, "先在小范围试运行一周") },
+    { zh: "发给大家过一遍", en: "I'll send it round tomorrow morning so everyone can go over it.", material: from(4, 4, "答应把回滚步骤写好让大家过目") },
+    { zh: "有问题随时说", en: "Just flag it in the group — no need to wait for the weekly.", material: from(5, 5, "鼓励有问题直接在群里提") },
+    { zh: "先说结论", en: "Bottom line first:" },
+  ],
+  quiz: { title: "推迟上线、缩小范围", items: [
+    { type: "choice", prompt: "“我们把发布改到下周五了” 最自然的说法：", options: ["We pushed the release back to next Friday.", "We pushed the release behind next Friday.", "We delayed the release to back next Friday."], answer: 0, skill: "vocab", level: "B1", points: ["phrase:push-back"], material: from(1, 1, "复盘会上宣布上线改期") },
+    { type: "cloze", text: "Before we ship, we need to get the design team on the same ___.", answer: ["page"], skill: "vocab", level: "B1", points: ["phrase:on-the-same-page"], material: from(2, 2, "改期是因为规则还没和另一个团队确认") },
+    { type: "translate", direction: "zh-en", prompt: "我把测试计划发给大家，周三前看一下。", reference: "I'll send the test plan round — please go over it by Wednesday.", skill: "translation", level: "B1", points: ["phrase:send-round"], material: from(4, 4, "答应把回滚步骤写好让大家过目") },
+  ] },
+  speaking: { scene: "在站会上说明一项功能为什么改期", goal: "用 push back / narrow the rollout 说清改期和下一步", material: from(1, 3, "上线改期，原因是规则未对齐，先小范围试运行") },
+});
+if (lessonSaved.isError || lessonSaved.text.includes("已去掉")) throw new Error(`demo lesson: ${lessonSaved.text}`);
+lessonTurn.done();
+const lessonDate = (JSON.parse((await pageTool("english_lesson_get", {})).text) as { today: string }).today;
 
 // A plugin with no page of its own: the agent asks with a form and shows a chart.
 const journal = await pluginTurn("journal", "journal-coach", "personal", "10-30 复盘");
@@ -1571,7 +1603,7 @@ fakeApi.unref();
 const fakeApiUrl = `http://127.0.0.1:${(fakeApi.address() as AddressInfo).port}/v1`;
 // The address field takes a domain name only, so the stand-in is reached as an AI provider's address (设置 → AI),
 // with a made-up key: the cards pick “示例云” as the key and leave the address empty.
-app.config.ai.providers.push({ id: "demo-cloud", name: "示例云", kind: "openai-compatible", baseUrl: fakeApiUrl, backends: [] });
+app.config.ai.providers.push({ id: "demo-cloud", name: "示例云", kind: "openai-compatible", baseUrl: fakeApiUrl, backends: [], limits: { rpm: 600, tpm: 200000, models: { "demo-chat-mini": { rpm: 1200 } } } });
 setKey(app.home, "demo-cloud", "demo-key-not-a-secret");
 {
   const context = (_app: App, userId: string, spaceId: string, signal: AbortSignal) => ({ userId, spaceId, signal, connection: async () => null });
@@ -2021,6 +2053,7 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
   { name: "plugin-english", path: `/plugin/english?session=${tutor.conversationId}`, prepare: async (p) => { await p.waitForTimeout(1500); } },
   // Speaking practice inside the English page: an assessed talk (a voice model configured), and starting one without a voice model yet.
   { name: "english-speaking", path: `/plugin/english?session=${talk.conversationId}`, before: async (p) => void (await p.route("**/api/plugins/english/voice", (r) => r.fulfill({ json: { allowed: true, ready: true, detail: "", api: "live", model: "gpt-live-1" } }))), prepare: async (p) => { await p.waitForTimeout(1500); } },
+  { name: "english-lesson", path: `/plugin/english?lesson=${lessonDate}`, before: async (p) => void (await p.route("**/api/plugins/english/voice", (r) => r.fulfill({ json: { allowed: true, ready: true, detail: "", api: "live", model: "gpt-live-1" } }))), prepare: async (p) => { await p.waitForTimeout(1500); } },
   { name: "english-speaking-setup", path: `/plugin/english?session=${talk.conversationId}`, prepare: async (p) => {
     const f = p.frameLocator("iframe");
     await f.getByRole("button", { name: "新练习" }).click();

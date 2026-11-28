@@ -10,6 +10,7 @@ import Icon from "./Icon.vue";
 import UiCheckbox from "./UiCheckbox.vue";
 import UiSegmented from "./UiSegmented.vue";
 import AiModelPick from "./AiModelPick.vue";
+import AiKeyLimits, { type KeyLimits, type RateLimitView } from "./AiKeyLimits.vue";
 import UiSelect from "./UiSelect.vue";
 
 /**
@@ -20,9 +21,9 @@ import UiSelect from "./UiSelect.vue";
 type Kind = "openai" | "anthropic" | "typesafe" | "openrouter" | "cloudflare" | "ark" | "openai-compatible";
 type ErrKind = "rate" | "daily" | "quota" | "auth" | "config" | "server" | "input" | "other";
 type RelayView = { counts: Partial<Record<ErrKind, number>>; last: { at: number; status: number; kind: ErrKind; code: string; message: string } } | null;
-type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; anthropicUrl?: string; models?: string[]; model?: string; accountId?: string; backends: string[] };
+type Provider = { id: string; name: string; kind: Kind; baseUrl?: string; anthropicUrl?: string; models?: string[]; model?: string; accountId?: string; backends: string[]; limits?: KeyLimits | null };
 type ModelInfo = { formats?: ("chat" | "responses" | "anthropic")[]; type?: string; tools?: boolean; inputs?: string[] };
-type ProviderView = Provider & { keyHint: string; hasKey: boolean; offers: string[]; relay?: RelayView; paused?: { until: string; message: string } | null; listed: { at: number; count: number; models: string[]; info: Record<string, ModelInfo>; error?: string; endpointOnly?: boolean; endpoints?: Record<string, string> } | null };
+type ProviderView = Provider & { keyHint: string; hasKey: boolean; offers: string[]; relay?: RelayView; rateLimit?: RateLimitView; paused?: { until: string; message: string } | null; listed: { at: number; count: number; models: string[]; info: Record<string, ModelInfo>; error?: string; endpointOnly?: boolean; endpoints?: Record<string, string> } | null };
 type Choice = { default: string; models: string[] };
 type Status = { ready: boolean; detail: string; media?: ("images" | "audio" | "videos")[] };
 type AiView = { decisionModels: Status[]; providers: ProviderView[]; status: Record<"voice" | "decision" | "image", Status>; choices: Record<string, Record<string, Choice>>; kinds: Record<string, string[]>; inherited: string[] };
@@ -68,7 +69,8 @@ function relayLine(r: NonNullable<RelayView>) {
 }
 
 const providers = computed<ProviderView[]>(() => view.value?.providers ?? []);
-const plain = ({ id, name, kind, baseUrl, anthropicUrl, models, model, accountId, backends }: Provider) => ({ id, name, kind, ...(baseUrl ? { baseUrl } : {}), ...(anthropicUrl ? { anthropicUrl } : {}), ...(models ? (models.length ? { models } : {}) : model ? { models: [model] } : {}), ...(accountId ? { accountId } : {}), backends });
+// limits: kept as it is when absent; null (the editor cleared it) asks the server to drop it.
+const plain = ({ id, name, kind, baseUrl, anthropicUrl, models, model, accountId, backends, limits }: Provider) => ({ id, name, kind, ...(baseUrl ? { baseUrl } : {}), ...(anthropicUrl ? { anthropicUrl } : {}), ...(models ? (models.length ? { models } : {}) : model ? { models: [model] } : {}), ...(accountId ? { accountId } : {}), backends, ...(limits !== undefined ? { limits } : {}) });
 const saveProviders = (list: Provider[], note: string) => emit("save", { ...props.config.ai, providers: list.map(plain) }, note);
 const MEDIA_LABEL = { images: "图片", audio: "音频", videos: "视频" } as const;
 
@@ -323,6 +325,7 @@ const noProviders = computed(() => cat.value && cat.value !== "decision" && prov
               </label>
             <div v-if="modelWarning(p)" class="small err-text">{{ modelWarning(p) }}</div>
           </template>
+          <AiKeyLimits v-if="p.hasKey" :name="p.name || p.id" :limits="p.limits ?? undefined" :stats="p.rateLimit" :choice="thirdParty(p.kind) && namedModels(p).length ? { default: '', models: namedModels(p) } : backendModelChoice(p)" :shown="(m) => shown(p, m)" @save="(limits, note) => editProvider(p, { limits }, note)" />
           <div v-if="p.offers?.length || (thirdParty(p.kind) && p.backends.length)" class="field small be-block">
             <span>生成的后端</span>
             <div class="be-list">

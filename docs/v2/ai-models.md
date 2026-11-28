@@ -51,7 +51,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 ### 每分钟请求与 token 限额
 
-在 `config.json` 的 `ai.providers[]` 给对应的 key 加 `limits`。RPM 和 TPM 分别填写正整数，也可以只设其中一个。默认值应用于该 key 上每个模型。按模型名或接入点 ID 配置 `limits.models` 时，只覆盖该模型填了的字段。
+在 设置 → 后端与模型 → API key 那一行的“每分钟限额”里设置（`web/src/components/AiKeyLimits.vue`，按模型单独设的行从后端可用的模型里选，也可以手填接入点 ID），或在 `config.json` 的 `ai.providers[]` 给对应的 key 加 `limits`。RPM 和 TPM 分别填写正整数，也可以只设其中一个。默认值应用于该 key 上每个模型。按模型名或接入点 ID 配置 `limits.models` 时，只覆盖该模型填了的字段。
 
 ```json
 {

@@ -364,6 +364,19 @@ export default function register(api: PluginApi) {
   });
 
   api.tool({
+    name: "english_lesson_get",
+    description: "读某一天的今日学习（练习页的课程卡片用）：主题、中英文说法和出处、口语场景、题数。不给答案。",
+    schema: z.object({ date: z.iso.date().optional() }),
+    page: true,
+    handler: (ctx, a) => {
+      const today = lessonDay(ctx);
+      const l = ctx.store.get<Lesson>("lessons", a.date ?? today);
+      const lessonView = l && { date: l.date, theme: l.theme, expressions: l.expressions, speaking: l.speaking, items: l.quiz.items.length, updatedAt: l.updatedAt };
+      return JSON.stringify({ today, lesson: lessonView ?? null });
+    },
+  });
+
+  api.tool({
     name: "english_next",
     description: "从题库里按画像挑下一组题，放进练习页的会话（页面上的“下一组”按钮用）。题库不够时不出题，返回 drawn=false。",
     schema: z.object({ session_id: z.string(), scene: z.string().max(40).optional(), lessonDate: z.iso.date().optional() }),

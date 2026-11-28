@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import MaterialLink from "./MaterialLink.vue";
 import { speak, TYPE_LABEL, type Block, type QuizItem } from "./types";
 
 /** One batch of questions: answered together, handed in once, then shown with its results. */
@@ -62,6 +63,7 @@ function mark(id: string) {
           <span v-if="mark(it.id)" class="mark" :class="mark(it.id)!.cls">{{ mark(it.id)!.text }}</span>
         </div>
 
+        <MaterialLink v-if="it.material" :material="it.material" />
         <p v-if="it.prompt && it.type !== 'cloze'" class="prompt">{{ it.prompt }}</p>
         <div v-if="it.audio" class="row audio">
           <button class="btn sm" type="button" :disabled="!canSpeak" @click="speak(it.audio!, false, voice)">▶ 播放</button>

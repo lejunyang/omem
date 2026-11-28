@@ -5,6 +5,11 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## API key 的每分钟限额和英语课程的网页（2026-11-28）
+
+- 设置 → 后端与模型 → API key 每一行多了“每分钟限额”：`web/src/components/AiKeyLimits.vue`，整体和按模型的 RPM / TPM、最近一小时排队、各模型这一分钟的用量；保存走 `ai.providers[].limits`，清空传 `null`（`AiModels.vue` 的 `plain` 现在带上 `limits`）。
+- 插件设置的 `source-spaces` 字段在 `PluginSettings.vue` 里是多选。英语练习页：`plugins/english/web/LessonCard.vue`（课程卡，`?lesson=<日期>` 打开）、`MaterialLink.vue`（“出自”，经外壳打开 `#/sources/<id>?from=&to=`）；页面工具 `english_lesson_get` 读某天的课程，不带答案。文档截图 `english-lesson`。
+
 ## 英语陪练的默认读范围和跨设备出处（2026-11-28）
 
 - 材料空间留空时沿用档案读范围，选定后可读所选空间及插件自己的空间。读范围从 `src/plugins/blocks.ts` 的 `materialSpaceScope` 看起。

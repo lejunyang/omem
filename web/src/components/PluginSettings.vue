@@ -8,12 +8,13 @@ import UiCheckbox from "./UiCheckbox.vue";
 import UiSelect from "./UiSelect.vue";
 
 /** A plugin's settings (docs/v2/plugins.md): one form for every plugin, built from its manifest. Saves each change. */
-type Field = { key: string; label: string; description: string; type: "select" | "number" | "text" | "boolean"; options: (string | { value: string; label: string })[]; min?: number; max?: number; default: string | number | boolean };
+type Field = { key: string; label: string; description: string; type: "select" | "number" | "text" | "boolean" | "source-spaces"; options: (string | { value: string; label: string })[]; min?: number; max?: number; default: string | number | boolean | string[] };
+type Value = string | number | boolean | string[];
 
 const props = defineProps<{ plugin: string; title: string }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
 const fields = ref<Field[] | null>(null);
-const values = ref<Record<string, string | number | boolean>>({});
+const values = ref<Record<string, Value>>({});
 const error = ref("");
 const box = ref<HTMLElement | null>(null);
 const returnTo = document.activeElement as HTMLElement | null;
@@ -22,7 +23,7 @@ const options = (f: Field) => f.options.map((o) => (typeof o === "string" ? { va
 
 async function save(key: string, value: unknown) {
   try {
-    const r = await put<{ values: Record<string, string | number | boolean> }>(`/api/plugins/${props.plugin}/settings`, { [key]: value });
+    const r = await put<{ values: Record<string, Value> }>(`/api/plugins/${props.plugin}/settings`, { [key]: value });
     values.value = r.values;
     toast("已保存", "ok");
     emit("saved");
@@ -39,7 +40,7 @@ const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
 onMounted(async () => {
   window.addEventListener("keydown", onKey);
   try {
-    const r = await get<{ fields: Field[]; values: Record<string, string | number | boolean> }>(`/api/plugins/${props.plugin}/settings`);
+    const r = await get<{ fields: Field[]; values: Record<string, Value> }>(`/api/plugins/${props.plugin}/settings`);
     fields.value = r.fields;
     values.value = r.values;
   } catch (e) {
@@ -70,14 +71,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
             </template>
             <template v-else>
               <span>{{ f.label }}</span>
-              <UiSelect v-if="f.type === 'select'" :model-value="String(values[f.key])" width="100%" :aria-label="f.label" :options="options(f)" @change="(v) => save(f.key, v)" />
+              <UiSelect v-if="f.type === 'source-spaces'" :model-value="(values[f.key] as string[]) ?? []" multiple width="100%" :aria-label="f.label" placeholder="不选：照原来的范围" :options="options(f)" @change="(v) => save(f.key, v)" />
+              <UiSelect v-else-if="f.type === 'select'" :model-value="String(values[f.key])" width="100%" :aria-label="f.label" :options="options(f)" @change="(v) => save(f.key, v)" />
               <input
                 v-else
                 class="input"
                 :type="f.type === 'number' ? 'number' : 'text'"
                 :min="f.min"
                 :max="f.max"
-                :value="values[f.key]"
+                :value="values[f.key] as string | number"
                 :aria-label="f.label"
                 @change="save(f.key, ($event.target as HTMLInputElement).value)"
               />

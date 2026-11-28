@@ -4,6 +4,7 @@ import { marked } from "marked";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import type { Omem, OmemVoice, VoiceStatus, VoiceTurn } from "@omem-ai/plugin-sdk";
 import Icon from "../../../web/src/components/Icon.vue";
+import MaterialLink from "./MaterialLink.vue";
 import { SCORE_LABEL, type SpeakingBlock } from "./types";
 
 /**
@@ -103,6 +104,7 @@ onBeforeUnmount(() => void call?.stop());
       <span v-if="!open && result" class="small muted">约 {{ result.minutes }} 分钟 · 你说了 {{ said }} 段</span>
     </header>
     <p v-if="block.data.goal" class="small muted">这次练：{{ block.data.goal }}</p>
+    <p v-if="block.data.material" class="small muted scene-from">{{ block.data.material.summary }} <MaterialLink :material="block.data.material" /></p>
 
     <template v-if="open">
       <div v-if="status && !ready" class="note">

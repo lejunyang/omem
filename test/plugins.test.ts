@@ -319,6 +319,12 @@ describe("plugins", () => {
     expect(store.count("bank")).toBe(1);
     const snap = JSON.parse((await callTool(ctx, "english_snapshot", { format: "json" })).text);
     expect(snap.todayLesson).toEqual({ date, ready: true, theme: lesson.theme, link });
+    // The page's lesson card: the lesson without its questions or answers.
+    const page = { app, runId: null, spaceId: "english", spaces: null, tools: new Set(["english_lesson_get"]), actor: "user" as const, userId: "owner", plugin: "english" };
+    const card = JSON.parse((await callTool(page, "english_lesson_get", {})).text);
+    expect(card).toMatchObject({ today: date, lesson: { date, theme: lesson.theme, expressions: [{ ...expr, material }], speaking: { material }, items: 1 } });
+    expect(JSON.stringify(card)).not.toContain("answer");
+    expect(JSON.parse((await callTool(page, "english_lesson_get", { date: "2000-01-02" })).text).lesson).toBeNull();
     const drawn = JSON.parse((await callTool(ctx, "english_next", { session_id: conversationId, lessonDate: date })).text);
     expect(drawn).toMatchObject({ drawn: true, bank: 0 });
     expect(sessionView(app, env, conversationId, "owner").blocks[0].data.items[0].material).toEqual(material);

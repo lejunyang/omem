@@ -1,11 +1,15 @@
 /** What the page gets from /api/plugins/english (mirrors src/plugins/blocks.ts and ../server.ts). */
 export type Audio = { text: string; lang?: string; rate?: number };
+/** Where a question, expression or scene came from (`src:<id>#L起-L止`, the source's title, one line in Chinese). */
+export type Material = { ref: string; title: string; summary: string };
+export type Expression = { zh: string; en: string; material?: Material };
 export type QuizItem = {
   id: string;
   type: "choice" | "cloze" | "dictation" | "translate";
   skill: string;
   level: string;
   points: string[];
+  material?: Material;
   prompt?: string;
   text?: string;
   audio?: Audio;
@@ -40,13 +44,18 @@ export type Snapshot = {
   daily: { date: string; count: number; accuracy: number | null }[];
   speaking: { total: number; last7: number; minutes7: number; last: { scene: string; at: string; level: string } | null };
   bank: { total: number; scenes: { scene: string; count: number }[] };
-  settings: { source: string; quizSize: string; voice: string; rate: string; dailyGoal: number };
+  settings: { source: string; quizSize: string; voice: string; rate: string; dailyGoal: number; materialSpaces?: string[] };
+  todayLesson?: { date: string; ready: boolean; theme?: string; link: string };
+  recentMaterials?: (Material & { sourceId: string; lastUsedAt: string })[];
 };
+
+/** A day's lesson (english_lesson_get): no answers, just what the card shows and starts. */
+export type Lesson = { date: string; theme: string; expressions: Expression[]; speaking: { scene: string; goal?: string; material?: Material }; items: number; updatedAt: string };
 
 /** A speaking practice (server.ts `speaking` block): waiting to be talked through, then its record and assessment. */
 export type SpeakingAssessment = { level: string; scores: Record<string, number | null>; review: string; at: string };
 export type SpeakingResult = { scene: string; goal?: string; startedAt: string; endedAt: string; minutes: number; transcript: { role: "user" | "assistant"; text: string }[]; assessment: SpeakingAssessment | null };
-export type SpeakingBlock = Omit<Block, "data" | "result"> & { data: { scene: string; goal?: string }; result: SpeakingResult | null };
+export type SpeakingBlock = Omit<Block, "data" | "result"> & { data: { scene: string; goal?: string; material?: Material }; result: SpeakingResult | null };
 
 export const SKILL_LABEL: Record<string, string> = { vocab: "词汇", grammar: "语法", listening: "听力", translation: "翻译", reading: "阅读", speaking: "口语" };
 export const SCORE_LABEL: Record<string, string> = { fluency: "流利度", grammar: "语法", vocab: "词汇", fit: "得体" };
