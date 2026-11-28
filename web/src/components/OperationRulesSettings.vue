@@ -65,6 +65,13 @@ const DEFAULTS: Record<Kind, () => Match> = {
   file: () => ({ kind: "file", operations: ["write", "delete"], pathRegex: "" }),
   tool: () => ({ kind: "tool", name: "" }),
 };
+/** Where an HTTP request comes from (`match.source`, docs/v2/command-gate.md); absent: from anywhere. */
+const SOURCES = [
+  { value: "any", label: "任何来源" },
+  { value: "agent", label: "Agent 直接发的", hint: "沙箱里的 Agent 进程经出网代理发出的请求" },
+  { value: "executor", label: "执行器里的命令", hint: "受保护的命令（已过命令规则）在执行器里发的请求" },
+  { value: "browser", label: "浏览器里的", hint: "aad 驱动的浏览器在请求发出前来问" },
+];
 const WAITS = [30, 60, 90, 120, 180, 300].map((n) => ({ value: n, label: n < 60 ? `${n} 秒` : `${n / 60} 分钟`.replace(".5 分钟", " 分半") }));
 const pickOptions = computed(() => [...scopeChoices.approvers, { value: "caller", label: "这次运行的调用者" }, { value: "lark", label: "飞书用户（填名字或邮箱）" }, { value: "run", label: "由运行提名（从名单里选）" }]);
 const toolOptions = (current: string) => (current && !scopeChoices.tools.some((t) => t.value === current) ? [{ value: current, label: current }, ...scopeChoices.tools] : scopeChoices.tools);
@@ -338,6 +345,7 @@ function onPacksChanged() {
               <p class="op-pending small">{{ httpWhere }}</p>
               <div class="op-grid">
                 <label class="field"><span>主机</span><input :id="`rule-${d.key}-first`" v-model="asHttp(d).host" class="input sm mono" placeholder="如 api.example.com 或 *.example.com" spellcheck="false" /></label>
+                <div class="field"><span>请求来自</span><UiSelect :model-value="asHttp(d).source ?? 'any'" size="sm" aria-label="请求来自" :options="SOURCES" @change="(v) => (asHttp(d).source = v === 'any' ? undefined : (v as 'agent' | 'executor' | 'browser'))" /></div>
                 <div class="field"><span>方法</span><UiSelect :model-value="asHttp(d).methods ?? []" multiple size="sm" placeholder="任何方法" aria-label="方法" :options="METHODS.map((v) => ({ value: v, label: v }))" @change="(v) => (asHttp(d).methods = v as string[])" /></div>
                 <label class="field wide"><span>路径正则（可选）</span><input v-model="asHttp(d).pathRegex" class="input sm mono" placeholder="如 ^/v1/orders" spellcheck="false" /><span class="hint">只比对路径，不含主机和查询串</span></label>
                 <label class="field"><span>请求体字段（可选）</span><input :value="fieldOf(asHttp(d).body?.jsonPath ?? '')" class="input sm mono" placeholder="如 status 或 items[0].id" spellcheck="false" @input="setHttpBody(d, 'field', ($event.target as HTMLInputElement).value)" /></label>

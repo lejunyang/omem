@@ -5,6 +5,12 @@ kind: reference
 updated: 2026-11-29
 ---
 
+## 沙箱卡片：主目录的层、登记命令，HTTP 规则的来源（2026-11-29）
+
+- `web/src/components/SandboxSettings.vue`：新行“主目录的改动”读 `GET /api/security/sandbox` 的 `overlay` 和 `layers`，每层按人列出大小（`lib/sandbox.ts` 的 `layerRows`、`fmtBytes`，成员名字取 `/api/users`），“清空”确认后调 `DELETE /api/security/sandbox/layers/:identity`；`overlay.ok` 为假时写原因。卡片说明和 `/tmp` 那行改成写时复制、按这件事保留之后的说法。
+- 新组件 `ProtectedCommands.vue`（放在同一卡片“你登记的命令”）：读写 `/api/security/protected-commands`，整份保存；表单的格式检查在 `lib/protected-commands.ts`（`parseCommand`：`~/` 去掉、拆词去重、名字和变量名格式、不收 `OMEM_`），服务端的拒绝留在表单下；403（本机直接打开、不是本人登录）只说明，不给重试。
+- `OperationRulesSettings.vue`：HTTP 规则多一个“请求来自”（任何来源 / Agent 直接发的 / 执行器里的命令 / 浏览器里的），对应 `match.source`。文档截图 `settings-sandbox` 带上示例的层和登记命令。
+
 ## 已信任的插件也刷新自己播种的技能（2026-11-29）
 
 - `src/plugins/registry.ts` 的 `seedSkills`：原来只有内置插件刷新技能库里自己播种、没被改过的副本（`canUpdateSeededSkill`，按技能库 Git 记录里 `omem: add/update skills of plugin <id>: …` 那次的内容逐文件比），数据目录和链接的插件只补缺，插件里的技能改了也到不了技能库。现在信任状态是 `trusted`（含永久信任、按目录信任的链接插件）的也刷新；`changed` / `required` 和不带代码的场景包仍只补缺（信任的代码指纹覆盖 `skills/`）。

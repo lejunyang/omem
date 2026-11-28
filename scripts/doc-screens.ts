@@ -2275,9 +2275,14 @@ const shots: { name: string; path: string; width?: number; dark?: boolean; space
     await p.route("**/api/security/sandbox", (route) => route.request().method() !== "GET" ? route.fallback() : route.fulfill({ json: {
       mode: "prefer", writable: [`${home}/work/tools`, `${home}/.config/acme`], hidden: [`${home}/private`], fullAccess: "sandboxed", includeKinds: ["thread-summary", "memory-organize", "first-look"],
       support: { ok: true, bwrap: "/usr/bin/bwrap", version: "0.9.0" },
+      overlay: { ok: true }, layers: [{ identity: "owner", bytes: 186_400_000 }, { identity: "xiaolin", bytes: 23_800_000 }],
       backends: [{ id: "codex", state: [`${home}/.codex`] }, { id: "claude", state: [`${home}/.claude`, `${home}/.claude.json`] }],
       defaults: { exampleBackend: "codex", writable: [`${home}/.codex`, `${home}/.cache`, `${home}/.npm`, `${home}/.local/share/pnpm/store`, `${data}/runs/example/scratch`, `${data}/artifacts/inbox/example`, `${data}/workspaces/example/1`, "/tmp"], hidden: [data, `${home}/.config/acme-cli`],
         loginPaths: ["~/.ssh", "~/.git-credentials", "~/.config/gh", "~/.lark-cli", "~/.aws", "~/.kube", "~/.docker/config.json", "~/.config/google-chrome", "~/.mozilla/firefox", "~/.npmrc", "/run/docker.sock"] },
+    } }));
+    // Registering a command needs the owner's own login, which the demo's local requests are not.
+    await p.route("**/api/security/protected-commands", (route) => route.request().method() !== "GET" ? route.fallback() : route.fulfill({ json: {
+      commands: [{ name: "sample-cli", state: [".config/sample"], loginEnv: ["SAMPLE_TOKEN"] }],
     } }));
   }, prepare: async (p) => {
     await p.locator("#set-sandbox .sbx-line").first().waitFor();

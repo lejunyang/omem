@@ -1332,6 +1332,10 @@ a.pg-out { color: var(--accent); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A HOME layer: whose, how big, and the button that clears it. */
+.sbx-layer .sbx-aside {
+  font-variant-numeric: tabular-nums;
+}
 /* 完全访问 switched on by itself: the thing's name, a link to where it is changed. */
 .sbx-aside.sbx-grant {
   font-size: 13px;
@@ -1378,6 +1382,34 @@ a.pg-out { color: var(--accent); }
 .sbx-bname {
   font-size: 12px;
   color: var(--muted);
+}
+/* 你登记的命令 (components/ProtectedCommands): one line a command, the form under the list. */
+.pc {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.pc-form {
+  display: grid;
+  gap: 8px;
+  max-width: 420px;
+  min-width: 0;
+}
+.pc-field {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.pc-field .input {
+  width: 100%;
+  min-width: 0;
+}
+.pc-actions {
+  display: flex;
+  gap: 8px;
+}
+.pc-add {
+  justify-self: start;
 }
 .sbx-retry {
   display: flex;

@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { get, put } from "../api";
+import { del, get, put } from "../api";
 import { toast } from "../store";
 import { confirmDialog } from "../lib/dialog";
-import { FULL_ACCESS, MODES, defaultLabel, fullAccessNote, grantLinks, hiddenLabel, kindOptions, sandboxBody, splitDefaults, tilde, type FullAccessMode, type SandboxMode, type SandboxSettings, type SandboxStatus } from "../lib/sandbox";
+import { FULL_ACCESS, MODES, defaultLabel, fullAccessNote, grantLinks, hiddenLabel, kindOptions, layerRows, sandboxBody, splitDefaults, tilde, type FullAccessMode, type SandboxMode, type SandboxSettings, type SandboxStatus } from "../lib/sandbox";
 import { runKindLabel } from "../store";
 import { settingsContext } from "../views/settings/ctx";
 import Icon from "./Icon.vue";
 import MonoLine from "./MonoLine.vue";
+import ProtectedCommands from "./ProtectedCommands.vue";
 import SandboxPaths from "./SandboxPaths.vue";
 import SetCard from "./SetCard.vue";
 import SetRow from "./SetRow.vue";
@@ -18,7 +19,8 @@ import UiSelect from "./UiSelect.vue";
 /**
  * 设置 → 安全 → 运行的沙箱 and 完全访问 (src/agents/own-run.ts `sandboxStatus`, own-sandbox.ts `runAccess`,
  * docs/v2/agent-accounts.md “本人的运行进沙箱”): whether the owner's runs on this machine go into a
- * sandbox (the home directory read-only with login files hidden, writes only to the listed places, commands
+ * sandbox (the home directory copy-on-write per identity, or read-only where this machine cannot, login files
+ * hidden, other writes only to the listed places, commands
  * that need a login run by the executor outside it), which kinds of run go in, which directories are added
  * or hidden, and the one switch for turning off the backends' own sandbox and approvals.
  * Only the owner; the whole setting is saved at once (`PUT /api/security/sandbox`). A server without it
@@ -32,6 +34,9 @@ const showState = ref(false);
 const showLogins = ref(false);
 const ctx = settingsContext();
 const backendName = (id: string) => ctx?.profiles.value.find((p) => p.id === id)?.name ?? id;
+/** Members' names for their HOME layers; the list is optional (a layer is still shown by its id). */
+const names = ref<Record<string, string>>({});
+const clearing = ref("");
 
 async function load() {
   error.value = "";
@@ -42,7 +47,28 @@ async function load() {
     else error.value = (e as Error).message;
   }
 }
-onMounted(load);
+onMounted(() => {
+  load();
+  get<{ id: string; name: string }[]>("/api/users").then((u) => { names.value = Object.fromEntries(u.map((x) => [x.id, x.name])); }).catch(() => {});
+});
+
+/** Throws away one identity's HOME changes: its next run starts from the real home directory again. */
+async function clearLayer(identity: string, name: string) {
+  if (!(await confirmDialog(`清空${name === "你" ? "你" : ` ${name} `}的主目录改动？`, {
+    message: "沙箱里运行写进主目录的东西（工具缓存、配置、下载的文件）都会丢掉，下一轮从真实的主目录重新开始。真实主目录不受影响；正在跑的运行结束时写回的改动会留下。",
+    okText: "清空", danger: true,
+  }))) return;
+  clearing.value = identity;
+  try {
+    await del(`/api/security/sandbox/layers/${encodeURIComponent(identity)}`);
+    toast("已清空", "ok");
+    await load();
+  } catch (e) {
+    toast(`没有清空：${(e as Error).message}`, "error");
+  } finally {
+    clearing.value = "";
+  }
+}
 
 /** Sends the whole setting with one part changed; the server's refusal is returned, not shown here. */
 async function send(change: Partial<SandboxSettings>): Promise<string | null> {
@@ -83,12 +109,13 @@ const logins = computed(() => status.value?.loginPaths ?? status.value?.defaults
 const kinds = computed(() => kindOptions(runKindLabel, [...(status.value?.includeKinds ?? []), ...(status.value?.excludeKinds ?? [])]));
 const kindNames = (list: string[]) => list.map((k) => runKindLabel[k] ?? k).join("、");
 const note = computed(() => (status.value ? fullAccessNote(status.value) : ""));
+const layers = computed(() => layerRows(status.value?.layers, names.value));
 </script>
 
 <template>
   <template v-if="!missing">
     <SetCard id="set-sandbox" title="运行的沙箱" :keys="KEYS">
-      <template #help>你的运行（也包括访客和借你登录的同事）在这台机器上进沙箱：主目录只读，常用登录文件和浏览器资料看不到，只能写下面这些地方。要用登录的命令（操作规则保护的、凭据插件声明的、git 推拉、飞书命令行）在沙箱外的执行器里用这个身份的登录跑，运行拿不到登录文件本身。成员用自己的账号时另有隔离；云端和借别的设备跑的不在这里。</template>
+      <template #help>你的运行（也包括访客和借你登录的同事）在这台机器上进沙箱：写进主目录的东西落在这个人自己的一层，下一轮还在，真实主目录不变；常用登录文件和浏览器资料看不到；主目录以外只能写下面这些地方。要用登录的命令（操作规则保护的、凭据插件声明的、git 推拉、飞书命令行）在沙箱外的执行器里用这个身份的登录跑，运行拿不到登录文件本身。成员用自己的账号时另有隔离；云端和借别的设备跑的不在这里。</template>
       <template v-if="status" #aside>
         <span class="badge" :class="status.support.ok ? 'ok' : 'warn'" :title="status.support.version ? `bubblewrap ${status.support.version}` : status.support.reason ?? ''">{{ status.support.ok ? "这台能用" : "这台用不了" }}</span>
       </template>
@@ -105,7 +132,18 @@ const note = computed(() => (status.value ? fullAccessNote(status.value) : ""));
         <SetRow label="这些不进" hint="在沙箱里跑不通的类型放这里，按原来的样子跑；和上面冲突时以这里为准" block :off="off">
           <UiSelect :model-value="status.excludeKinds ?? []" multiple size="sm" width="100%" aria-label="这些运行不进沙箱" placeholder="没有" :options="kinds" @change="(v) => save({ excludeKinds: v as string[] }, (v as string[]).length ? `这些不进：${kindNames(v as string[])}` : '不再排除哪一类')" />
         </SetRow>
-        <SetRow label="默认可写" hint="进了沙箱的运行只能写这些地方，别处都只读" block :off="off">
+        <SetRow label="主目录的改动" :hint="status.overlay?.ok === false ? '这台机器做不了写时复制，主目录在沙箱里只读' : '每人一层，跨轮保留；清空后下一轮从真实主目录开始'" block :off="off">
+          <p v-if="status.overlay?.ok === false" class="small warn-text">{{ status.overlay.reason }}</p>
+          <ul v-else-if="layers.length" class="sbx-list" aria-label="主目录的改动">
+            <li v-for="l in layers" :key="l.identity" class="sbx-line sbx-layer">
+              <span class="sbx-named">{{ l.name }}</span>
+              <span class="sbx-aside">{{ l.size }}</span>
+              <button type="button" class="btn ghost sm" :disabled="clearing === l.identity" @click="clearLayer(l.identity, l.name)">{{ clearing === l.identity ? "清空中…" : "清空" }}</button>
+            </li>
+          </ul>
+          <span v-else class="small muted">还没有运行在沙箱里改过主目录。</span>
+        </SetRow>
+        <SetRow label="默认可写" hint="进了沙箱的运行只能写这些地方，主目录之外别处都只读" block :off="off">
           <ul class="sbx-list" aria-label="默认可写">
             <li v-for="p in split.common" :key="p" class="sbx-line">
               <template v-if="defaultLabel(p, data, home).path">
@@ -142,6 +180,9 @@ const note = computed(() => (status.value ? fullAccessNote(status.value) : ""));
               <MonoLine v-for="p in logins" :key="p" :text="tilde(p, home)" />
             </div>
           </div>
+        </SetRow>
+        <SetRow label="你登记的命令" hint="凭据插件没有声明的命令行工具：沙箱里遮住它的登录目录，调用经执行器用你的登录跑。新起的运行才生效" block :off="off">
+          <ProtectedCommands />
         </SetRow>
         <SetRow label="你加的可写目录" hint="命令写清单以外的地方会失败；构建输出、工具缓存这类目录加在这里。命令行的登录由执行器用，不用加" block :off="off">
           <SandboxPaths :items="status.writable" :home="home" label="你加的可写目录" placeholder="~/build-cache" :save="listSaver('writable')" />

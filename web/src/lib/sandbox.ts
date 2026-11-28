@@ -31,6 +31,10 @@ export type SandboxStatus = {
   excludeKinds?: string[];
   visibility?: string;
   warning?: string;
+  /** Whether this machine can give runs a copy-on-write HOME (src/agents/sandbox-home.ts); when not, HOME is read-only. */
+  overlay?: { ok: boolean; reason?: string };
+  /** Each identity's HOME layer (`owner` or a member's id) and its size; cleared with `DELETE /api/security/sandbox/layers/:identity`. */
+  layers?: { identity: string; bytes: number }[];
 };
 export type SandboxSettings = { mode: SandboxMode; writable: string[]; hidden: string[]; fullAccess: FullAccessMode; includeKinds?: string[]; excludeKinds?: string[] };
 
@@ -76,7 +80,7 @@ export function tilde(path: string, home: string | null): string {
  * data directory are named by what they are (every run gets its own); the rest are paths.
  */
 export function defaultLabel(path: string, data: string | null, home: string | null): { text: string; path?: string } {
-  if (path === "/tmp") return { text: "/tmp", path: "每次运行各自一份，用完就清掉" };
+  if (path === "/tmp") return { text: "/tmp", path: "按这件事保留：同一会话、交办或事项的各轮共用一份，久不用就清掉" };
   if (data && path.startsWith(data + "/")) {
     const rest = path.slice(data.length + 1);
     if (/^workspaces\/example(\/|$)/.test(rest)) return { text: "这次运行的工作目录", path: "可写的角色才可写" };
@@ -130,4 +134,20 @@ export const hiddenLabel = (path: string, data: string | null) => (path === data
 export function kindOptions(labels: Record<string, string>, saved: string[]): { value: string; label: string; hint?: string }[] {
   const named = Object.entries(labels).map(([value, label]) => ({ value, label, hint: value }));
   return [...named, ...saved.filter((k) => !Object.hasOwn(labels, k)).map((k) => ({ value: k, label: k }))];
+}
+
+/** A size in the units people read (1.5 MB). */
+export function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
+}
+
+/** The HOME layers, largest first, each named for the person it belongs to (the owner as 你). */
+export function layerRows(layers: SandboxStatus["layers"], names: Record<string, string>): { identity: string; name: string; size: string }[] {
+  return [...(layers ?? [])].sort((a, b) => b.bytes - a.bytes).map((l) => ({
+    identity: l.identity, name: l.identity === "owner" ? "你" : names[l.identity] ?? l.identity, size: fmtBytes(l.bytes),
+  }));
 }
