@@ -39,7 +39,7 @@ import { readAgentSpec } from "./specs.ts";
 import { describeFlags, guardSource } from "../sources/guard.ts";
 import { learningProgress, studyStats } from "../learn/cards.ts";
 import { getGoal, listGoals, localClock, upsertGoal } from "../learn/goals.ts";
-import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
+import { addMessage, getThread, handedReportAgent, threadMessages, updateThread } from "./threads.ts";
 import { createRun, getRun, listRuns, ResumeAfterAiLogin, runUser, registerHandler, updateQueuedRun, type RunContext } from "./runs.ts";
 import { aiLoginWait } from "./credential-wait.ts";
 import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
@@ -517,7 +517,7 @@ registerHandler("thread-summary", async (ctx) => {
   const fresh = threadMessages(ctx.app, threadId, { after: t.summaryAt, limit: 80 }).filter((m) => !m.meta.command);
   if (!fresh.length) return { quiet: true };
   // Group members in a 关注's conversation speak for themselves: only the owner's own words are “本人”.
-  const who = (m: (typeof fresh)[number]) => (m.role === "user" ? (typeof m.meta.speaker === "string" ? m.meta.speaker : typeof m.meta.asker === "string" ? m.meta.asker : "本人") : "助理");
+  const who = (m: (typeof fresh)[number]) => (m.role === "user" ? (typeof m.meta.speaker === "string" ? m.meta.speaker : typeof m.meta.asker === "string" ? m.meta.asker : "本人") : handedReportAgent(m.meta) ? `${handedReportAgent(m.meta)} 交回的报告` : "助理");
   const transcript = fresh.map((m) => `${who(m)}（${localStamp(m.createdAt, ctx.app.config.timezone)}）：${truncate(m.text, 1200)}`).join("\n\n");
   const listening = t.channel === "listen"
     ? "\n\n这是助手替本人关注的群（一个或几个）的会话：写成三段，“在聊的话题”（谁在推进什么）、“没结的问题”（谁问了什么、还在等什么）、“已有结论”（定了什么、查清了什么，带人名）。只写群里的事，不写助手的处理过程。"

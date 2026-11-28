@@ -18,7 +18,35 @@ import { currentSpace, relTime, state, toast } from "../store";
 type Conversation = { user_id: string; id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
 /** A file pasted, dropped or picked into the box (src/agents/attachments.ts); the text refers to it as [label]. */
 type Attachment = { name: string; filename: string; kind: "image" | "file"; label: string; size: number };
-type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; meta?: { autoFollowId?: string; attachments?: Attachment[]; runId?: unknown } };
+type Message = {
+  id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string;
+  meta?: {
+    autoFollowId?: string; attachments?: Attachment[]; runId?: unknown;
+    /** Host notes for the assistant: a wake-up it set, or a run_agent report handed back (src/agents/wakes.ts). */
+    wake?: { note?: string; report?: { agent?: string; runId?: string } };
+    /** A specialist round's report in a multi-Agent work conversation (src/agents/agent-work.ts). */
+    agentReport?: { agent: string; status: string; round: number };
+  };
+};
+
+/**
+ * Material for the assistant, not a reply: folded, with the report itself as the body. Older
+ * handed-back reports stored the assistant's instructions above the report; those are cut off.
+ */
+function folded(m: Message): { title: string; body: string; hint?: string } | null {
+  const meta = m.meta;
+  if (!meta) return null;
+  if (meta.agentReport) return { title: `${meta.agentReport.agent} 交回的报告 · 第 ${meta.agentReport.round} 轮${meta.agentReport.status === "done" ? "" : "（失败）"}`, body: m.text };
+  if (!meta.wake) return null;
+  if (meta.wake.report) return { title: `${meta.wake.report.agent ?? "Agent"} 交回的报告`, body: m.text };
+  const old = /^(.+?) 交回了「/.exec(m.text);
+  if (old) {
+    const cut = m.text.indexOf("\n\n");
+    return { title: `${old[1]} 交回的报告`, body: cut >= 0 ? m.text.slice(cut + 2) : m.text };
+  }
+  const note = (meta.wake.note ?? "").replace(/\s+/g, " ");
+  return { title: `唤醒：${note.length > 40 ? note.slice(0, 40) + "…" : note}`, body: m.text, hint: "助手设的唤醒" };
+}
 
 const route = useRoute();
 const router = useRouter();
@@ -352,6 +380,16 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
                 </div>
               </div>
             </div>
+            <div v-else-if="folded(m)" class="msg bot">
+              <details class="handback">
+                <summary>
+                  <Icon name="right" :size="14" class="caret" />
+                  <span class="handback-title">{{ folded(m)!.title }}</span>
+                  <span class="muted small">{{ folded(m)!.hint ?? "交给助手的材料" }}</span>
+                </summary>
+                <Markdown :source="folded(m)!.body" />
+              </details>
+            </div>
             <div v-else class="msg bot">
               <RunActivity v-if="m.runId" :run-id="m.runId" :show-text="false" />
               <Markdown :source="m.text" />
@@ -497,6 +535,52 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
 .msg.bot {
   display: grid;
   gap: 10px;
+}
+/* Material handed to the assistant (a report, a wake-up): one quiet line, opened on demand. */
+.handback {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  min-width: 0;
+}
+.handback summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.handback summary::-webkit-details-marker {
+  display: none;
+}
+.handback summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
+.handback .caret {
+  align-self: flex-start;
+  margin-top: 3px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.handback[open] .caret {
+  transform: rotate(90deg);
+}
+.handback-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.handback summary .muted {
+  flex: none;
+}
+.handback > :not(summary) {
+  padding: 0 14px 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
 }
 .composer {
   display: flex;

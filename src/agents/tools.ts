@@ -97,7 +97,7 @@ import { afterToolCall, isBackgroundNotification, ownerNews, preSendCheck } from
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillsOutsideScope, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
-import { describeThread, findThread, getThread, listThreads, threadMessages, updateThread } from "./threads.ts";
+import { describeThread, findThread, getThread, handedReportAgent, listThreads, threadMessages, updateThread } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
 import type { OperationRule } from "../core/config.ts";
@@ -1101,7 +1101,8 @@ def({
     const msgs = threadMessages(ctx.app, t.id, { limit: a.limit ?? 30, before: a.before });
     recordReadMessages(ctx.app, ctx.runId, t.spaceId, msgs, t);
     const head = describeThread(t, ctx.app.config.timezone);
-    return `${head}\n\n${msgs.map((m) => `[${localStamp(m.createdAt, ctx.app.config.timezone)}] ${m.role === "user" ? "本人" : "助理"}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
+    const who = (m: (typeof msgs)[number]) => m.role === "user" ? "本人" : handedReportAgent(m.meta) ? `${handedReportAgent(m.meta)} 交回的报告` : "助理";
+    return `${head}\n\n${msgs.map((m) => `[${localStamp(m.createdAt, ctx.app.config.timezone)}] ${who(m)}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
   },
 });
 

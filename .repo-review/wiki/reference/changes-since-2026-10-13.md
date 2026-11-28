@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 交回的报告只存报告本身，网页上折叠（2026-11-28）
+
+`run_agent` 的报告交回会话时（`src/agents/wakes.ts` 的 `returnChildReport`），会话里那条消息的正文只有报告；“按报告给本会话写回复……stay_quiet”这段说明放在 `meta.wake.note`，`meta.wake.report` 记下是哪个 Agent、哪次运行。助手那一轮看到的内容没变：`renderMessages` 把说明拼回报告前面，署名“<Agent> 交回的报告（宿主转交，不是本人说的）”；摘要和 `read_conversation` 也按这个署名，不再记成“助理”。问答页把交回的报告、多 Agent 工作里各轮的报告和定时唤醒都收成一行，点开看正文；旧数据里正文带着说明的，展示时去掉说明只留报告。这类消息本来就不发到飞书。
+
 ## “用一句话改”的规则卡：倾向不写成规则，提醒被挡住的指定 AI（2026-11-28）
 
 起草角色 `ai-policy-writer` 只把“禁止 / 别用 / 只用 / 必须用”这类话写成 `use` / `deny`；“优先 / 尽量 / 可考虑”放进草稿新加的 `prefer`，卡片上单列，不改范围。预览（`src/agents/ai-policy-proposal.ts`）在长任务跟进用的 AI 或角色默认 AI 会被新规则挡住时加一段提醒，起草时也把这些指定告诉起草角色。卡片上的具体 AI 写成“Codex · gpt-6.2-astra · xhigh”（原来是 `ai:codex · · high`），后端去掉“(ACP)”，每个类别的范围、顺序、兜底写在类别的框里，不再用飞书上画成半宽、值另起一行的字段块。

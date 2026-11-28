@@ -16,7 +16,7 @@ export type WakeTarget = { conversationId?: string; spec?: string; resumeRunId?:
 export type WakeInput = {
   note: string; target: WakeTarget; setBy: { runId: string | null; agent: string }; setAt: string; skipIfOwnerSpoke?: boolean; onRunEnd?: { runId: string; purpose: string; expiresAt: string };
   /** A run_agent report handed back to the conversation's assistant (returnChildReport): skipped when the turn that handed it out read it. */
-  childReport?: { runId: string; parentId: string | null };
+  childReport?: { runId: string; parentId: string | null; agent?: string; head?: string; report?: string };
 };
 
 export const MAX_PENDING = 5;
@@ -114,7 +114,10 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
   if (!target.spec) {
     const conversationId = target.conversationId!;
     if (!findThread(app, conversationId)) return { skipped: "会话已不存在" };
-    const messageId = addMessage(app, conversationId, "assistant", body, null, { wake: { note: w.note, setAt: w.setAt, trigger: trigger ?? null }, record: true });
+    const handed = w.childReport?.report !== undefined ? w.childReport : null;
+    const messageId = handed
+      ? addMessage(app, conversationId, "assistant", handed.report!, null, { wake: { note: handed.head ?? "", setAt: w.setAt, trigger: trigger ?? null, report: { agent: handed.agent ?? w.setBy.agent, runId: handed.runId } }, record: true })
+      : addMessage(app, conversationId, "assistant", body, null, { wake: { note: w.note, setAt: w.setAt, trigger: trigger ?? null }, record: true });
     const waiting = queuedInLane(app, conversationId, "ask");
     if (waiting) {
       const ids = [...((waiting.input.messageIds as string[] | undefined) ?? []), messageId];
@@ -167,16 +170,17 @@ export function fireWake(app: App, w: WakeInput, trigger?: string): { runId?: st
 export function returnChildReport(app: App, child: { id: string; parentId: string | null }, conversationId: string, agent: string, task: string, answer: string) {
   const parentId = child.parentId;
   const parentLive = !!parentId && !!one(app.db, "select 1 from runs where id = ? and status in ('queued','running')", parentId);
-  const note = [
+  // The conversation keeps the report itself (folded on the page); the instructions only go into
+  // the assistant's turn (sessions.ts renderMessages).
+  const head = [
     `${agent} 交回了「${truncate(task.replace(/\s+/g, " "), 60)}」的报告（运行 ${child.id}）。这是交给你的材料，本人和提问的人都还没看到。`,
     "按报告给本会话写回复：给结论和要紧的依据，不复述它的过程，不整段转贴；交办它的那一轮已经说过的不重复。报告里没有新东西、或已经回答过了，调用 stay_quiet。",
-    "",
-    truncate(answer, 8000),
-    ...(answer.length > 8000 ? ["", `（报告较长，全文用 read_run ${child.id} 看）`] : []),
   ].join("\n");
+  const report = [truncate(answer, 8000), ...(answer.length > 8000 ? ["", `（报告较长，全文用 read_run ${child.id} 看）`] : [])].join("\n");
+  const note = `${head}\n\n${report}`;
   const w: WakeInput = {
     note, target: { conversationId }, setBy: { runId: parentId, agent }, setAt: now(),
-    childReport: { runId: child.id, parentId },
+    childReport: { runId: child.id, parentId, agent, head, report },
     ...(parentLive ? { onRunEnd: { runId: parentId!, purpose: `report:${child.id}`, expiresAt: new Date(Date.now() + 86400_000).toISOString() } } : {}),
   };
   return createRun(app, { kind: "wake", title: truncate(`交回报告：${agent}`, 80), input: w, parentId: child.id });
