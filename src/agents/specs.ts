@@ -43,6 +43,8 @@ export const agentSpecSchema = z.object({
   name: z.string().regex(NAME, "名称只能用小写字母、数字和连字符"),
   description: z.string().min(1).describe("做什么、什么时候该用它"),
   status: z.enum(["active", "draft"]).default("active"),
+  /** Where the Agent page lists it: the owner's own grouping of profiles, a few words. Nothing else goes by it. */
+  group: z.string().trim().max(24).optional(),
   /** Backend agent profile id (codex, claude, …); empty = the assistant's. */
   class: classSchema.optional(),
   ai: specAiSchema.optional(),

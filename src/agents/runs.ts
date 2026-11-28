@@ -13,6 +13,7 @@ import { scopeFor } from "../core/users.ts";
 import { triggerFor, withFollowUp, type RunTrigger } from "../core/run-trigger.ts";
 import { offerReviewPublish } from "./review-sync.ts";
 import { emitOmem, runOutputFacts } from "../rules/omem-events.ts";
+import { keepPromptTexts } from "./prompt-log.ts";
 
 import type { RunKind } from "./run-kinds.ts";
 export type { RunKind } from "./run-kinds.ts";
@@ -380,7 +381,8 @@ export function addRunEvent(app: App, runId: string, type: string, data: unknown
     return;
   }
   flushText(app, runId);
-  return writeEvent(app, runId, type, data);
+  // A turn's texts go to the prompt log; the event keeps where they are.
+  return writeEvent(app, runId, type, type === "prompt" ? keepPromptTexts(app, data) : data);
 }
 
 export function runEvents(app: App, runId: string, afterSeq = 0) {

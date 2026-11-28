@@ -357,6 +357,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "GET /api/runs/:id/progress": cap("runs.view", "run:p.id"),
   "GET /api/items/:id/progress": cap("items.view", "item:p.id"),
   "GET /api/runs/:id": cap("runs.view", "run:p.id"),
+  "GET /api/runs/:id/prompts/:seq": cap("runs.view", "run:p.id"),
   "GET /api/agent-work/:id/board": RUN,
   "POST /api/runs/:id/share-review": RUN,
   "POST /api/runs/:id/cancel": cap("runs.operate", "run:p.id"),

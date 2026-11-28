@@ -1,21 +1,30 @@
 # Agent 与技能
 
-**omem 不自带大模型，也不把几十条死板的 prompt 规则硬编码在宿主里。** 理解、调查、写代码和审代码全部交给你已安装的 Agent（Codex、Claude Code、Gemini CLI、Antigravity、Copilot、Qwen、Cursor、豆包等 25+ 种支持 ACP 或 CLI 的工具）；omem 给它们提供大约 **30 个专职内置角色**、一套按需展开的 **MCP 工具与技能库**，以及完整的**智能选型、额度避让、网络出口绑定、操作审批与 Linux 文件/出网沙箱**。
+**omem 不自带大模型，也不把几十条死板的 prompt 规则硬编码在宿主里。** 理解、调查、写代码和审代码全部交给你已安装的 Agent（Codex、Claude Code、Gemini CLI、Antigravity、Copilot、Qwen、Cursor、豆包等 25+ 种支持 ACP 或 CLI 的工具）；omem 给它们提供近 **50 个专职内置角色**、一套按需展开的 **MCP 工具与技能库**，以及完整的**智能选型、额度避让、网络出口绑定、操作审批与 Linux 文件/出网沙箱**。
 
-<Shot src="agents" caption="Agent 页：约 30 个内置角色与自定义档案，每个可独立配置后端、模型、思考强度、工具分组与技能" />
+<Shot src="agents" caption="Agent 页：近 50 个内置角色与自定义档案，每个可独立配置后端、模型、思考强度、工具分组与技能" />
 
-## 1. 约 30 个内置角色与自定义档案：各司其职
+## 1. 近 50 个内置角色与自定义档案：各司其职
 
 在 omem 里，不是让同一个笼统的“AI 助手”包揽所有活，而是每类任务都由专门的角色负责：
 
-| 职责领域 | 内置角色 |
+| Agent 页上的分组 | 内置角色 |
 | --- | --- |
-| **对话与统筹** | 主助手（`assistant`）、长任务监督（`supervisor`）、会话滚动摘要（`summarizer`） |
-| **编码与六维评审** | 编码（`coder`）、评审负责人（`review-lead`）、功能评审（`reviewer`）、业务评审（`review-business`）、架构评审（`review-arch`）、历史评审（`review-history`）、规范评审（`review-style`）、精简评审（`review-simplify`）、需求拆解（`req-splitter`）、提交认领（`commit-claim`）、技术方案评估（`business-analyst` / `designer`） |
-| **材料采集与归档** | 材料整理（`ingest`）、精读整理（`distiller`）、原件定级、标注复核（`note-reviewer`）、空间归档（`archivist`）、归档规则起草（`archive-rule-writer`）、关注群筛选（`curator`）、飞书知识库侦察（`kb-scout`） |
-| **Wiki 生产与质检** | 目录规划（`wiki-planner`）、页面撰写（`wiki-writer`）、原件变更巡检（`wiki-linter`）、目录归整（`wiki-organizer`）、发布前与每晚核对（`wiki-checker`） |
-| **记忆、事项与主动服务** | 记忆盲评复核（`memory-reviewer`）、记忆目录整理（`memory-organizer`）、工作近况与人物卡（`work-state`）、事项收尾（`item-keeper`）、事项跟进（`item-follow`）、流程对账（`flow-reconcile`）、有人找你分诊（`mention-triage`）、90 秒快速通道（`first-look`）、定时巡检（`heartbeat`）、每日简报与周报（`brief`）、夜间做梦（`dreamer`） |
-| **自检复盘、访客与学习** | 档案复盘（`coach`）、盯群经验提炼（`listen-coach`）、夜间回放盲评（`replay-judge`）、回复效果回扫（`outcome-reviewer`）、技能分组整理（`skill-organizer`）、AI 规则起草（`ai-policy-writer`）、访客把关（`gatekeeper`）、回答访客（`guest`）、卡片出题（`tutor` / 插件 `english-tutor`） |
+| **对话与代答** | 主助手（`assistant`）、访客把关（`gatekeeper`）、回答访客（`guest`）、90 秒快速通道（`first-look`）、有人找你分诊（`mention-triage`）、会话滚动摘要（`summarizer`） |
+| **事项与流程** | 定时巡检（`heartbeat`）、每日简报与周报（`brief`）、事项收尾（`item-keeper`）、事项跟进（`item-follow`）、流程对账（`flow-reconcile`）、提交认领（`commit-claim`）、工作近况与人物卡（`work-state`）、长任务跟进（`supervisor`） |
+| **编码与评审** | 需求拆解（`req-splitter`）、编码前检查（`business-analyst`）、写方案（`designer`）、编码（`coder`）、功能评审（`reviewer`）、评审负责人（`review-lead`）、业务评审（`review-business`）、架构评审（`review-arch`）、历史评审（`review-history`）、精简评审（`review-simplify`）、规范评审（`review-style`） |
+| **采集与归档** | 材料整理（`ingest`）、空间归档（`archivist`）、归档规则起草（`archive-rule-writer`）、原件定级（`triager`）、关注群筛选（`curator`）、飞书知识库侦察（`kb-scout`）、标注复核（`note-reviewer`） |
+| **Wiki** | 目录规划（`wiki-planner`）、页面撰写（`wiki-writer`）、发布前与每晚核对（`wiki-checker`）、原件变更巡检（`wiki-linter`）、目录归整（`wiki-organizer`）、精读整理（`distiller`）、卡片出题（`tutor`） |
+| **记忆与技能** | 夜间做梦（`dreamer`）、记忆盲评复核（`memory-reviewer`）、记忆目录整理（`memory-organizer`）、技能分组整理（`skill-organizer`） |
+| **复盘与改进** | 档案复盘（`coach`）、盯群经验提炼（`listen-coach`）、夜间回放盲评（`replay-judge`）、回复效果回扫（`outcome-reviewer`）、AI 规则起草（`ai-policy-writer`） |
+
+### 档案多了怎么找：分组和搜索
+
+Agent 页左边的列表按分组折叠，顶上有一个搜索框：
+
+- **内置角色按用途分成上表的七组**：默认收起，每组标着个数，点开才列出角色；右边打开哪个角色，它所在的组自动展开。
+- **你自己的档案自己分组**：在档案表单的“分组”里写几个字（如“值班”“写作”），已有的分组可以直接点选；没写分组的排在最前面，插件带来又没分过组的归在“来自插件”。分组只影响这一页怎么排，Agent 自己看不到。也可以对助手说“把 oncall-helper 放进值班组”。
+- **搜索**：在“Agent 档案”标签下按名字、用途和分组名同时筛档案和内置角色；在“技能”标签下按名字、说明、用途和分组名筛，结果跨分组列成一张表，每条写着它在哪个分组、哪个用途下。
 
 ### 每个角色都能自由定制，且不怕升级冲突
 

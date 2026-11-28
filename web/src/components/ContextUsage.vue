@@ -4,13 +4,15 @@
  * check, the lead…): from the `prompt` events (how the standing instructions went, their parts) and
  * the backend's `usage` reports (context held at each model call).
  */
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import type { RunEvent } from "../api";
+import PromptViewer, { type PromptTurn } from "./PromptViewer.vue";
 
-const props = defineProps<{ events: RunEvent[] }>();
+/** `runId` with `canRead`: each agent's row opens what its turns were sent (the instructions and the message). */
+const props = defineProps<{ events: RunEvent[]; runId?: string; canRead?: boolean }>();
 
 type Parts = { common: number; role: number; environment: number; lessons: number; lessonCount: number; skills: number };
-type Row = { key: string; turns: number; via: string[]; instructions: number; parts?: Parts; message: number; calls: number; start: number; peak: number; total: number; size: number };
+type Row = { key: string; sent: PromptTurn[]; turns: number; via: string[]; instructions: number; parts?: Parts; message: number; calls: number; start: number; peak: number; total: number; size: number };
 
 const LABEL: Record<string, string> = { coder: "编码", lead: "评审负责人", reviewer: "独立评审", "review-business": "业务评审", "review-arch": "架构评审", "review-history": "历史评审", "review-simplify": "精简评审", "review-style": "规范评审", split: "需求拆分", "business-analyst": "编码前检查", agent: "Agent" };
 const VIA: Record<string, string> = { system: "作为系统提示", message: "放在第一条消息", resumed: "接上会话，没再发", none: "没有说明" };
@@ -20,13 +22,14 @@ const rows = computed(() => {
   const at = (d: { check?: string; phase?: string }) => {
     const key = d.check ?? d.phase ?? "agent";
     let r = map.get(key);
-    if (!r) map.set(key, (r = { key, turns: 0, via: [], instructions: 0, message: 0, calls: 0, start: 0, peak: 0, total: 0, size: 0, last: -1 }));
+    if (!r) map.set(key, (r = { key, sent: [], turns: 0, via: [], instructions: 0, message: 0, calls: 0, start: 0, peak: 0, total: 0, size: 0, last: -1 }));
     return r;
   };
   for (const e of props.events) {
     if (e.type === "prompt") {
       const r = at(e.data);
       r.turns++;
+      r.sent.push({ seq: e.seq, at: e.at, via: e.data.via, kept: !!e.data.kept });
       r.message += e.data.message ?? 0;
       if (!r.via.includes(e.data.via)) r.via.push(e.data.via);
       if (e.data.via !== "resumed" && e.data.instructions) { r.instructions = e.data.instructions; r.parts = e.data.parts ?? r.parts; }
@@ -44,6 +47,9 @@ const rows = computed(() => {
   }
   return [...map.values()];
 });
+
+const viewing = ref<string | null>(null);
+const viewed = computed(() => rows.value.find((r) => r.key === viewing.value));
 
 const total = computed(() => rows.value.reduce((a, r) => ({ calls: a.calls + r.calls, tokens: a.tokens + r.total }), { calls: 0, tokens: 0 }));
 
@@ -63,12 +69,15 @@ const partsText = (p: Parts) =>
       <div class="head">
         <b>{{ LABEL[r.key] ?? r.key }}</b>
         <span v-if="r.calls" class="muted small">调用 {{ r.calls }} 次 · 上下文 {{ tok(r.start) }} → 峰值 {{ tok(r.peak) }}{{ r.size ? ` / ${tok(r.size)}` : "" }} · 累计 {{ tok(r.total) }}</span>
+        <span class="spacer" />
+        <button v-if="runId && canRead && r.sent.length" class="btn ghost sm" :title="r.sent.some((t) => t.kept) ? '看发给它的说明和消息原文' : '这次运行没有保留原文'" @click="viewing = r.key">看提示词</button>
       </div>
       <div v-if="r.turns" class="muted small">
         说明：{{ r.via.map((v) => VIA[v] ?? v).join("、") }}<template v-if="r.instructions">，{{ chars(r.instructions) }}</template>；发出的消息 {{ r.turns }} 条共 {{ chars(r.message) }}
       </div>
       <div v-if="r.parts" class="muted small parts">{{ partsText(r.parts) }}</div>
     </div>
+    <PromptViewer v-if="viewed && runId" :run-id="runId" :who="LABEL[viewed.key] ?? viewed.key" :turns="viewed.sent" @close="viewing = null" />
   </details>
 </template>
 

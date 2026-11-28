@@ -85,7 +85,7 @@ type RunContextInfo = {
   work: { id: string; title: string; rounds: { runId: string; agent: string; kind: string; status: string; title: string }[] } | null;
 };
 type ReplyOutcome = { label: string | null; text: string; dueAt: string; first: { label: string; confidence: number | null; by: string } | null; revised: { label: string; by: string; why: string } | null; checked?: { verdict: "confirmed" | "revised"; label: string; by: string; why: string; pick?: string } | null; evidence: { who: string; text: string }[]; missing?: string | null };
-const detail = ref<{ can?: { operate: boolean; edit: boolean }; run: Run; events: RunEvent[]; children: Run[]; board?: { workId: string; taskId?: string }; patches?: { space: string; patch: string }[]; context?: RunContextInfo; reply?: ReplyOutcome | null } | null>(null);
+const detail = ref<{ can?: { operate: boolean; edit: boolean; prompts?: boolean }; run: Run; events: RunEvent[]; children: Run[]; board?: { workId: string; taskId?: string }; patches?: { space: string; patch: string }[]; context?: RunContextInfo; reply?: ReplyOutcome | null } | null>(null);
 /** What a reply came to, judged from what people said after it; the owner may overrule the label. */
 const REPLY_LABELS: Record<string, string> = { resolved: "解决了", next: "接着往下", supplement: "要补充", followup: "被追问", corrected: "被纠正", taken_over: "别人接手了", unrelated: "看不出", silent: "没人接话", unjudged: "没判" };
 const REVISABLE = ["resolved", "next", "supplement", "corrected", "taken_over", "unrelated"];
@@ -444,7 +444,7 @@ const kindOptions = computed(() => [
           <div class="pre task" :class="{ clipped: taskLong && !taskOpen }">{{ taskText }}</div>
         </section>
 
-        <ContextUsage :events="detail.events" />
+        <ContextUsage :events="detail.events" :run-id="detail.run.id" :can-read="detail.can?.prompts" />
 
         <section class="block">
           <RunActivity :run-id="detail.run.id" :link="false" :open="['queued', 'running'].includes(detail.run.status)">

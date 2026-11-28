@@ -55,7 +55,7 @@ type RunContextInfo = {
   conversation: { id: string; title: string; channel: string; topic: boolean; work: boolean; parentId: string | null; parentTitle: string | null; turns: { id: string; title: string; status: string; createdAt: string }[] } | null;
   parent: { id: string; kind: string; title: string; status: string } | null;
 };
-type Detail = { can?: { operate: boolean; edit: boolean }; run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo };
+type Detail = { can?: { operate: boolean; edit: boolean; prompts?: boolean }; run: Run; events: RunEvent[]; children: Run[]; patches?: { space: string; patch: string }[]; context?: RunContextInfo };
 const work = ref<CodeWorkDetail | null>(null);
 const detail = ref<Detail | null>(null);
 const improvement = ref<Improvement | null>(null);
@@ -538,7 +538,7 @@ const ctx = computed(() => detail.value?.context ?? null);
           <div v-if="ctx.parent" class="row wrap small"><span class="muted">由</span><router-link class="ellipsis" :to="`/runs/${ctx.parent.id}`" :title="ctx.parent.title">{{ ctx.parent.title }}</router-link></div>
         </section>
         <div class="row small muted round-head">第 {{ roundNo }} 轮 · {{ phaseNow ? work.stage.text : statusLabel[run.status] ?? run.status }} · {{ fmtTime(run.createdAt) }}<template v-if="run.finishedAt"> → {{ fmtTime(run.finishedAt) }}</template></div>
-        <ContextUsage :events="detail!.events" />
+        <ContextUsage :events="detail!.events" :run-id="detail!.run.id" :can-read="detail!.can?.prompts" />
         <RoundPhases :run-id="run.id" :events="detail!.events" :busy="busy" :checks="roundChecks" :label="rv.label" :review-runs="(rv.current.value?.reviewRuns ?? []).map((r) => r.id)" :task-mode="work.taskMode" :focus="processFocus" data-ask-label="这一轮的过程" />
         <details v-if="out.coderSummary && (work.taskMode || hasReview)" class="card pad block summary-card">
           <summary class="small"><strong>{{ branchReview ? "要评审的分支" : "编码 Agent 这一轮的说明" }}</strong><span class="muted"> · {{ plainLine(out.coderSummary, 80) }}</span></summary>

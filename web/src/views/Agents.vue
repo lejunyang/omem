@@ -33,16 +33,17 @@ import { state, toast } from "../store";
  * reset / merge when the source changes) and skills. A profile shows who it is (a form, or the
  * raw file), what it has learned and how it is evolving.
  */
-type Spec = { name: string; description: string; status: "active" | "draft"; agent?: string; model?: string; effort?: string; class?: string; ai?: { use?: string[]; deny?: string[]; strict?: boolean }; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
+type Spec = { name: string; description: string; status: "active" | "draft"; group?: string; agent?: string; model?: string; effort?: string; class?: string; ai?: { use?: string[]; deny?: string[]; strict?: boolean }; tools: string[]; writes: boolean; fullAccess?: boolean; skills: string[]; mcpServers: string[]; mcp: Record<string, unknown>; cwd?: string; space?: string; spaces: string[]; instructions?: string; prompt: string; plugin?: string };
 type RoleState = { name: string; description: string; customized: boolean; sourceChanged: boolean; overlay?: { fullAccess?: boolean; mcp?: string[] } };
-type RoleRow = Pick<RoleState, "name" | "description"> & Partial<Pick<RoleState, "customized" | "sourceChanged">>;
+/** `group`: what the role is for (the server's grouping of built-in roles); older servers send none. */
+type RoleRow = Pick<RoleState, "name" | "description"> & Partial<Pick<RoleState, "customized" | "sourceChanged">> & { group?: string };
 /** `canEdit` / `canDelete`: what the reader may do with it (`GET /api/agents`, `GET /api/skills`); older servers send neither. */
 type Editable = { canEdit?: boolean; canDelete?: boolean };
 type Skill = Editable & { replay?: SkillReplay; name: string; description: string; status: "active" | "draft"; group?: string | null; purpose?: string; enabled?: boolean };
 type SkillGroup = { id: string; title: string; enabled: boolean; count: number; enabledCount: number };
 type Options = { unavailableBackends: UnavailableBackend[]; backends: { id: string; name: string; installed: boolean; transport?: string; model?: string; effort?: string; pluginBackend?: PluginBackend }[]; defaultBackend: string; globalDefaultBackend: string; tools: { name: string; description: string; write: boolean; roleOnly?: boolean }[]; toolGroups: { id: string; label: string; tools: string[] }[]; defaultTools: string[] };
 type SpecDetail = Omit<Spec, "skills"> & ProfileDetail;
-type SpecSummary = Pick<Spec, "name" | "description" | "status" | "agent" | "model" | "effort">;
+type SpecSummary = Pick<Spec, "name" | "description" | "status" | "group" | "agent" | "model" | "effort">;
 type SpecRow = SpecSummary & Editable & { plugin?: string };
 type RoleDetail = { defaults: { agent: string; byBackend: Record<string, { model?: string; effort?: string }> }; notice?: string | null; name: string; description: string; tools: string[]; toolSet: { tools: string[]; base: string[]; handIn: string[]; changed: boolean; fixed: boolean }; writes: boolean; body: string } & ProfileDetail & { role: RoleState & { source: string; own: string | null } };
 type RoleSummary = Pick<RoleDetail, "name" | "description" | "defaults">;
@@ -88,6 +89,55 @@ async function loadLists() {
     if (seq === listSeq) loading.value = false;
   }
 }
+
+// ---- the list: search and groups ----------------------------------------------------
+/**
+ * Profiles are listed under the groups the owner gave them (`group` in the file; the ones a plugin
+ * brought and nobody grouped go together), built-in roles under what they are for. A search shows the
+ * matches of every group unfolded; skills are then one flat list across their groups.
+ */
+const query = ref("");
+const needle = computed(() => query.value.trim().toLowerCase());
+// A word typed for profiles says nothing about skills.
+watch(tab, () => (query.value = ""));
+const hit = (...texts: (string | null | undefined)[]) => !needle.value || texts.some((t) => t?.toLowerCase().includes(needle.value));
+const FROM_PLUGIN = "来自插件";
+const specGroupOf = (x: SpecRow) => x.group?.trim() || (x.plugin ? FROM_PLUGIN : "");
+type ListGroup<T> = { key: string; title: string; list: T[] };
+function grouped<T>(prefix: string, rows: T[], of: (row: T) => string, sorted: boolean): ListGroup<T>[] {
+  const map = new Map<string, T[]>();
+  for (const row of rows) map.set(of(row), [...(map.get(of(row)) ?? []), row]);
+  const all = [...map].map(([title, list]) => ({ key: `${prefix}:${title}`, title, list }));
+  // The owner's groups by name, what plugins brought after them; ungrouped ones come first, without a header.
+  const rank = (t: string) => (t === "" ? 0 : t === FROM_PLUGIN ? 2 : 1);
+  return sorted ? all.sort((a, b) => rank(a.title) - rank(b.title) || a.title.localeCompare(b.title, "zh")) : all;
+}
+const specGroups = computed(() => grouped("spec", specs.value.filter((x) => hit(x.name, x.description, specGroupOf(x))), specGroupOf, true));
+const roleGroups = computed(() => grouped("role", roles.value.filter((r) => hit(r.name, r.description, r.group)), (r) => r.group ?? "", false));
+/** Group names already in use, offered when filing a profile. */
+const groupNames = computed(() => [...new Set(specs.value.map((x) => x.group?.trim() ?? "").filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh")));
+const SKILL_HITS = 200;
+const skillHits = computed(() => {
+  if (!needle.value) return [];
+  const title = new Map(skillGroups.value.map((g) => [g.id, g.title]));
+  return skills.value.filter((x) => hit(x.name, x.description, x.purpose, x.group ? title.get(x.group) ?? x.group : "")).map((x) => ({ ...x, groupTitle: x.group ? title.get(x.group) ?? x.group : "" }));
+});
+
+/** Which groups are unfolded: the owner's own start open, the built-in roles' closed (there are dozens of roles). */
+const FOLD_KEY = "omem.agents.groups";
+const folds = ref<Record<string, boolean>>((() => { try { return JSON.parse(localStorage.getItem(FOLD_KEY) ?? "{}") as Record<string, boolean>; } catch { return {}; } })());
+const unfolded = (key: string) => !!needle.value || (folds.value[key] ?? key.startsWith("spec:"));
+function fold(key: string, on = !unfolded(key)) {
+  folds.value = { ...folds.value, [key]: on };
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify(folds.value)); } catch {}
+}
+// What is open on the right is visible in the list.
+watch(() => [specName.value, roleName.value, specs.value.length, roles.value.length] as const, ([sn, rn]) => {
+  const x = sn ? specs.value.find((v) => v.name === sn) : null;
+  if (x && specGroupOf(x) && !unfolded(`spec:${specGroupOf(x)}`)) fold(`spec:${specGroupOf(x)}`, true);
+  const r = rn ? roles.value.find((v) => v.name === rn) : null;
+  if (r?.group && !unfolded(`role:${r.group}`)) fold(`role:${r.group}`, true);
+});
 
 // ---- spec form ------------------------------------------------------------------
 const blank = (): Spec => ({ name: "", description: "", status: "active", tools: [], writes: false, skills: [], mcpServers: [], mcp: {}, spaces: [], prompt: "" });
@@ -151,6 +201,7 @@ async function saveSpec() {
       const cls = f.class && f.class !== "agents" ? f.class : savedClass ? "agents" : undefined;
       await put(`/api/agents/${encodeURIComponent(name)}`, {
         description: f.description.trim(),
+        group: f.group?.trim() ?? "",
         agent: f.agent ?? "",
         model: f.model?.trim() ?? "",
         effort: f.effort ?? "",
@@ -522,28 +573,59 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
         <button v-if="owner" class="tab" @click="go({ tab: 'mcp' })">MCP 服务</button>
         <button v-if="hasCap('settings.assistant.view')" class="tab" @click="go({ tab: 'review' })">评审</button>
       </div>
+      <div class="find">
+        <input v-model="query" class="input sm" type="search" :placeholder="tab === 'agents' ? '搜索档案和角色' : '搜索技能'" :aria-label="tab === 'agents' ? '搜索档案和角色' : '搜索技能'" />
+      </div>
       <div class="items">
         <Skeleton v-if="loading" :rows="6" />
         <template v-else-if="tab === 'agents'">
           <div class="group row"><span>{{ owner ? "我的档案" : "Agent 档案" }}</span><span class="spacer" /><button v-if="owner" class="add" @click="go({ tab: 'agents', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
-          <button v-for="x in specs" :key="x.name" class="li" :class="{ on: x.name === specName }" @click="go({ tab: 'agents', name: x.name })">
+          <template v-for="g in specGroups" :key="g.key">
+            <button v-if="g.title" class="fold" :aria-expanded="unfolded(g.key)" @click="fold(g.key)">
+              <Icon :name="unfolded(g.key) ? 'down' : 'right'" :size="13" /><span class="ellipsis">{{ g.title }}</span><span class="count">{{ g.list.length }}</span>
+            </button>
+            <template v-if="!g.title || unfolded(g.key)">
+              <button v-for="x in g.list" :key="x.name" class="li" :class="{ on: x.name === specName, sub: !!g.title }" @click="go({ tab: 'agents', name: x.name })">
+                <div class="grow">
+                  <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.plugin" class="badge" :title="`来自插件 ${x.plugin}`">插件</span></div>
+                  <div class="muted small clamp">{{ x.description }}</div>
+                </div>
+              </button>
+            </template>
+          </template>
+          <p v-if="!specs.length" class="muted small hint">还没有档案。<template v-if="owner">点“新建”，或对助理说“建一个负责代码评审的 Agent，用 codex，只读”。</template></p>
+          <p v-else-if="!specGroups.length" class="muted small hint">没有名字、用途或分组里带“{{ query.trim() }}”的档案。</p>
+          <div class="group">内置角色</div>
+          <template v-for="g in roleGroups" :key="g.key">
+            <button v-if="g.title" class="fold" :aria-expanded="unfolded(g.key)" @click="fold(g.key)">
+              <Icon :name="unfolded(g.key) ? 'down' : 'right'" :size="13" /><span class="ellipsis">{{ g.title }}</span><span class="count">{{ g.list.length }}</span>
+            </button>
+            <template v-if="!g.title || unfolded(g.key)">
+              <button v-for="r in g.list" :key="r.name" class="li" :class="{ on: r.name === roleName, sub: !!g.title }" @click="go({ tab: 'agents', role: r.name })">
+                <div class="grow">
+                  <div class="row">
+                    <strong class="ellipsis mono">{{ r.name }}</strong>
+                    <span v-if="r.sourceChanged" class="badge warn" title="自定义之后源码有更新">源码有更新</span>
+                    <span v-else-if="r.customized" class="badge accent">已自定义</span>
+                  </div>
+                  <div class="muted small clamp">{{ r.description }}</div>
+                </div>
+              </button>
+            </template>
+          </template>
+          <p v-if="needle && !roleGroups.length" class="muted small hint">没有匹配的内置角色。</p>
+        </template>
+        <template v-else-if="needle">
+          <div class="group row"><span>找到 {{ skillHits.length }} 个技能</span><span class="spacer" /><button class="add" @click="go({ tab: 'skills', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
+          <button v-for="x in skillHits.slice(0, SKILL_HITS)" :key="x.name" class="li" :class="{ on: x.name === skillName }" @click="go({ tab: 'skills', name: x.name })">
             <div class="grow">
-              <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.plugin" class="badge" :title="`来自插件 ${x.plugin}`">插件</span></div>
+              <div class="row"><strong class="ellipsis">{{ x.name }}</strong><span v-if="x.status === 'draft'" class="badge">草稿</span><span v-if="x.enabled === false" class="badge">停用</span></div>
+              <div v-if="x.groupTitle" class="muted small ellipsis">{{ x.groupTitle }}{{ x.purpose ? ` · ${x.purpose}` : "" }}</div>
               <div class="muted small clamp">{{ x.description }}</div>
             </div>
           </button>
-          <p v-if="!specs.length" class="muted small hint">还没有档案。<template v-if="owner">点“新建”，或对助理说“建一个负责代码评审的 Agent，用 codex，只读”。</template></p>
-          <div class="group">内置角色</div>
-          <button v-for="r in roles" :key="r.name" class="li" :class="{ on: r.name === roleName }" @click="go({ tab: 'agents', role: r.name })">
-            <div class="grow">
-              <div class="row">
-                <strong class="ellipsis mono">{{ r.name }}</strong>
-                <span v-if="r.sourceChanged" class="badge warn" title="自定义之后源码有更新">源码有更新</span>
-                <span v-else-if="r.customized" class="badge accent">已自定义</span>
-              </div>
-              <div class="muted small clamp">{{ r.description }}</div>
-            </div>
-          </button>
+          <p v-if="skillHits.length > SKILL_HITS" class="muted small hint">还有 {{ skillHits.length - SKILL_HITS }} 个没列出，把词写具体一些。</p>
+          <p v-if="!skillHits.length" class="muted small hint">没有名字、说明、用途或分组里带“{{ query.trim() }}”的技能。</p>
         </template>
         <template v-else>
           <div class="group row"><span>{{ skillGroups.length ? "技能分组" : "技能" }}</span><span class="spacer" /><button class="add" @click="go({ tab: 'skills', new: '1' })"><Icon name="plus" :size="12" />新建</button></div>
@@ -609,6 +691,14 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
             <p v-if="form.agent || form.model || form.effort" class="muted small">默认 AI · {{ [form.agent, form.model, form.effort].filter(Boolean).join(" · ") }}</p>
           </template>
           <template v-else>
+            <label class="field">
+              <span>分组</span>
+              <input v-model="form.group" class="input" maxlength="24" placeholder="不填就不分组；如 值班、写作" @input="dirty = true" />
+              <small v-if="groupNames.some((g) => g !== (form.group ?? '').trim())" class="muted pick-group">
+                已有的分组：<button v-for="g in groupNames.filter((g) => g !== (form.group ?? '').trim())" :key="g" type="button" class="chip-btn" @click="form.group = g; dirty = true">{{ g }}</button>
+              </small>
+              <small v-else class="muted">只影响这一页左边怎么排，Agent 自己看不到</small>
+            </label>
             <div class="field">
               <span>能用的 AI</span>
               <AgentAiScope :value="form" :backends="options.backends" :unavailable-backends="options.unavailableBackends" :default-backend="options.defaultBackend" @change="(patch) => { Object.assign(form, patch); dirty = true; }" />
@@ -840,10 +930,65 @@ const empty = computed(() => !creating.value && !specName.value && !roleName.val
   color: var(--ink);
   font-weight: 600;
 }
+.find {
+  padding: 8px 12px 0;
+}
+.find .input {
+  width: 100%;
+}
 .items {
   overflow-y: auto;
   padding: 6px;
   flex: 1;
+}
+.fold {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 6px 8px 6px 6px;
+  border-radius: 6px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.fold:hover {
+  background: var(--hover);
+}
+.fold .count {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.li.sub {
+  padding-left: 24px;
+}
+.pick-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.chip-btn {
+  border: 1px solid var(--line);
+  background: none;
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+.chip-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .group {
   font-size: 11px;

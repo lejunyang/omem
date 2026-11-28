@@ -253,6 +253,21 @@ export const roleNames = [
 export type RoleName = (typeof roleNames)[number];
 
 /**
+ * The built-in roles by what they are for, in the order the Agent page lists them. Every role is in
+ * exactly one group (test/role-groups.test.ts); a new role goes into the group of its use.
+ */
+export const roleGroups: readonly { id: string; title: string; roles: readonly RoleName[] }[] = [
+  { id: "chat", title: "对话与代答", roles: ["assistant", "gatekeeper", "guest", "first-look", "mention-triage", "summarizer"] },
+  { id: "work", title: "事项与流程", roles: ["heartbeat", "brief", "item-keeper", "item-follow", "flow-reconcile", "commit-claim", "work-state", "supervisor"] },
+  { id: "code", title: "编码与评审", roles: ["req-splitter", "business-analyst", "designer", "coder", "reviewer", "review-lead", "review-business", "review-arch", "review-history", "review-simplify", "review-style"] },
+  { id: "intake", title: "采集与归档", roles: ["ingest", "archivist", "archive-rule-writer", "triager", "curator", "kb-scout", "note-reviewer"] },
+  { id: "wiki", title: "Wiki", roles: ["wiki-planner", "wiki-writer", "wiki-checker", "wiki-linter", "wiki-organizer", "distiller", "tutor"] },
+  { id: "memory", title: "记忆与技能", roles: ["dreamer", "memory-reviewer", "memory-organizer", "skill-organizer"] },
+  { id: "improve", title: "复盘与改进", roles: ["coach", "listen-coach", "replay-judge", "outcome-reviewer", "ai-policy-writer"] },
+];
+export const roleGroupOf = (name: string) => roleGroups.find((g) => (g.roles as readonly string[]).includes(name));
+
+/**
  * Roles whose job is keeping the knowledge in order (taking material in, writing and checking pages,
  * reviewing and filing memories). When they look memories up it is to avoid writing one twice, not to
  * answer with it, so recall accounting keeps them apart (memory/recall-stats.ts) and their runs are
@@ -626,6 +641,11 @@ export const configSchema = z.object({
        */
       restartHold: z.object({ enabled: z.boolean().default(true), minutes: z.number().min(0.5).max(60).default(5) }).default({ enabled: true, minutes: 5 }),
       /**
+       * The run page shows what each turn sent its agent (agents/prompt-log.ts): the instructions and the
+       * message are kept on this machine for `days` after their last use.
+       */
+      promptLog: z.object({ enabled: z.boolean().default(true), days: z.number().int().min(1).max(365).default(14) }).default({ enabled: true, days: 14 }),
+      /**
        * Members' runs on a backend that can use their own account (docs/v2/agent-accounts.md), when
        * they have not logged in to it: `owner` borrows the owner's login (as before), `own` fails the
        * run and tells them to log in, `own-or-other` moves the run to another backend they are logged
@@ -635,7 +655,7 @@ export const configSchema = z.object({
       accountsDefault: z.enum(["owner", "own", "own-or-other"]).default("owner"),
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, restartHold: { enabled: true, minutes: 5 }, accountsDefault: "owner" as const, accounts: {}, groups: emptyGroups(), policy: policySchema.parse({}), tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, restartHold: { enabled: true, minutes: 5 }, promptLog: { enabled: true, days: 14 }, accountsDefault: "owner" as const, accounts: {}, groups: emptyGroups(), policy: policySchema.parse({}), tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

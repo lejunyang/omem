@@ -6,7 +6,7 @@ export type AgentEvent =
   | { type: "usage"; used: number; size: number }
   // What a turn sent: how the standing instructions went (system prompt, the head of the first
   // message, or not at all into a resumed session), their size by part, and the message's size.
-  | { type: "prompt"; scene?: string[]; systemSent: boolean; omemAccess?: BackendCapabilities["omemAccess"]; localTools?: boolean; via: "system" | "message" | "resumed" | "none"; instructions: number; message: number; parts?: InstructionParts }
+  | { type: "prompt"; scene?: string[]; systemSent: boolean; omemAccess?: BackendCapabilities["omemAccess"]; localTools?: boolean; via: "system" | "message" | "resumed" | "none"; instructions: number; message: number; parts?: InstructionParts; /** The texts themselves, for the prompt log: the recorder replaces them with `kept` hashes (prompt-log.ts). */ texts?: { system?: string; message: string } }
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
   | { type: "tool"; id: string; title: string; kind?: string; status?: string; input?: unknown; /** Duration, on the completed/failed event. */ ms?: number; /** What a command printed (the end of it), on the completed/failed event, so a later round can read it. */ output?: string }
@@ -148,7 +148,7 @@ export function sessionPrompt(session: { resumed: boolean; system?: boolean }, r
   const out = withInstructions(session, req.system, text);
   const via = !req.system ? "none" : session.system ? "system" : session.resumed ? "resumed" : "message";
   const context = req.contextChars ?? 0;
-  emit({ type: "prompt", scene: req.scene, via, systemSent: via === "system" || via === "message", omemAccess: req.capabilities?.omemAccess, localTools: req.capabilities?.localTools, instructions: req.system?.length ?? 0, message: out.length, ...(req.parts ? { parts: { ...req.parts, context, task: text.length - context } } : {}) });
+  emit({ type: "prompt", scene: req.scene, via, systemSent: via === "system" || via === "message", omemAccess: req.capabilities?.omemAccess, localTools: req.capabilities?.localTools, instructions: req.system?.length ?? 0, message: out.length, ...(req.parts ? { parts: { ...req.parts, context, task: text.length - context } } : {}), texts: { ...(req.system ? { system: req.system } : {}), message: text } });
   return out;
 }
 

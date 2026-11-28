@@ -274,6 +274,10 @@ export async function boot(home?: string, opts: BootOptions = {}) {
         try { m.tickAutoCompress(app); } catch (e) { console.warn("[omem] 自动压缩附件失败：", (e as Error).message); }
       }, 60_000).unref();
     });
+    // Prompt texts no turn has used for a while (agents/prompt-log.ts).
+    setInterval(() => {
+      void import("./agents/prompt-log.ts").then((m) => m.prunePromptLog(app)).catch((e) => console.warn("[omem] 清理提示词原文失败：", (e as Error).message));
+    }, 3600_000).unref();
     // The vector change log keeps its recent part (search/vectors.ts).
     setInterval(() => {
       void import("./search/vectors.ts").then((m) => m.pruneVectorLog(app)).catch((e) => console.warn("[omem] 清理向量变更记录失败：", (e as Error).message));

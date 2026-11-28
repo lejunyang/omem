@@ -78,7 +78,7 @@ import { aiRateLimitStats } from "../core/ai-rate-limit.ts";
 import { useRelayBase } from "../core/ai-relay-addr.ts";
 import { protectedCommandsSchema } from "../core/protected-commands.ts";
 import { declaredPaths } from "../agents/credential-registry.ts";
-import { allProfiles, keyBackendsOf, keyedProfiles, providerFormats, providerModels, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
+import { allProfiles, keyBackendsOf, keyedProfiles, providerFormats, providerModels, legacyCommand, migrateCommands, operationRulesSchema, roleGroups, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
 import { sameCommandIdentity, executionPermit, pendingExecution } from "../agents/command-executor.ts";
 import { credentialExecution, memberExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
@@ -1186,8 +1186,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   });
 
   // ----------------------------------------------------------- agents & skills
-  const memberSpec = ({ name, description, status, agent, model, effort }: ReturnType<typeof readAgentSpec>) =>
-    ({ name, description, status, agent, model, effort });
+  const memberSpec = ({ name, description, status, group, agent, model, effort }: ReturnType<typeof readAgentSpec>) =>
+    ({ name, description, status, group, agent, model, effort });
   server.get("/api/agents", async req => {
     const specs = listAgentSpecs(app, { includeDrafts: true });
     const manage = can(app, who(req), "agents.manage");
@@ -1226,8 +1226,10 @@ export async function startServer(app: App, opts: { port?: number; host?: string
   server.put("/api/roles/:name/tools", async (req) => setRoleTools(app, (req.params as { name: string }).name,
     q(z.object({ tools: z.array(z.string().max(120)).max(400) }), req.body).tools));
   server.get("/api/roles", async req => {
-    const roles = listRoleStates(app);
-    return who(req) === OWNER ? roles : roles.map(({ name, description }) => ({ name, description }));
+    // `group`: what the role is for (config.ts roleGroups), in the order the page lists the groups.
+    const states = new Map(listRoleStates(app).map((r) => [r.name as string, r]));
+    const roles = roleGroups.flatMap((g) => g.roles.flatMap((name) => { const r = states.get(name); return r ? [{ ...r, group: g.title }] : []; }));
+    return who(req) === OWNER ? roles : roles.map(({ name, description, group }) => ({ name, description, group }));
   });
   // What a profile form offers: backends, omem tools (and which write), the default tool set of a spec.
   server.get("/api/profile-options", async () => {
@@ -2024,8 +2026,17 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const board = typeof boardId === "string" && one(app.db, "select 1 from agent_work_tasks where work_id=? limit 1", boardId)
       && canReadRun(app, who(req), boardId) ? { workId: boardId, taskId: r.input.boardTaskId } : undefined;
     return {
-      can: { operate: canAccessRun(app, who(req), id, "runs.operate"), edit: can(app, who(req), "code.delegate") && (who(req) === OWNER || mine) }, board, run: { ...r, ...(!showReview ? {input:{},output:{},error:null} : diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: events.map(e => visibleRunEvent(app, who(req), e, showReview)), children, patches: diff?.patches.filter(p => !reviewerSpaces || reviewerSpaces.includes(p.space)), context: runContext(app, r, who(req)), writes: runWrites(app, r).filter(w => writeVisible(app, who(req), w)), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id)
+      can: { operate: canAccessRun(app, who(req), id, "runs.operate"), edit: can(app, who(req), "code.delegate") && (who(req) === OWNER || mine), prompts: who(req) === OWNER || mine }, board, run: { ...r, ...(!showReview ? {input:{},output:{},error:null} : diff ? { output: diff.output } : {}), waiting: queueReason(app, r) }, events: events.map(e => visibleRunEvent(app, who(req), e, showReview)), children, patches: diff?.patches.filter(p => !reviewerSpaces || reviewerSpaces.includes(p.space)), context: runContext(app, r, who(req)), writes: runWrites(app, r).filter(w => writeVisible(app, who(req), w)), reply: (await import("../agents/reply-outcomes.ts")).replyOutcome(app, id)
     };
+  });
+  // What one turn of the run sent its agent (agents/prompt-log.ts): the instructions carry the preferences
+  // and experience of whoever the run worked for, so only that person and the owner read them.
+  server.get("/api/runs/:id/prompts/:seq", async (req) => {
+    const { id, seq } = req.params as { id: string; seq: string };
+    if (who(req) !== OWNER && runUser(app, id) !== who(req)) throw new HttpError(403, "只有本人和这次运行为之工作的人能看提示词原文");
+    const found = (await import("../agents/prompt-log.ts")).promptOfEvent(app, id, Number(seq));
+    if (!found) throw new HttpError(404, "这次运行没有这条提示词记录");
+    return found;
   });
   // The owner read the follow-up and says the label is wrong (agents/reply-outcomes.ts).
   server.post("/api/runs/:id/reply-outcome", async (req) => {

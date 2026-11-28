@@ -1137,6 +1137,7 @@ def({
     ...changeWords,
     name: z.string().describe("小写字母、数字、连字符"),
     description: z.string().optional().describe("做什么、什么时候该交给它（用于自动挑选）"),
+    group: z.string().max(24).optional().describe("Agent 页列表里放进哪个分组（本人自己起的几个字，如“值班”“写作”）；只在本人说了放哪组时填"),
     prompt: z.string().optional().describe("system prompt 正文：职责、步骤、输出格式、注意事项"),
     class: classSchema.optional(),
     ai: specAiSchema.optional(),

@@ -2,8 +2,15 @@
 title: 2026-10-13 之后的变化
 summary: 本 Wiki 生成之后加进 omem 的功能和修正，这里只留最近的；更早的按时间段放在同目录的归档文件里。读其他页面时遇到对不上的地方，先看这里。
 kind: reference
-updated: 2026-11-28
+updated: 2026-11-29
 ---
+
+## 运行页能看提示词原文，Agent 页列表分组和搜索（2026-11-29）
+
+- **看提示词**：`sessionPrompt` 发出的 `prompt` 事件带上这一轮的说明和消息原文，`addRunEvent` 落库前把原文交给 `src/agents/prompt-log.ts`：按内容的 sha256 前 32 位存成 `<数据目录>/prompt-log/<前两位>/<哈希>.gz`，事件里只留 `kept: { system, message }` 两个哈希。同一份说明（后台角色几分钟跑一次）只有一个文件，再用到时刷新修改时间；超过 `agents.promptLog.days`（默认 14）没用到的由 `main.ts` 每小时清一次；单条超过 40 万字截断。这些文件只在本机，不进拉取和备份。
+- **接口和页面**：`GET /api/runs/:id/prompts/:seq` 返回 `{ via, systemSent, system, message, kept, expired, days }`，只给本人和这次运行为之工作的人（说明里带着那个人的偏好和经验）；`GET /api/runs/:id` 的 `can.prompts` 告诉页面能不能看。运行页和编码交办页“上下文”卡每个角色一行有“看提示词”（`web/src/components/PromptViewer.vue`）：说明和消息按 `#` / `##` 标题分节，列字数和占比，可搜、可看原文。接上原会话的轮次没有再发说明，存的是当时一个新会话会收到的那份，页面写明。
+- **Agent 页分组**：内置角色按用途分七组，定义在 `src/core/config.ts` 的 `roleGroups`（新增角色要放进一组，`test/role-groups.test.ts` 检查每个角色恰好在一组），`GET /api/roles` 按组的顺序返回并带 `group`。档案 frontmatter 加 `group`（最多 24 字，本人自己的分组，`save_agent` 也能写），只决定列表怎么排，不进提示词、不影响选型。
+- **搜索**：列表顶上的搜索框按名字、用途、分组名筛档案和内置角色，搜索时各组都展开；技能标签下按名字、说明、用途、分组名筛，结果跨分组平铺。折叠状态记在浏览器的 `localStorage`（`omem.agents.groups`）。
 
 ## 豆包 CLI 跟随角色的“完全访问”（2026-11-29）
 
