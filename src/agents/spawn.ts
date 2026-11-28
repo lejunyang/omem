@@ -8,6 +8,7 @@ import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { withAgentPath } from "../core/tools.ts";
 import { canonical, ownSandboxEnv, under, type OwnSandbox } from "./own-sandbox.ts";
 import { bwrapArgs, sandboxSupport, sandboxCommand, type SandboxAccount, type WorkspaceMounts } from "./sandbox.ts";
+import { HostedChild, startHosted, type HostLaunch } from "./hosted.ts";
 
 /**
  * Find an executable on PATH. On Windows npm installs `.cmd` shims, which
@@ -55,7 +56,8 @@ export function commandExists(command: string) {
 }
 
 /** `sandbox`: run for one user's own account, inside bubblewrap (agents/sandbox.ts); the profile carries it (`accountOf`). */
-type LaunchOptions = { cwd: string; baseEnv?: NodeJS.ProcessEnv; directOnly?: boolean; env?: NodeJS.ProcessEnv; ownSandbox?: OwnSandbox; sandbox?: SandboxAccount; workspace?: WorkspaceMounts };
+/** `host`: start it under an agent host that keeps it running through a restart of omem (agents/hosted.ts). */
+type LaunchOptions = { cwd: string; baseEnv?: NodeJS.ProcessEnv; directOnly?: boolean; env?: NodeJS.ProcessEnv; ownSandbox?: OwnSandbox; sandbox?: SandboxAccount; workspace?: WorkspaceMounts; host?: HostLaunch };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin: "ignore" | number }): Omit<ChildProcessWithoutNullStreams, "stdin"> & { stdin: null };
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" }): ChildProcessWithoutNullStreams;
 export function launch(command: string, args: string[], opts: LaunchOptions & { stdin?: "pipe" | "ignore" | number }) {
@@ -87,6 +89,16 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
   const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;
   const start = (argv: string[], fds: number[]) => {
+    if (opts.host) {
+      if (opts.stdin !== undefined && opts.stdin !== "pipe") throw new Error("Agent 宿主只接管 stdin 是管道的进程");
+      const child = startHosted(boxed?.file ?? resolved.file, argv, { cwd: opts.cwd, env: boxed?.env ?? env, extra: [...(config ? ["pipe" as const] : []), ...fds] }, opts.host);
+      if (config) {
+        const input = child.stdio[3] as Writable;
+        input.on("error", () => {});
+        input.end(config);
+      }
+      return child as unknown as ChildProcess;
+    }
     const child = spawn(boxed?.file ?? resolved.file, argv, {
       cwd: opts.cwd, env: boxed?.env ?? env,
       stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...(config ? ["pipe" as const] : []), ...fds],
@@ -114,6 +126,7 @@ export function sandboxStartError(account: SandboxAccount | undefined, stderr: s
 
 export function stop(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) return;
+  if (child instanceof HostedChild) return child.hostedStop();
   const kill = (signal: NodeJS.Signals) => {
     try {
       if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);

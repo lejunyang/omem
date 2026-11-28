@@ -619,6 +619,12 @@ export const configSchema = z.object({
       fullAccess: fullAccessMode.default("per-role"),
       accountIsolation: z.enum(["prefer", "require"]).default("prefer"),
       /**
+       * A turn of a run lives on through a restart of omem (docs/v2/restart-hold.md): its agent process
+       * runs under a small host process, and the omem that comes back takes the turn up where it is.
+       * `minutes`: how long a host holds the turn for omem to come back before it stops the agent.
+       */
+      restartHold: z.object({ enabled: z.boolean().default(true), minutes: z.number().min(0.5).max(60).default(5) }).default({ enabled: true, minutes: 5 }),
+      /**
        * Members' runs on a backend that can use their own account (docs/v2/agent-accounts.md), when
        * they have not logged in to it: `owner` borrows the owner's login (as before), `own` fails the
        * run and tells them to log in, `own-or-other` moves the run to another backend they are logged
@@ -628,7 +634,7 @@ export const configSchema = z.object({
       accountsDefault: z.enum(["owner", "own", "own-or-other"]).default("owner"),
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, accountsDefault: "owner" as const, accounts: {}, groups: emptyGroups(), policy: policySchema.parse({}), tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, restartHold: { enabled: true, minutes: 5 }, accountsDefault: "owner" as const, accounts: {}, groups: emptyGroups(), policy: policySchema.parse({}), tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.

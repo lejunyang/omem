@@ -26,7 +26,8 @@ export async function runBackend(app: App, profile: AgentProfile, req: AgentRequ
         if (turn.capabilities.omemAccess !== "http") return runOn(app, p, turn, events);
         const ctx = req.mcp && toolContextForToken(app, req.mcp.token);
         if (!ctx) throw new Error("缺少本轮的工具权限");
-        return cloudTurn(app, profile, ctx, turn, events, (request, watch) => runOn(app, p, request, watch));
+        // Its tool access lives in this process (cloud-tools.ts): such a turn does not outlive a restart.
+        return cloudTurn(app, profile, ctx, { ...turn, hostSlot: undefined }, events, (request, watch) => runOn(app, p, request, watch));
       };
       if (!p.keyRelay) return run();
       // On an API key through omem's relay: the provider's own error, as the relay read it, says why the

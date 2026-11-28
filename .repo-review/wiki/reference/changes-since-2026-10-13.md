@@ -5,6 +5,15 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 重启不打断正在跑的一轮（2026-11-28）
+
+- 运行里经 `runRole` 跑的 ACP 一轮（交办编码、评审检查、跟进、课题试验、流程阶段等）的 Agent 放在 Agent 宿主下（`src/agents/agent-host.ts`）：omem 起一个启动器，启动器以独立会话起宿主后退出，宿主不在 omem 的进程树里，PM2 重启 omem 时停不到它。omem 经数据目录 `agent-hosts/` 下的套接字（Windows 是命名管道）说 ACP（`src/agents/hosted.ts` 的 `HostedChild`，帧格式在 `host-frames.ts`）。设置 `agents.restartHold`（默认开，留 5 分钟）。
+- `omem serve` 退出前先把宿主交出去（`detachHostsForShutdown`），再给正在回答的工具调用最多 5 秒（`src/server/http.ts` 的 `drainToolCalls`）。宿主在 omem 不在时让 Agent 照常跑：记下这一轮的 `session/update`，压着 Agent 问的权限，它对 omem 的调用在宿主的本机代理里等（MCP 地址和 `OMEM_URL` 都改成代理）；到时没人回来就取消这一轮、停掉 Agent。
+- 重启后运行的处理函数照常重跑，`openAcpOnce` 先按运行、角色或检查（`AgentRequest.hostSlot`，runner 填）、AI 和目录找留着的宿主（`claimHost`）：接回后重放输出（重启前已上报的只拼回复），发 `_omem/await_turn` 等原来那个 `session/prompt` 的结果，不重发提示。Agent 的旧工具令牌核对哈希后代表新的一轮（`tools.ts` 的 `aliasToolToken`），沙箱的 `/tmp` 沿用启动时那个。对不上的宿主停掉。
+- 表 `agent_hosts`（本机，不同步）。宿主持有的后端会话在清理账上记成宿主的 pid，活着时不会被清理；启动时和每分钟清一遍（`sweepAgentHosts`），只经套接字让宿主停，不按 pid 杀。
+- 不走宿主：API key 中转的后端、出网隔离的运行、云端 HTTP 工具的一轮、对话和后台复用的会话、探测。
+- 测试：`test/agent-host.test.ts`，`test/fake-acp-agent.ts` 加 `FAKE_MODE=gap`；`OMEM_TEST_HOSTED=1` 让任何测试经宿主跑（`test/helpers.ts` 默认关）。设计在 `docs/v2/restart-hold.md`。
+
 ## 插件工具能改自己的设置（2026-11-28）
 
 - 插件工具的 `ctx.saveSettings(patch)` 保存这次调用的人的几项插件设置，校验和 设置 → 插件 相同（`null` 恢复默认），返回保存后的值；在 omem 里运行和隔离运行的插件都能用。以前要改自己的名单只能引用宿主内部模块。实现在 `src/plugins/blocks.ts`（`pluginContext`）、`src/plugins/sandbox.ts`（`settings.save`），测试在 `test/plugins.test.ts`、`test/plugin-sandbox.test.ts`。

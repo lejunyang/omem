@@ -1241,6 +1241,8 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           extraMcp: prep.extraMcp,
           resumeSessionId,
           persistSession: input.persistSession ?? !!input.resumeSessionId,
+          // The turn may live on through a restart of omem; the re-run takes it back by run and role or check (hosted.ts).
+          hostSlot: input.runId && !input.shadow && !input.replay ? input.checkName ?? input.spec?.name ?? input.role : undefined,
           queueTimeoutMs: input.queueUntil === undefined ? app.config.agents.queueTimeoutMinutes * 60_000 : Math.max(1, input.queueUntil - Date.now()),
         };
         if (i > 0 && !retry) {

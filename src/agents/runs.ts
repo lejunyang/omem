@@ -487,6 +487,10 @@ export function startWorker(app: App) {
   maintainBoards(app, true);
   markRestarted(app);
   run(app.db, "update runs set status = 'queued', started_at = null where status = 'running' and json_extract(input,'$.boardDevice.mode') is not 'remote'");
+  // Agent hosts still holding a turn wait for their run to take it back; those of runs that ended go (hosted.ts).
+  const sweepHosts = () => void import("./hosted.ts").then(m => m.sweepAgentHosts(app)).catch(e => console.warn(`[omem] 清理 Agent 宿主失败：${(e as Error).message}`));
+  sweepHosts();
+  setInterval(() => { if (!stopping) sweepHosts(); }, 60_000).unref();
   setInterval(() => { if (!stopping) maintainBoards(app); kick(app); }, 2000).unref();
   setInterval(() => {
     if (!stopping) void import("./inbox.ts").then(m => m.flushRecoveredReplies(app)).catch(e => console.warn(`[omem] 恢复会话回复失败：${(e as Error).message}`));

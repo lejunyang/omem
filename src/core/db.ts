@@ -2586,6 +2586,15 @@ export const migrations: readonly string[] = [
    create index item_flows_unfinished on item_flows(item_id) where ended_at is null;
    create index if not exists runs_done_code_verdict on runs(json_extract(output,'$.verdict')) where kind='code' and status='done';`,
   `create index if not exists sources_recent_in_space on sources(space_id, updated_at desc) where deleted_at is null;`,
+  // Agent processes that live on through a restart (agents/hosted.ts): this machine's, never pulled.
+  `create table if not exists agent_hosts (
+     id text primary key, run_id text not null, slot text not null, profile_id text not null, cwd text not null,
+     session_id text not null, agent text not null default '', caps text not null default '{}',
+     system integer not null default 0, resumed integer not null default 0,
+     host_pid integer, agent_pid integer, socket text not null, key text not null,
+     token_hash text, private_tmp text, owner text not null, created_at text not null, updated_at text not null
+   );
+   create index if not exists agent_hosts_run on agent_hosts(run_id, slot);`,
 ];
 
 export type Db = DatabaseSync;

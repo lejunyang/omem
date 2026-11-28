@@ -119,6 +119,11 @@ export type AcpOpenOptions = {
   strictSelection?: AgentRequest["strictSelection"];
   /** Max time to wait in the provider queue before failing with kind="queue". 0 = unlimited. */
   queueTimeoutMs?: number;
+  /**
+   * A run's turn that may live on through a restart of omem (agents/hosted.ts): which run and which of
+   * its roles or checks. One a host already holds for it is taken back instead of starting a new one.
+   */
+  host?: { runId: string; slot: string };
 };
 
 /**
@@ -206,16 +211,23 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
   const atLaunch = opts.probe ? {} : launchConfigEnv({ ...profile, env: { ...profile.env, ...keyedModelEnv(profile) } }, { model: profile.model, effort: levelKnown ? profile.effort : null });
   let emit = emitSetup;
   let touch = () => {};
-  const relay = profile.keyRelay && !opts.probe ? registerRelayClient(profile.id, (text) => {
+  // A run's turn may be held by an agent host through a restart of omem (hosted.ts): take it back when one
+  // holds this one; otherwise start the agent under a new host when this turn may live on, as before when not.
+  const hosted = opts.host && opts.app && !opts.probe ? await import("./hosted.ts") : null;
+  const hostLaunch = hosted ? hosted.hostPlan(opts.app!, profile, opts) : null;
+  const attached = hosted && opts.host ? await hosted.claimHost(opts.app!, opts.host, profile.id, opts.cwd, hostLaunch ? opts.mcp?.token : undefined) : null;
+  if (attached && !hostLaunch) { attached.child.hostedStop(); }
+  const taken = attached && hostLaunch ? attached : null;
+  const relay = !taken && profile.keyRelay && !opts.probe ? registerRelayClient(profile.id, (text) => {
     touch();
     emit({ type: "status", text });
   }) : undefined;
   const overrides = { ...atLaunch, ...opts.mcp?.env, ...opts.env };
   const env = { ...profile.env, ...overrides };
-  const child = await (await import("./egress-run.ts")).launchRun(profile, opts, (sandbox, ownSandbox) => {
+  const child = taken ? taken.child as unknown as ReturnType<typeof launch> : await (await import("./egress-run.ts")).launchRun(profile, opts, (sandbox, ownSandbox) => {
     requirePluginBackend(profile);
     const launchEnv = { ...profile.env, ...keyEnv(profile, relay?.token), ...overrides };
-    return launch(profile.command, profile.args, { cwd: opts.cwd, env: codexAcpEnv(profile, launchEnv), workspace: opts.workspace, ownSandbox, sandbox });
+    return launch(profile.command, profile.args, { cwd: opts.cwd, env: codexAcpEnv(profile, launchEnv), workspace: opts.workspace, ownSandbox, sandbox, host: hostLaunch ?? undefined });
   }).catch((error) => {
     relay?.close();
     throw error;
@@ -277,6 +289,10 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
     }
     if (pending.length > 1_000_000) pending = "";
   });
+  /** The turn a host held through a restart: what the agent said in it so far, replayed at its first prompt(). */
+  let heldTurn = taken?.hello.turn ?? null;
+  const emitNow = (e: AgentEvent) => emit(e);
+  const queueNow = () => promptQueue;
   function sniffQueue(line: string) {
     let msg: { method?: string; params?: { update?: Record<string, unknown> } };
     try {
@@ -307,6 +323,22 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
         return optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } };
       },
       async sessionUpdate({ sessionId: updatedSession, update }) {
+        onUpdate(updatedSession, update, false);
+      },
+      async readTextFile() {
+        throw new Error("omem does not expose client fs");
+      },
+      async writeTextFile() {
+        throw new Error("omem does not expose client fs");
+      },
+    }),
+    ndJsonStream(output, input),
+  );
+  /**
+   * One session update. `quiet`: one replayed from a held turn that omem had already seen before the
+   * restart (it counts for the reply, its events are not reported again).
+   */
+  function onUpdate(updatedSession: string, update: Parameters<NonNullable<ReturnType<ConstructorParameters<typeof ClientSideConnection>[0]>["sessionUpdate"]>>[0]["update"], quiet: boolean) {
         if (sessionId && updatedSession !== sessionId) return;
         touch();
         if (update.sessionUpdate === "config_option_update") {
@@ -315,6 +347,8 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
           return;
         }
         if (replaying) return; // history replayed by session/load is not new output
+        const emit = quiet ? () => {} : emitNow;
+        const promptQueue = quiet ? null : queueNow();
         switch (update.sessionUpdate) {
           case "usage_update": {
             // claude-agent-acp passes Claude's rate-limit info along on a usage update.
@@ -380,16 +414,18 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
             }
           }
         }
-      },
-      async readTextFile() {
-        throw new Error("omem does not expose client fs");
-      },
-      async writeTextFile() {
-        throw new Error("omem does not expose client fs");
-      },
-    }),
-    ndJsonStream(output, input),
-  );
+  }
+  /** Replay what a host held of the turn: the part omem had seen quietly, the rest as new output. */
+  function replayHeld(t: NonNullable<typeof heldTurn>) {
+    t.log.forEach((line, i) => {
+      const quiet = t.first + i < t.delivered;
+      let m: { method?: string; params?: { sessionId?: string; update?: unknown } };
+      try { m = JSON.parse(line); } catch { return; }
+      if (m.method !== "session/update" || !m.params?.update) return;
+      if (!quiet && /queue/i.test(line)) sniffQueue(line);
+      onUpdate(m.params.sessionId ?? sessionId, m.params.update as never, quiet);
+    });
+  }
   const close = () => {
     dead = true;
     stop(child);
@@ -404,7 +440,8 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
   });
   touch = () => setupWatch.touch();
   try {
-    const init = await Promise.race([
+    // A turn taken back from a host: the agent was set up by the omem before the restart, as recorded.
+    const init = taken ? { agentCapabilities: JSON.parse(taken.row.caps) as unknown, agentInfo: { name: taken.row.agent, version: "" } } : await Promise.race([
       connection.initialize({
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
@@ -444,9 +481,10 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       /** Older agents (gemini, qwen, …) list models here and switch with session/set_model. */
       models?: { availableModels?: { modelId: string; name?: string }[]; currentModelId?: string } | null;
     };
-    let session: SessionInfo | null = null;
-    let resumed = false;
-    if (opts.resumeSessionId && (caps?.sessionCapabilities?.resume || caps?.loadSession)) {
+    let session: SessionInfo | null = taken ? {} : null;
+    let resumed = !!taken?.row.resumed;
+    if (taken) sessionId = taken.row.session_id;
+    else if (opts.resumeSessionId && (caps?.sessionCapabilities?.resume || caps?.loadSession)) {
       try {
         if (caps.sessionCapabilities?.resume)
           session = (await Promise.race([connection.resumeSession({ sessionId: opts.resumeSessionId, cwd: opts.cwd, mcpServers, ...system }), failed])) as SessionInfo;
@@ -468,6 +506,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       sessionId = session.sessionId!;
     }
     opts.cleanup?.created(sessionId);
+    if (taken) hosted!.protectSession(opts.app!, sessionId, taken.hello.hostPid);
     let disposal: Promise<void> | undefined;
     discard = () => disposal ??= (async () => {
       let timer: NodeJS.Timeout | undefined;
@@ -505,12 +544,17 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       }
     })();
     // Persist ownership before events or setup choices can fail or the host can exit.
-    if (!opts.probe) emitSetup({ type: "session", sessionId, resumed });
+    if (!opts.probe) emitSetup({ type: "session", sessionId, resumed: resumed || !!taken });
+    // From here a restart leaves this turn to the next omem (hosted.ts).
+    if (hosted && hostLaunch && !taken && child instanceof hosted.HostedChild) {
+      await Promise.race([child.ready, failed]);
+      hosted.recordHost(opts.app!, child, opts.host!, { profileId: profile.id, cwd: opts.cwd, sessionId, agent: init.agentInfo?.name ?? profile.command, caps, system: "systemPrompt" in system, resumed, token: opts.mcp?.token, privateTmp: opts.workspace?.privateTmp ?? opts.ownSandbox?.plan.work.privateTmp });
+    }
     touch();
     // Permission mode: prefer the role's choice when the agent offers it.
     const modes = session.modes?.availableModes ?? [];
     const full = opts.fullAccess && !opts.probe ? pickMode(["full-access"], modes.map((m) => m.id)) : undefined;
-    if (opts.fullAccess && !opts.probe) emit({ type: "status", text: full ? `完全访问：${full}（${opts.ownSandbox || accountOf(profile) ? "后端自己的沙箱和审批关了，边界是 omem 的沙箱" : "命令不进沙箱、不审批"}）` : "这个后端没有完全访问模式，仍按沙箱和审批运行" });
+    if (opts.fullAccess && !opts.probe && !taken) emit({ type: "status", text: full ? `完全访问：${full}（${opts.ownSandbox || accountOf(profile) ? "后端自己的沙箱和审批关了，边界是 omem 的沙箱" : "命令不进沙箱、不审批"}）` : "这个后端没有完全访问模式，仍按沙箱和审批运行" });
     // Claude Code's auto mode checks each action on Anthropic's servers: on a third party's key that check
     // is unreachable and every action needing it is refused ("Classifier unavailable"). Ask as default does.
     const picked = full ?? pickMode(opts.modes ?? [], modes.map((m) => m.id));
@@ -555,7 +599,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       // Either it could not fetch its model catalog just now, or it no longer has this one and the probe is old: the same from here.
       throw agentRunError(`指定的${key === "model" ? "模型" : "思考强度"} ${value} 这次不可用：${agentName} 上次检测时有它，${now}（多半是它这会儿没取到模型目录；一直这样就在 设置 → AI 里重新检测）`, "catalog");
     };
-    for (const [key, value] of [
+    for (const [key, value] of taken ? [] : [
       // A third party's key: the model went in at launch; the agent's own list has only its vendor's models.
       ["model", profile.keyModels ? undefined : profile.model],
       ["effort", profile.effort],
@@ -637,7 +681,7 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
       const reply = await Promise.race([connection.setSessionConfigOption({ sessionId, configId: option.id, value: chosen.value }), failed]);
       options = reply.configOptions ?? options;
     }
-    emitSetup({ type: "status", text: `${resumed ? "已恢复" : "已连接"} ${agentName}${profile.model ? ` · ${modelDisplayName(profile.model)}` : ""}` });
+    emitSetup({ type: "status", text: taken ? `接回重启前仍在运行的 ${agentName}：这一轮没有中断，等它做完${taken.hello.turn?.done ? "（omem 不在时已经做完）" : ""}` : `${resumed ? "已恢复" : "已连接"} ${agentName}${profile.model ? ` · ${modelDisplayName(profile.model)}` : ""}` });
     setupWatch.close();
     opts.signal?.removeEventListener("abort", onSetupAbort);
     let busy = false;
@@ -745,7 +789,13 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
         signal?.addEventListener("abort", onAbort, { once: true });
         const endCommandTurn = guardedToken ? (await import("./tools.ts")).beginCommandTurn(guardedToken) : undefined;
         try {
-          const result = await Promise.race([connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] }), failed]).catch((e) => { throw promptError(e); });
+          // The first turn after taking one back from a host is that turn itself: what it said so far is
+          // replayed and its own result awaited, no new prompt is sent (promptText is the re-run's, unused).
+          const held = heldTurn;
+          heldTurn = null;
+          if (held) replayHeld(held);
+          const asked = held ? connection.extMethod("_omem/await_turn", {}) as Promise<{ stopReason: string }> : connection.prompt({ sessionId, prompt: [{ type: "text", text: promptText }] });
+          const result = await Promise.race([asked, failed]).catch((e) => { throw promptError(e); });
           if (signal?.aborted) throw new Error("CANCELLED");
           const last = segments.at(-1)!.trim();
           if (STREAM_QUOTA_NOTICE.test(last)) throw agentRunError(last, "quota");
@@ -877,7 +927,8 @@ export async function cleanupAcpSession(profile: AgentProfile, sessionId: string
 
 /** One prompt turn against an ACP agent (Codex/TraeX/Claude Code adapters…). */
 export async function runAcp(profile: AgentProfile, req: AgentRequest & { app?: App }, emit: (e: AgentEvent) => void): Promise<AgentResult> {
-  const handle = await openAcp(profile, { app: req.app, runId: req.runId, signal: req.signal, cwd: req.cwd, workspace: req.workspace, ownSandbox: req.ownSandbox, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, acpWritable: req.acpWritable, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs }, emit);
+  const host = req.hostSlot && req.runId && !req.probe ? { runId: req.runId, slot: req.hostSlot } : undefined;
+  const handle = await openAcp(profile, { app: req.app, runId: req.runId, signal: req.signal, cwd: req.cwd, workspace: req.workspace, ownSandbox: req.ownSandbox, cleanup: req.cleanup, mcp: req.mcp, extraMcp: req.extraMcp, allowWrites: req.allowWrites, modes: req.modes, fullAccess: req.fullAccess, acpWritable: req.acpWritable, env: req.env, resumeSessionId: req.resumeSessionId, system: req.system, probe: req.probe, strictSelection: req.strictSelection, queueTimeoutMs: req.queueTimeoutMs, host }, emit);
   try {
     if (req.probe) return { text: "", stopReason: "probe", agent: handle.agent, probe: handle.probe };
     if (req.signal?.aborted) throw new Error("CANCELLED");

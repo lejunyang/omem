@@ -52,6 +52,8 @@ const resumed = new Set<string>();
 // FAKE_MODE=thread: no tools, answer with what the host sent (for session/thread tests).
 const threadMode = process.env.FAKE_MODE === "thread";
 const delay = Number(process.env.FAKE_DELAY ?? 0);
+/** Prompts this process got in FAKE_MODE=gap. */
+let gapPrompts = 0;
 /** Sessions with a turn in progress, and what was steered into each (FAKE_STEER). */
 const inTurn = new Set<string>();
 const steeredIn = new Map<string, string[]>();
@@ -1056,6 +1058,29 @@ ${JSON.stringify({ check, tools })}`);
         await new Promise((r) => setTimeout(r, queueMs));
         await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "queue_end" } as never });
         await say("queued-ok");
+        return { stopReason: "end_turn" };
+      }
+      // FAKE_MODE=gap: a turn that spans a restart of omem (test/agent-host.test.ts). It says a first part,
+      // waits for FAKE_GAP_FILE, then (FAKE_GAP_ASK) asks a permission and calls omem's search, and
+      // answers with what it got and which process it is.
+      if (process.env.FAKE_MODE === "gap") {
+        gapPrompts++;
+        await say("第一段：读过材料。");
+        await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "g1", title: "mcp__omem__search", kind: "search", status: "in_progress" } });
+        const until = Date.now() + 120_000;
+        while (process.env.FAKE_GAP_FILE && !existsSync(process.env.FAKE_GAP_FILE) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+        let permission = "";
+        if (process.env.FAKE_GAP_ASK) {
+          const { outcome } = await conn.requestPermission({ sessionId: p.sessionId, toolCall: { toolCallId: "g0", kind: "other", title: "看一眼" }, options: [{ kind: "allow_once", optionId: "yes", name: "allow" }, { kind: "reject_once", optionId: "no", name: "reject" }] });
+          permission = outcome.outcome === "selected" ? outcome.optionId : outcome.outcome;
+        }
+        const server = sessions.get(p.sessionId)![0] as { command: string; args: string[]; env: { name: string; value: string }[] };
+        const client = new Client({ name: "fake-gap", version: "1" });
+        await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...process.env, ...Object.fromEntries(server.env.map((e) => [e.name, e.value])) } as Record<string, string> }));
+        const found = (await client.callTool({ name: "search", arguments: { query: "虚构测试材料" } })) as { isError?: boolean; content?: { text?: string }[] };
+        await client.close();
+        await conn.sessionUpdate({ sessionId: p.sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: "g1", status: "completed" } });
+        await say("\n第二段：" + JSON.stringify({ pid: process.pid, prompts: gapPrompts, toolError: !!found.isError, search: found.content?.[0]?.text?.slice(0, 80) ?? "", permission, url: server.env.find((e) => e.name === "OMEM_URL")?.value ?? "" }));
         return { stopReason: "end_turn" };
       }
       if (threadMode) {

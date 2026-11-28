@@ -145,8 +145,27 @@ const bearer = bearerToken;
 /** `METHOD /path` of every /api route registered so far. */
 export const registeredRoutes = new Set<string>();
 
+/** Agents' calls to omem's tools being answered now: a restart lets them finish first (drainToolCalls). */
+let toolCallsInFlight = 0;
+const TOOL_CALL = /^\/(?:mcp|api\/(?:tools|command-gate|operation-gate))(?:\/|\?|$)/;
+/**
+ * Wait (at most `ms`) for the tool calls omem is answering to finish. On a restart the agents that live
+ * on (agents/hosted.ts) already hold their new calls; this lets the ones in progress come back to them.
+ */
+export async function drainToolCalls(ms: number) {
+  const until = Date.now() + ms;
+  while (toolCallsInFlight > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+  return toolCallsInFlight;
+}
+
 export async function startServer(app: App, opts: { port?: number; host?: string; quiet?: boolean; secure?: boolean } = {}) {
   const server = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
+  server.addHook("onRequest", async (req, reply) => {
+    if (!TOOL_CALL.test(req.url)) return;
+    toolCallsInFlight++;
+    // A response's close: sent in full, or the caller went away.
+    reply.raw.once("close", () => { toolCallsInFlight--; });
+  });
   let secure: SecureListener | null = null;
   server.addHook("onClose", async () => {
     const s = secure;
