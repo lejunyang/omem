@@ -34,14 +34,16 @@ const GOAL = "#4b5059";
 
 /**
  * Callout tones: every callout sits on the same light grey, only its icon is coloured; the card header
- * takes colour from the first callout only when it asks for attention (warning, danger), grey otherwise.
+ * takes colour from the first callout only when it asks for attention (warning, danger) and is plain
+ * otherwise: in Feishu's card guidelines a grey header means expired, and a private chat should not
+ * have every card highlighted.
  */
 const TONE = {
-  info: { icon: "info_filled", color: "blue", header: "grey" },
-  success: { icon: "succeed_filled", color: "green", header: "grey" },
+  info: { icon: "info_filled", color: "blue", header: "default" },
+  success: { icon: "succeed_filled", color: "green", header: "default" },
   warning: { icon: "warning_filled", color: "orange", header: "orange" },
   danger: { icon: "error_filled", color: "red", header: "red" },
-  neutral: { icon: "info_filled", color: "grey", header: "grey" },
+  neutral: { icon: "info_filled", color: "grey", header: "default" },
 } as const;
 
 const isNum = (v: unknown) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)));
@@ -345,10 +347,10 @@ export function viewCardBlocks(app: App, view: ViewComponent[], opts: { linked?:
   return out;
 }
 
-/** The header colour of a view's card: orange or red when its first callout asks for attention, grey otherwise. */
+/** The header colour of a view's card: orange or red when its first callout asks for attention, plain otherwise. */
 export function viewColor(view: ViewComponent[]): string {
   const first = view.find((c) => c.type === "callout");
-  return first?.type === "callout" ? TONE[first.tone].header : "grey";
+  return first?.type === "callout" ? TONE[first.tone].header : "default";
 }
 
 /** What the chat list shows for a view's card: its title and the first conclusion or figure. */
