@@ -7,7 +7,7 @@ import { createUser } from "../src/core/users.ts";
 import { askCard } from "../src/channels/lark-asks.ts";
 import { importRecording, importSchema } from "../src/remote/import.ts";
 import { readRecording } from "../src/remote/recordings.ts";
-import { draftOperationRule, proposalSchema } from "../src/remote/operation-rule.ts";
+import { draftOperationRule, proposalSchema, proposeOperationRule } from "../src/remote/operation-rule.ts";
 import { testApp } from "./helpers.ts";
 
 const host = "shop.example.test";
@@ -20,7 +20,7 @@ function fixture() {
     steps: [{ kind: "action", at: 1, action: { kind: "click", label: title } },
       { kind: "action", at: 3, action: { kind: "click", label: "取消另一笔订单" } }],
     network: [
-      { ...request("POST", path + "?ticket=demo", 2), requestBody: '{"state":"open"}' },
+      { ...request("POST", path + "?ticket=demo", 2), requestBody: '{"state":"open","intent":"cancel"}' },
       { ...request("POST", path.replace("8812", "5432"), 3), requestBody: '{"state":"closed"}' },
       request("GET", path, 4), request("HEAD", path, 5),
       { ...request("POST", "/metrics", 6), type: "Ping" },
@@ -89,6 +89,27 @@ it("草稿只给本人确认，启用时保留最新规则并排在宽泛放行�
   await expect(answerAsk(app, ask!.id, { by: "owner", choice: 0 })).rejects.toThrow(/回答过/);
 });
 
+it.each([
+  { name: "草稿不限请求体", body: undefined },
+  { name: "两个不同字段同时满足条件", body: { jsonPath: "$.intent", regex: "^cancel$" } },
+])("$name 时启用审批后优先于带正文条件的放行规则", async ({ body }) => {
+  const { app, input } = fixture();
+  const ask = proposeOperationRule(app, null, proposalSchema.parse({ ...input, body }));
+  saveOperationRules(app, [{
+    id: "open-orders", enabled: true, revision: 1, action: "allow",
+    match: { kind: "http", host, methods: ["POST"], pathRegex: "^/api/", body: { jsonPath: "$.state", regex: "^open$" } },
+  }]);
+  const op = { kind: "http" as const, method: "POST", url: "https://" + host + path, body: { state: "open", intent: "cancel" } };
+  const who = { member: "owner" };
+  expect(decide(app, op, who)).toMatchObject({ action: "allow", rule: { id: "open-orders" } });
+  await answerAsk(app, ask.id, { by: "owner", choice: 0 });
+  expect(decide(app, op, who)).toMatchObject({ action: "approve", rule: { title } });
+  expect(decide(app, { ...op, url: op.url.replace("/cancel", "/preview") }, who)).toMatchObject({ action: "allow", rule: { id: "open-orders" } });
+  if (body) {
+    expect(decide(app, { ...op, body: { state: "open" } }, who)).toMatchObject({ action: "allow", rule: { id: "open-orders" } });
+  }
+});
+
 it("选择不用或指定有误时不增加规则；无录制的草稿标出核对范围和动作", async () => {
   const { app, input } = fixture();
   const ctx: ToolContext = { app, actor: "agent", runId: null, spaceId: "personal", spaces: null, tools: null };
@@ -101,4 +122,35 @@ it("选择不用或指定有误时不增加规则；无录制的草稿标出核�
   for (const part of ["未经录制核对", "拒绝请求", "$.mode", "^live$"]) expect(ask!.question).toContain(part);
   await answerAsk(app, ask!.id, { by: "owner", choice: 1 });
   expect(currentRules(app)).toHaveLength(0);
+});
+
+it("按整段录制的命中范围排序，包含同一接口的第二次调用", async () => {
+  const { app, input } = fixture();
+  const ask = proposeOperationRule(app, null, proposalSchema.parse({ ...input, body: { jsonPath: "$.state", regex: "^(open|closed)$" } }));
+  const allow = (state: string) => ({
+    id: state, enabled: true, revision: 1, action: "allow" as const,
+    match: { kind: "http" as const, host, pathRegex: "^/api/", body: { jsonPath: "$.state", regex: "^" + state + "$" } },
+  });
+  saveOperationRules(app, [allow("archived"), allow("closed")]);
+  await answerAsk(app, ask.id, { by: "owner", choice: 0 });
+  expect(currentRules(app).map(r => r.title ?? r.id)).toEqual(["archived", title, "closed"]);
+  const url = "https://" + host + path.replace("8812", "5432");
+  expect(decide(app, { kind: "http", method: "POST", url, body: { state: "closed" } }, { member: "owner" }).action).toBe("approve");
+});
+
+it("直接指定接口时卡片说明可能重叠时的顺序，启用后按正文决定", async () => {
+  const app = testApp();
+  const ask = proposeOperationRule(app, null, proposalSchema.parse({
+    host, method: "POST", path, title, body: { jsonPath: "$.intent", regex: "^cancel$" },
+  }));
+  expect(ask.question).toContain("可能重叠的放行规则");
+  saveOperationRules(app, [{
+    id: "open", enabled: true, revision: 1, action: "allow",
+    match: { kind: "http", host, pathRegex: "^/api/", body: { jsonPath: "$.state", regex: "^open$" } },
+  }]);
+  await answerAsk(app, ask.id, { by: "owner", choice: 0 });
+  const op = { kind: "http" as const, method: "POST", url: "https://" + host + path };
+  const who = { member: "owner" };
+  expect(decide(app, { ...op, body: { state: "open", intent: "cancel" } }, who).action).toBe("approve");
+  expect(decide(app, { ...op, body: { state: "open" } }, who)).toMatchObject({ action: "allow", rule: { id: "open" } });
 });
