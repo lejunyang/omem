@@ -11,6 +11,10 @@ updated: 2026-11-28
 - 设置 → 安全 → 运行的沙箱（`web/src/components/SandboxSettings.vue`、`web/src/lib/sandbox.ts`）：加“只让这些运行进”“这些不进”两个多选（`agents.ownSandbox.includeKinds` / `excludeKinds`，选项是运行类型的中文名）；“默认藏起来”分清 omem 的数据目录和插件命令的登录（以前每一项都写成数据目录），能展开看常用登录文件和浏览器资料的清单（`defaults.loginPaths`，配置了 `loginPaths` 时用配置的）；帮助文字改成执行器之后的说法，“你加的可写目录”不再让人把登录目录加进来。操作规则卡的说明写明进了沙箱的运行里绝对路径和改过的 PATH 也落到垫片上，没进沙箱时才拦不住。截图 `settings-sandbox` 重拍。
 - `src/agents/own-sandbox.ts` 的 `canonical` 在 Windows 上按盘符路径的规则拆不存在的路径：以前把它当 POSIX 路径拆，成员账号下还没建的状态目录被判成“越界或含符号链接”，`scripts/doc-screens.ts` 在 Windows 上给演示成员登录时就退出。Linux 上不变。
 
+## 跟进等模型空位不再往话题里发（2026-11-28）
+
+- 跟进的一轮等模型空位（`hasRoom`）、后端刚出故障被排后（`downReason`）、服务商排队或限流（`isRetryableAgentError`）时，原来等满 `queueTimeoutMinutes` 就停止本轮，往话题里发“等待超过 10 分钟，本轮停止”，这一轮的事件也随之丢了。现在这类等待留在队列里每分钟再看一次，不限时长、不发话题（`supervisor.ts` 的 `waitForAi` 分 slot / retry / owner）；中途断了的轮次悄悄重试三次（`output.silentRetries`）后才在话题里说；设置、登录、额度用完照旧。每次尝试各等自己的 `queueUntil`。`test/supervisor.test.ts`。
+
 ## 最高思考强度多给空闲时间（2026-11-28）
 
 - 后端的空闲看门狗原来一律按 Agent 档案的 `idleTimeoutMs`（默认 10 分钟）。Codex 在 xhigh / max 时会十几分钟不出声地思考，11-26 到 11-28 有六次运行在工具返回后被判“超过 600 秒没有任何活动”停掉，一次停在它刚要回答的时候，其中两次是长任务跟进。现在 xhigh 乘 2、max 乘 3（`src/agents/spawn.ts` 的 `idleTimeoutFor`），`openAcp`、命令行后端和豆包 CLI 都按它算。代价是真卡住的运行要多等一会儿才停。`test/stall.test.ts`。

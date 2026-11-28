@@ -7,7 +7,8 @@ import { memberAccountPlan } from "./accounts.ts";
 import { aiLoginWait, type AiLoginWait } from "./credential-wait.ts";
 import { selectMemberRunAccount } from "./member-run-ai.ts";
 import { backendAvailable } from "./availability.ts";
-import { downReason, excludedReason, hasRoom } from "./capacity.ts";
+import { downReason, excludedReason, hasRoom, isQuotaMessage } from "./capacity.ts";
+import { isAgentRunError } from "./types.ts";
 import { policyScope } from "./ai-policy.ts";
 import { validateExecution, type Execution } from "./execution.ts";
 import { followAiLabel, getLongTask, type LongTask } from "./long-tasks.ts";
@@ -169,11 +170,28 @@ function nextDay(app: App) {
   return +zoneMidnight(tomorrow, app.config.timezone);
 }
 
-async function waitForAi(ctx: RunContext, task: LongTask, why: string): Promise<never> {
-  const since = Number(getRun(ctx.app, ctx.run.id).output.queueSince ?? Date.now());
+/**
+ * slot: no free slot, the backend marked down for a while, the provider's queue — waiting costs nothing, so the
+ * round stays queued with its events, however long, and the thread hears nothing.
+ * retry: the turn broke off (stalled, the backend exited) — tried again quietly a few times, since each try costs a run.
+ * owner: what only the owner can change (settings, a login, a spent quota) — said in the thread after the wait.
+ */
+type AiWait = "slot" | "retry" | "owner";
+const SILENT_RETRIES = 3;
+
+async function waitForAi(ctx: RunContext, task: LongTask, why: string, kind: AiWait = "owner"): Promise<never> {
+  const out = getRun(ctx.app, ctx.run.id).output;
+  const since = Number(out.queueSince ?? Date.now());
   const end = since + ctx.app.config.agents.queueTimeoutMinutes * minute;
   ctx.output({ queueSince: since, queueReason: why });
-  if (Date.now() < end) throw new ResumeRunAt(Math.min(end, Date.now() + minute));
+  if (kind === "slot") throw new ResumeRunAt(Date.now() + minute);
+  const tries = Number(out.silentRetries ?? 0);
+  if (kind === "retry" && tries < SILENT_RETRIES) {
+    ctx.output({ silentRetries: tries + 1 });
+    ctx.event("status", { text: `${why}；${5 * (tries + 1)} 分钟后再试（第 ${tries + 1} 次）` });
+    throw new ResumeRunAt(Date.now() + 5 * (tries + 1) * minute);
+  }
+  if (kind === "owner" && Date.now() < end) throw new ResumeRunAt(Math.min(end, Date.now() + minute));
   const text = `跟进中 · ${followAiLabel(task.ai)} 等待超过 ${ctx.app.config.agents.queueTimeoutMinutes} 分钟，本轮停止。原因：${why}。`;
   const { deliverToThread } = await import("./inbox.ts");
   await deliverToThread(ctx.app, task.threadId, text, { runId: ctx.run.id });
@@ -214,8 +232,10 @@ export async function runSupervisor(ctx: RunContext) {
     selected = await selectMemberRunAccount(app, selected, { userId: task.userId, runId: ctx.run.id,
       threadId: task.threadId, pinned: true, waitForLogin: true, signal: ctx.signal });
   } else return waitForAi(ctx, task, plan.reason);
-  const unavailable = excludedReason(app, selected) ?? downReason(app, selected) ?? (!hasRoom(app, selected) ? "等待模型空位" : null);
-  if (unavailable) return waitForAi(ctx, task, unavailable);
+  const excludedWhy = excludedReason(app, selected);
+  if (excludedWhy) return waitForAi(ctx, task, excludedWhy);
+  const busy = downReason(app, selected) ?? (!hasRoom(app, selected) ? "等待模型空位" : null);
+  if (busy) return waitForAi(ctx, task, busy, "slot");
   withinTx(app.db, () => {
     patchSupervisorState(app, task.id, { day, wakes: wakes + (ctx.run.output.counted ? 0 : 1), lastWake: now() });
     ctx.output({ counted: true, queueSince: ctx.run.output.queueSince ?? Date.now() });
@@ -251,15 +271,19 @@ export async function runSupervisor(ctx: RunContext) {
   const { runRole, isRetryableAgentError, isBackendDown } = await import("./runner.ts");
   const result = await runRole(app, { role: "supervisor", task: prompt, runId: ctx.run.id, userId: task.userId, spaceId: task.spaceId,
     spaces: [task.spaceId], readScope: [task.spaceId], fullAccess: false, profileId: task.ai.profile, persistSession: true,
-    queueUntil: Number(getRun(app, ctx.run.id).output.queueSince) + app.config.agents.queueTimeoutMinutes * minute,
+    // Each try waits its own window for a slot; a round that keeps waiting goes back to the queue (waitForAi "slot").
+    queueUntil: Date.now() + app.config.agents.queueTimeoutMinutes * minute,
     resumeSessionId: resume, execution, signal: ctx.signal,
     addTools: task.sourceKind === "agentWork" ? ["work_review"] : [],
     denyTools: task.status === "draft" ? ["delegate_code","stop_code_run","continue_code_run","settle_code_task","run_agent"] : [],
     onEvent: e => ctx.event(e.type, e),
   }).catch(async error => {
     const acted = one(app.db, "select 1 from run_events where run_id=? and type='tool-write' limit 1", ctx.run.id);
-    if (!acted && (isRetryableAgentError(error) || isBackendDown(error))) return waitForAi(ctx, task, error.message);
-    throw error;
+    if (acted || !(isRetryableAgentError(error) || isBackendDown(error))) throw error;
+    // The provider did not start the turn (queue, rate limit, busy): free to wait for. The turn broke off: a few quiet tries.
+    const message = (error as Error).message;
+    const quota = (isAgentRunError(error) && error.kind === "quota") || isQuotaMessage(message);
+    return waitForAi(ctx, task, message, quota ? "owner" : isRetryableAgentError(error) || /等待模型空位/.test(message) ? "slot" : "retry");
   });
   const report = getRun(app, ctx.run.id).output.supervisorReport;
   if (!report) throw new Error("这一轮跟进没有提交 supervise_report");
