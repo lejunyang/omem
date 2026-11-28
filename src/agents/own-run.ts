@@ -62,7 +62,7 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
   // A lent command has its own declaration even if its credential kind is also a backend id.
   const state = backendState(context.credentialState === undefined ? profile : undefined, app.config.agents.profiles);
   if (process.platform === "linux")
-    checkBackendCommandState(profile.id, homedir(), state.loginState);
+    checkBackendCommandState(profile.id, homedir(), state.loginState, app.config.security.protectedCommands);
   const support = sandboxSupport();
   if (!support.ok) {
     const note = "这台机器不能隔离本次运行：" + support.reason;

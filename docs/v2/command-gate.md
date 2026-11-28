@@ -63,6 +63,7 @@ Agent 启动时，宿主为启用的 command 规则和已启用、受信任的�
 
 Linux 本机沙箱的垫片把完整 argv 和 cwd 发给原来的命令闸门。放行后宿主签发一次性执行许可，只对当前运行令牌有效。垫片通过 `POST /api/command-gate/stream/:permit` 发送 stdin；响应分别传输 stdout、stderr 和退出码。连接断开、令牌撤销或执行超时会终止子进程。执行器需要支持 `--bind-fd`、`--ro-bind-fd` 的 bubblewrap。
 
+- 本人可登记单个工具，无须编写凭据插件。用本人会话或本人 API 令牌访问 `GET /api/security/protected-commands` 读取清单，用 `PUT` 替换整份清单。例如 `{"commands":[{"name":"sample-cli","state":[".config/sample"],"loginEnv":["SAMPLE_TOKEN"]}]}`。`state` 是相对当前身份 HOME 的登录目录，`loginEnv` 只填变量名。配置保存在 `security.protectedCommands`，清空用 `{"commands":[]}`。重新启动 Agent 进程后，新沙箱会遮住这些登录目录，获准的命令经同身份执行器使用自己的目录和变量。本人登记的命令需连上宿主核对身份，借用本人 HOME 或经 `act_as` 换成成员时拒绝执行。命中同名凭据插件声明时按插件原有的子命令和身份策略处理。
 - 插件只要声明命令即可进入闸门。规则决定放行、审批、拒绝或记录。没有命中规则时放行并审计。执行器从宿主安装中定位程序，只挂回该声明的状态目录、本轮工作区和程序运行所需的文件。使用非标准登录路径的插件应在 `state` 声明相对 HOME 的路径。借用别人的登录继续按原有只读预检处理。
 - `git push/fetch/pull/clone/ls-remote`、`git remote update` 和 `git submodule update --remote` 经执行器使用当前身份的远端登录。`git status`、列出或增删 remote、未带 `--remote` 的子模块更新默认留在 Agent 沙箱；本地操作命中 Git 规则时仍询问闸门。私有仓库的地址与本地路径由 Git 解析，因此公开仓库的 clone 也走执行器。
 - 本人执行器启用出网隔离时，Git 的 OpenSSH 使用 ProxyCommand 连接本次代理允许的目标。SSH 握手和主机密钥验证仍由 OpenSSH 负责。SSH 目标应放在 TLS 解密名单之外，上游 HTTP 代理需要允许目标 SSH 端口。

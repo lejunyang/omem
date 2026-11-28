@@ -1,3 +1,5 @@
+import type { CredentialCommand } from "../../packages/plugin-sdk/credential.ts";
+import { commandCredentialVariable } from "../core/protected-commands.ts";
 import { commandMounts, sandboxGate } from "./command-mounts.ts";
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, opendirSync, readlinkSync, realpathSync, statSync } from "node:fs";
@@ -26,7 +28,7 @@ export const egressRelayPath = fileURLToPath(new URL(import.meta.url.endsWith(".
  * test setup and every launch path, and the registry pulls in the database and the users. With no
  * registry loaded no command login is declared, so there is nothing to clash with.
  */
-let backendStateCheck: ((backend: string, home: string, paths: string[]) => void) | undefined;
+let backendStateCheck: ((backend: string, home: string, paths: string[], configured?: CredentialCommand[]) => void) | undefined;
 export function setBackendStateCheck(check: typeof backendStateCheck) { backendStateCheck = check; }
 
 export type SandboxSupport = { ok: boolean; bwrap?: string; version?: string; reason?: string };
@@ -37,6 +39,7 @@ export type SandboxAccount = {
   /** In a borrowed HOME, bind only shared state and create the other required directories privately. */
   borrowed?: { state: string[]; dirs: string[] };
   backendState?: string[];
+  protectedCommands?: CredentialCommand[];
   masked?: string[];
   network?: SandboxNetwork;
   userId: string;
@@ -235,12 +238,6 @@ export function egressSupport(): SandboxSupport {
   return networkSupport = probe.status === 0 ? s : { ok: false, reason: "出网隔离不可用：" + (probe.error?.message ?? probe.stderr.trim()).slice(0, 200) };
 }
 
-// Backend API keys and the per-run tool token are needed by the backend itself.
-const backendLogin = /^(?:OPENAI|ANTHROPIC|CLAUDE|CODEX|TRAE|DOUBAO|GEMINI)_|^OMEM_TOKEN$/i;
-const commandLogin = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE_KEY|ACCESS_KEY|API_KEY)(?:_|$)|^(?:SSH_AUTH_SOCK|SSH_AGENT_PID|SSH_ASKPASS|GIT_ASKPASS|GIT_CONFIG_.+|GH_.+|GITHUB_.+|GITLAB_.+|GLAB_.+|DOCKER_AUTH_CONFIG|AWS_.+|AZURE_.+|CLOUDSDK_.+|GOOGLE_APPLICATION_CREDENTIALS|KUBECONFIG)$/i;
-
-export const commandCredentialVariable = (key: string) => !backendLogin.test(key) && commandLogin.test(key);
-
 export function stripCommandLogin(env: NodeJS.ProcessEnv, run: NodeJS.ProcessEnv) {
   for (const key of Object.keys(env)) if (commandCredentialVariable(key)) delete env[key];
   const gate = run.OMEM_COMMAND_GATE;
@@ -314,7 +311,7 @@ export function omemInstallDir() {
 export function sandboxCommand(resolved: { file: string; prefix: string[] }, args: string[], runEnv: Record<string, string | undefined>, cwd: string, acct: SandboxAccount, workspace?: WorkspaceMounts, baseEnv = process.env, registryFile?: string) {
   const s = sandboxSupport();
   if (!s.ok || !s.bwrap) throw new Error(`这台机器不能按账号启动 Agent：${s.reason ?? "没有 bubblewrap"}`);
-  if (acct.backendState) backendStateCheck?.(acct.backend, acct.home, acct.backendState.map(rel => join(acct.home, rel)));
+  if (acct.backendState) backendStateCheck?.(acct.backend, acct.home, acct.backendState.map(rel => join(acct.home, rel)), acct.protectedCommands);
   const hide = [...new Set([...acct.hide, homedir(), "/tmp"].filter((p) => isAbsolute(p) && existsSync(p)).map(real))];
   const nodeBin = dirname(process.execPath);
   const ro = new Set(acct.ro);

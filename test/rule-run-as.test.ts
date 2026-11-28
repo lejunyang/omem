@@ -99,13 +99,15 @@ it.skipIf(process.platform === "win32")("换成成员后，登记过的命令在
   const runId = createRun(app, { kind: "agent", spaceId: "personal", title: "周报", input: { rule: { id: rule.id, runAs: ["ann"] } }, userId: "owner" }).id;
   run(app.db, "update runs set status = 'running' where id = ?", runId);
   const token = issueToolToken({ actor: "agent", userId: "owner", commandHomeUser: "owner", runId, spaceId: "personal", spaces: [], tools: new Set() });
-  const gate = async () => (await server.inject({ method: "POST", url: "/api/command-gate", headers: { authorization: "Bearer " + token },
-    payload: { command: name, args: ["show", "--project", "sample"], cwd: app.home, credentialExecution: true } })).json();
+  const gate = async (command = name) => (await server.inject({ method: "POST", url: "/api/command-gate", headers: { authorization: "Bearer " + token },
+    payload: { command, args: ["show", "--project", "sample"], cwd: app.home, credentialExecution: true } })).json();
   try {
     // As the owner: nothing special, the command runs as it is.
     expect((await gate()).execution).toBeUndefined();
     switchIdentity(app, runId, { id: rule.id, runAs: ["ann"] }, "ann");
     setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+    app.config.security.protectedCommands = [{ name: "manual-cli", state: [".manual"], loginEnv: [] }];
+    expect(await gate("manual-cli")).toMatchObject({ decision: "deny" });
     const none = await gate();
     expect(none).toMatchObject({ decision: "deny", message: expect.stringContaining("小安没有可用的示例账号登录") });
     mkdirSync(join(accountHome(app, "ann"), ".sample"), { recursive: true });

@@ -8,6 +8,7 @@ import { omemHome } from "./home.ts";
 import { systemZone, validZone } from "./util.ts";
 import { DECISION_SCENES, decisionThresholdDefaults } from "./decision-scenes.ts";
 import { relayUrl } from "./ai-relay-addr.ts";
+import { protectedCommandsSchema } from "./protected-commands.ts";
 import { isIP } from "node:net";
 
 /**
@@ -701,9 +702,9 @@ export const configSchema = z.object({
    * Commands an agent's processes may not run unchecked (docs/v2/command-gate.md): a wrapper of the
    * same name in front of PATH asks omem first. Only the owner changes this (PUT /api/security/command-rules).
    */
-  security: z.object({ egress: egressSchema.optional(), operationRules: operationRulesSchema.optional(), commandRules: z.array(commandRuleSchema).max(200).optional() }).default({}).transform(s => {
+  security: z.object({ protectedCommands: protectedCommandsSchema.optional(), egress: egressSchema.optional(), operationRules: operationRulesSchema.optional(), commandRules: z.array(commandRuleSchema).max(200).optional() }).default({}).transform(s => {
     const operationRules = s.operationRules ?? migrateCommands(s.commandRules ?? []);
-    return { egress: s.egress ?? egressSchema.parse({}), operationRules, commandRules: operationRules.flatMap(r => legacyCommand(r) ?? []) };
+    return { protectedCommands: s.protectedCommands ?? [], egress: s.egress ?? egressSchema.parse({}), operationRules, commandRules: operationRules.flatMap(r => legacyCommand(r) ?? []) };
   }),
   /** Web VS Code under /ide: the official `code serve-web` behind omem's own auth (src/server/ide-web.ts). */
   ide: z
@@ -1661,7 +1662,8 @@ export function prepareConfigSave(config: Config, home: string) {
   function write() {
     mkdirSync(home, { recursive: true });
     const security = candidate.security;
-    const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules } };
+    const persisted = { ...(merged as Config), security: { egress: security.egress, operationRules: security.operationRules,
+      ...(security.protectedCommands.length > 0 && { protectedCommands: security.protectedCommands }) } };
     writeFileSync(path, JSON.stringify(persisted, null, 2) + "\n");
     if (parsed) {
       // Only the sections the file changed are replaced: others keep their objects (some are held by reference).

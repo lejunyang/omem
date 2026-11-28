@@ -11,7 +11,7 @@ import { standardCommandLogins } from "./own-sandbox.ts";
 import { remoteGit } from "./git-command.ts";
 import { credentialCommand } from "./credential-outcome.ts";
 import { judgeCredential } from "./credentials.ts";
-import { credentialMethods } from "./credential-registry.ts";
+import { commandDeclarations, type CredentialCommand } from "./credential-registry.ts";
 import { auditOperation, commandArgsMatch, currentRules, decide, digest, fingerprint, operationWho, saveOperationRules, type Operation } from "./operation-policy.ts";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -61,9 +61,10 @@ const norm = (name: string) => (win ? name.toLowerCase() : name);
  * The wrappers for the current rules and credential declarations under <home>/bin/guarded (stale ones removed); returns that
  * directory, or null when neither supplies a command.
  */
-export function syncCommandGate(home: string, rules: ({ command: string; args?: string } & Parameters<typeof commandArgsMatch>[0])[], sandbox = false): string | null {
+export function syncCommandGate(home: string, rules: ({ command: string; args?: string } & Parameters<typeof commandArgsMatch>[0])[], sandbox = false, configured: CredentialCommand[] = []): string | null {
   const { guarded, script } = gatePaths(home);
-  const declared = [...new Set(credentialMethods().flatMap(m => m.provides.commands.map(c => norm(c.name))))];
+  const declarations = commandDeclarations(configured);
+  const declared = [...new Set(declarations.map(c => norm(c.name)))];
   const names = [...new Set([...(sandbox ? ["git", "aad", ...standardCommandLogins.keys()] : []), ...declared, ...rules.map(r => norm(r.command.trim())).filter(Boolean)])];
   if (!names.length) {
     if (existsSync(guarded)) rmSync(guarded, { recursive: true, force: true });
@@ -71,8 +72,8 @@ export function syncCommandGate(home: string, rules: ({ command: string; args?: 
   }
   try {
     mkdirSync(guarded, { recursive: true });
-    const judged = new Set(credentialMethods().flatMap(m => m.provides.commands.filter(c => c.judge).map(c => norm(c.name))));
-    const offline = [...new Set([...declared, ...(sandbox ? ["git"] : [])])].filter(name => !judged.has(name)).map(name => [name, rules.filter(r => norm(r.command) === name).map(r => ({
+    const onlineOnly = new Set([...configured, ...declarations.filter(c => c.judge)].map(c => norm(c.name)));
+    const offline = [...new Set([...declared, ...(sandbox ? ["git"] : [])])].filter(name => !onlineOnly.has(name)).map(name => [name, rules.filter(r => norm(r.command) === name).map(r => ({
       subcommand: r.subcommand, argv: r.argv, argsRegex: r.argsRegex ?? r.args,
     }))]);
     writeIfChanged(script, GATE_SCRIPT.replace("/*sandbox*/false", String(sandbox)).replace("/*local git*/false", String(sandbox && !declared.includes("git"))).replace("/*credential rules*/[]", () => JSON.stringify(offline)));
@@ -355,13 +356,14 @@ child.on("close", async (code, signal) => {
 /** The guarded directory for an agent process of this app (written now), or null. */
 export function commandGateDir(app: App, sandbox = false) {
   const rules = currentRules(app).flatMap(r => r.enabled && r.match.kind === "command" ? [{ ...r.match, command: r.match.executable }] : []);
+  const commands = app.config.security.protectedCommands;
   const sandboxHome = join(app.home, "bin", "sandbox");
   if (sandbox || existsSync(sandboxHome)) {
-    const dir = syncCommandGate(sandboxHome, rules, true);
+    const dir = syncCommandGate(sandboxHome, rules, true, commands);
     if (!dir) throw new Error("无法准备沙箱命令垫片");
     if (sandbox) return dir;
   }
-  return syncCommandGate(app.home, rules);
+  return syncCommandGate(app.home, rules, false, commands);
 }
 
 /** `env` with the guarded directory first in PATH (whatever the key is spelled). */

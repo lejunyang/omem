@@ -48,6 +48,8 @@ export const ownerControls: Record<string, string[]> = {
   "telegram": [],
   "onebot": [],
   "security": [
+    "GET /api/security/protected-commands",
+    "PUT /api/security/protected-commands",
     "GET /api/security/egress",
     "PUT /api/security/egress",
     "GET /api/security/operation-rules",

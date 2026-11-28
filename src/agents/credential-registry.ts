@@ -7,7 +7,8 @@ import { run } from "../core/db.ts";
 import { OWNER } from "../core/users.ts";
 import { HttpError } from "../core/util.ts";
 import { canonical, normalizeSandbox, under } from "./own-sandbox.ts";
-import { commandCredentialVariable, setBackendStateCheck } from "./sandbox.ts";
+import { setBackendStateCheck } from "./sandbox.ts";
+import { commandNameSchema, loginEnvSchema } from "../core/protected-commands.ts";
 
 export type { CredentialDef, CredentialContext, CredentialCommand, CredentialOutcome };
 const ID = /^[a-z][a-z0-9-]{0,31}$/;
@@ -24,12 +25,11 @@ const outcome = z.object({ json: z.string().startsWith("$."), equals: z.union([z
 const providesSchema = z.object({
   backends: z.array(z.string().min(1).max(100)).max(32).default([]),
   commands: z.array(z.object({
-    name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/),
+    name: commandNameSchema,
     subcommand: z.array(z.string().min(1).max(100)).min(1).max(8).optional(),
     install: z.array(z.string().min(1).max(1024)).max(32).default([]),
     state: z.array(z.string().min(1).max(1024)).max(32).default([]),
-    loginEnv: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
-      .refine(key => !/^OMEM_/i.test(key) && commandCredentialVariable(key), "需要命令登录变量名，例如 ACME_TOKEN")).max(32).optional(),
+    loginEnv: loginEnvSchema.optional(),
     judge: z.custom<NonNullable<CredentialCommand["judge"]>>(v => typeof v === "function").optional(),
     readOnly: z.array(match).max(256).optional(),
     resource: z.array(z.object({ match, key: z.string().min(1).max(1024) }).strict()).max(64).optional(),
@@ -43,13 +43,13 @@ function stateRel(path: string) {
     throw new Error("凭据状态目录必须相对 HOME，不能有 ..、反斜线或控制字符");
   return path;
 }
-export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
+export function declaredPaths(app: App, commands: CredentialCommand[]) {
   const home = process.platform === "win32" ? homedir() : canonical(homedir());
-  const state = m.provides.commands.flatMap(c => (c.state ?? []).map(p => join(home, stateRel(p))));
+  const state = commands.flatMap(c => (c.state ?? []).map(p => join(home, stateRel(p))));
   // Windows starts no sandbox, so nothing is mounted: only the relative-to-HOME and `..` rules apply
   // (the mount checks below are POSIX paths and would reject every declaration there).
   if (process.platform === "win32") {
-    const install = m.provides.commands.flatMap(c => c.install ?? []).map(p => {
+    const install = commands.flatMap(c => c.install ?? []).map(p => {
       if (p.split("/").includes("..")) throw new Error("安装目录不能包含 ..");
       if (!(isAbsolute(p) || p.startsWith("~/"))) throw new Error("凭据安装目录需要绝对路径或 ~/ 开头");
       return { declared: p, path: p.startsWith("~/") ? join(home, p.slice(2)) : p };
@@ -59,7 +59,7 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
   const data = canonical(app.home);
   const writable = normalizeSandbox({ mode: "off", writable: state, hidden: [] }, home, data).writable;
   if (writable.some(p => !under(p, home))) throw new Error("凭据状态目录必须位于 HOME 内");
-  const install = m.provides.commands.flatMap(c => c.install ?? []).map(p => {
+  const install = commands.flatMap(c => c.install ?? []).map(p => {
     if (p.split("/").includes("..")) throw new Error("安装目录不能包含 ..");
     if (!(isAbsolute(p) || p.startsWith("~/"))) throw new Error("凭据安装目录需要绝对路径或 ~/ 开头");
     const path = canonical(p.startsWith("~/") ? join(home, p.slice(2)) : p);
@@ -71,18 +71,21 @@ export function declaredPaths(app: App, m: Pick<CredentialMethod, "provides">) {
   return { state: writable, install };
 }
 
+/** Owner declarations protect commands without creating a credential provider or lending login. */
+export function commandDeclarations(configured: CredentialCommand[] = []): CredentialCommand[] {
+  return [...credentialMethods().flatMap(method => method.provides.commands), ...configured];
+}
+
 /** The backend starts its own tools in the same mount namespace. Check only when starting a sandbox. */
-export function checkBackendCommandState(backend: string, home: string, backendPaths: string[]) {
+export function checkBackendCommandState(backend: string, home: string, backendPaths: string[], configured: CredentialCommand[] = []) {
   const paths = [...new Set(backendPaths.map(canonical))];
-  for (const method of credentialMethods()) {
-    for (const command of method.provides.commands) {
-      for (const rel of command.state ?? []) {
-        const login = canonical(join(home, rel));
-        const conflict = paths.find(path => under(path, login) || under(login, path));
-        if (conflict) throw new Error(
-          `后端 ${backend} 的状态路径 ${conflict} 与命令 ${command.name} 的登录路径 ~/${rel} 重合。后端和工具共用文件视图，已拒绝启动沙箱。请为后端和命令分别供给独立凭据并分开目录，或改用其他后端。`,
-        );
-      }
+  for (const command of commandDeclarations(configured)) {
+    for (const rel of command.state ?? []) {
+      const login = canonical(join(home, rel));
+      const conflict = paths.find(path => under(path, login) || under(login, path));
+      if (conflict) throw new Error(
+        `后端 ${backend} 的状态路径 ${conflict} 与命令 ${command.name} 的登录路径 ~/${rel} 重合。后端和工具共用文件视图，已拒绝启动沙箱。请为后端和命令分别供给独立凭据并分开目录，或改用其他后端。`,
+      );
     }
   }
 }
@@ -110,7 +113,7 @@ export function registerCredential(plugin: string, def: CredentialDef, settings 
   const lifetime = new AbortController();
   const m = { ...def, provides, kind, plugin, settings, signal: lifetime.signal };
   if (app) {
-    declaredPaths(app, m);
+    declaredPaths(app, m.provides.commands);
     run(app.db, "insert into credential_kinds(kind,plugin,declaration) values(?,?,?) on conflict(kind) do update set declaration=excluded.declaration",
       kind, plugin, JSON.stringify({ id: def.id, name: def.name, describe: def.describe, required: !!def.required, provides }));
     // Registered again (new code, trust given again): the owner's last check is stale, check on the next tick.

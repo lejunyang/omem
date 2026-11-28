@@ -17,10 +17,10 @@ import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { accountEntries, accountHome, accountStatePaths } from "./accounts.ts";
 import { credentialCommand } from "./credential-outcome.ts";
-import { credentialMethods, declaredPaths } from "./credential-registry.ts";
+import { credentialMethods, declaredPaths, type CredentialCommand } from "./credential-registry.ts";
 import { launchRun } from "./egress-run.ts";
 import { canonical, gitLoginPaths, standardCommandLogins, under, type OwnSandbox } from "./own-sandbox.ts";
-import { currentRules } from "./operation-policy.ts";
+import { currentRules, executableName } from "./operation-policy.ts";
 import { addRunEvent } from "./runs.ts";
 import { withPinnedBinds } from "./bwrap-spawn.ts";
 import { accountOf, bwrapArgs, egressRelayPath, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
@@ -81,7 +81,7 @@ function kubeconfigPaths(app: App, user: string, scope: CommandSandbox, value: s
   });
 }
 
-function executorMounts(app: App, user: string, scope: CommandSandbox, call: Call, entry: ReturnType<typeof credentialCommand>, git: boolean, npm: boolean) {
+function executorMounts(app: App, user: string, scope: CommandSandbox, call: Call, command: CredentialCommand | undefined, git: boolean, npm: boolean) {
   if (!isAbsolute(call.cwd)) throw new Error("工作目录必须是绝对路径");
   // cwd is interpreted INSIDE the new namespace. It never authorizes a host bind mount.
   const home = canonical(user === OWNER ? homedir() : accountHome(app, user));
@@ -120,7 +120,7 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
   const env: NodeJS.ProcessEnv = { HOME: home, PATH: [dirname(process.execPath), "/usr/local/bin", "/usr/bin", "/bin"].join(":"), LANG: process.env.LANG ?? "C", TMPDIR: "/tmp/.omem-executor-tmp" };
   const account = accountOf(scope.profile);
   const memberEnv = account?.userId === user ? account.env : undefined;
-  for (const key of [...(standardLoginEnv.get(call.command) ?? []), ...(entry?.command.loginEnv ?? [])]) {
+  for (const key of [...(standardLoginEnv.get(call.command) ?? []), ...(command?.loginEnv ?? [])]) {
     const value = user === OWNER ? scope.profile.env[key] ?? process.env[key] : memberEnv?.[key];
     if (value !== undefined) env[key] = value;
   }
@@ -132,15 +132,15 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
       if (exists) { ro.push(path); granted.add(path); }
     }
   }
-  if (entry) {
-    if (user !== OWNER) accountStatePaths(app, user, entry.command.state ?? []);
-    const declared = declaredPaths(app, { provides: { backends: [], commands: [entry.command] } });
+  if (command) {
+    if (user !== OWNER) accountStatePaths(app, user, command.state ?? []);
+    const declared = declaredPaths(app, [command]);
     if (declared.install.some(p => writable.some(dir => under(p.path, dir) || under(dir, p.path))))
       throw new Error("命令安装目录与 Agent 可写目录重叠");
     ro.push(...declared.install.map(p => p.path));
     const bins = (process.env.PATH ?? "").split(":").filter(dir => isAbsolute(dir) && declared.install.some(p => under(canonical(dir), p.path)));
     env.PATH = [env.PATH, ...bins.map(canonical)].join(":");
-    for (const rel of entry.command.state ?? []) {
+    for (const rel of command.state ?? []) {
       const path = join(home, rel);
       if (canonical(path) !== path) throw new Error("命令状态目录含有符号链接");
       if (existsSync(path)) { rw.push(path); granted.add(path); }
@@ -176,6 +176,14 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
 type Pending = { token: string; start(input: IncomingMessage, output: ServerResponse): Promise<void> };
 const pending = new Map<string, Pending>();
 
+function commandActor(ctx: ToolContext) {
+  return ctx.actor === "agent" && !ctx.shadow && !ctx.view && !ctx.boardAccess && ctx.role !== "guest";
+}
+
+export function sameCommandIdentity(ctx: ToolContext) {
+  return commandActor(ctx) && ctx.commandHomeUser === (ctx.userId ?? OWNER);
+}
+
 export function executionPermit(ctx: ToolContext, token: string, call: Call) {
   const scope = ctx.commandSandbox;
   if (!scope) return;
@@ -183,14 +191,17 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
   const entry = credentialCommand(call.command, call.args);
   const git = call.command === "git" && remoteGit(call.args);
   const declared = credentialMethods().some(method => method.provides.commands.some(c => c.name === call.command));
+  const registered = app.config.security.protectedCommands;
+  const command = entry?.command ?? registered.find(c => executableName(c.name) === executableName(call.command));
   const standard = standardCommandLogins.has(call.command);
   const desktop = call.command === "aad";
-  if (desktop && (!ctx.browserProfilesRoot || process.env.OMEM_DESKTOP_TOOLS === "off" || scope.profile.env.OMEM_DESKTOP_TOOLS === "off"))
+  if (desktop && (!ctx.browserProfilesRoot || process.env.OMEM_DESKTOP_TOOLS === "off" || scope.profile.env.OMEM_DESKTOP_TOOLS === "off" ||
+      !commandActor(ctx) || !ctx.commandHomeUser))
     throw new HttpError(403, "本轮没有使用桌面或浏览器的权限");
-  if (!desktop && !declared && !standard && !git && !currentRules(app).some(r => r.enabled && r.match.kind === "command" && r.match.executable === call.command)) return;
+  if (!desktop && !command && !declared && !standard && !git && !currentRules(app).some(r => r.enabled && r.match.kind === "command" && r.match.executable === call.command)) return;
   const npm = call.command === "npm" || call.command === "pnpm";
   const user = ctx.userId ?? OWNER;
-  if ((desktop || entry || standard || git || npm) && (ctx.actor !== "agent" || (desktop ? !ctx.commandHomeUser : ctx.commandHomeUser !== user) || ctx.shadow || ctx.view || ctx.boardAccess || ctx.role === "guest"))
+  if ((command || standard || git || npm) && !sameCommandIdentity(ctx))
     throw new Error("本轮没有使用这份命令凭据的权限");
   const rules = app.config.security.operationRules, legacy = app.config.security.commandRules;
   const turn = ctx.commandTurn;
@@ -204,8 +215,8 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
     const live = toolContextForToken(app, token);
     if (!live || (user !== OWNER && !activeUser(findUser(app, user))) || live.runId !== runId || live.commandTurn !== turn || live.commandSandbox !== scope ||
         app.config.security.operationRules !== rules || app.config.security.commandRules !== legacy ||
-        entry?.method.signal.aborted || (runId && actingAs(runId))) throw new Error("运行、身份或规则已变化，请重新执行");
-    const { home, ro, rw, file, env, masked, links } = executorMounts(app, user, scope, call, entry, git, npm);
+        registered !== app.config.security.protectedCommands || entry?.method.signal.aborted || (runId && actingAs(runId))) throw new Error("运行、身份或规则已变化，请重新执行");
+    const { home, ro, rw, file, env, masked, links } = executorMounts(app, user, scope, call, command, git, npm);
     // The relay and its runtime are read-only. Do not mount the service checkout in the executor.
     const controller = new AbortController();
     const cancel = () => controller.abort();

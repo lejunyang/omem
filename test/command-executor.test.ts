@@ -33,7 +33,7 @@ it("识别 Git 远端操作及其全局选项", () => {
 const support = sandboxSupport();
 for (const proxy of [false, true]) {
 const network = proxy ? egressSupport() : support;
-it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取消 " + (proxy ? "（出网代理）" : "") + (network.reason ?? ""), async () => {
+it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取消 " + (proxy ? "（插件、出网代理）" : "（本人登记）") + (network.reason ?? ""), async () => {
   const app = testApp();
   const root = mkdtempSync(join(tmpdir(), "gate-integration-"));
   const home = join(root, "account"), cwd = join(root, "work"), bin = join(root, "bin");
@@ -41,13 +41,16 @@ it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取
   writeFileSync(join(home, ".fixture", "value"), "ready");
   writeFileSync(join(home, ".other", "login"), "other");
   const file = join(bin, "samplecli");
-  writeFileSync(file, '#!/bin/sh\ntest ! -e "$HOME/.backend/session" && test ! -e "$HOME/.other/login" || exit 3\ncat "$HOME/.fixture/value" || exit 2\nprintf "\\n"\nif test "$1" = hold; then sleep 2; touch late; exit; fi\nread line\nprintf "%s" "$line" >&2\nexit 17\n', { mode: 0o755 });
+  writeFileSync(file, '#!/bin/sh\ntest "$SAMPLE_TOKEN" = fixture || exit 4\ntest ! -e "$HOME/.backend/session" && test ! -e "$HOME/.other/login" || exit 3\ncat "$HOME/.fixture/value" || exit 2\nprintf "\\n"\nif test "$1" = hold; then sleep 2; touch late; exit; fi\nread line\nprintf "%s" "$line" >&2\nexit 17\n', { mode: 0o755 });
   vi.stubEnv("HOME", home); vi.stubEnv("OMEM_DESKTOP_TOOLS", "off"); vi.stubEnv("PATH", bin + ":" + process.env.PATH);
   const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh",
     account: { dirs: [".backend"], owns: [".backend"] } });
   app.config.agents.profiles = [profile];
+  vi.stubEnv("SAMPLE_TOKEN", "fixture");
+  const sample = { name: "samplecli", state: [".fixture"], loginEnv: ["SAMPLE_TOKEN"] };
+  if (!proxy) app.config.security.protectedCommands = [sample];
   const unregister = registerCredential("fixture", { id: "sample", name: "示例", login: async () => ({ user: "example" }),
-    provides: { backends: [profile.id], commands: [{ name: "samplecli", state: [".fixture"] }, { name: "othercli", state: [".other"] }] } }, undefined, app);
+    provides: { backends: [profile.id], commands: [...(proxy ? [sample] : []), { name: "othercli", state: [".other"] }] } }, undefined, app);
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
   app.config.agents.ownSandbox.mode = "require";
   if (proxy) app.config.security.egress.mode = "all-sandboxed";
@@ -58,7 +61,7 @@ it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取
       launch("/bin/sh", ["-ec", command], { cwd, ownSandbox, env: prep.mcp.env }));
   }
   try {
-    const child = await invoke('echo active > "$HOME/.backend/session"; test ! -e "$HOME/.fixture/value"; exec samplecli');
+    const child = await invoke('test -z "$SAMPLE_TOKEN"; echo active > "$HOME/.backend/session"; test ! -e "$HOME/.fixture/value"; exec samplecli');
     let stderr = "";
     child.stderr.on("data", chunk => stderr += chunk);
     const closed = once(child, "close");
@@ -74,6 +77,16 @@ it.skipIf(!network.ok)("同身份执行器流式回传、stdin、退出码和取
     stop(interrupted); await exit;
     await new Promise(resolve => setTimeout(resolve, 2250));
     expect(() => readFileSync(join(cwd, "late"))).toThrow();
+    app.config.security.operationRules = [{
+      id: "sample-deny", enabled: true, revision: 1, action: "deny", title: "示例拒绝",
+      match: { kind: "command", executable: "samplecli" },
+    }];
+    const denied = await invoke("exec samplecli");
+    denied.stdin.end();
+    let reason = "";
+    denied.stderr.on("data", chunk => reason += chunk);
+    expect((await once(denied, "close"))[0]).toBe(126);
+    expect(reason).toContain("示例拒绝");
   } finally {
     revokeToolToken(prep.token); await server.close(); unregister(); vi.unstubAllEnvs();
     app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true });
@@ -194,7 +207,7 @@ esac
   }
 }, 45000);
 
-it.skipIf(!support.ok)("成员执行器仅恢复本账号的声明目录和登录变量 " + (support.reason ?? ""), async () => {
+it.skipIf(!support.ok).each(["本人登记", "凭据插件"])("%s 的成员命令仅恢复本账号的声明目录和变量", async source => {
   const { localAccount, ensureAccountHome } = await import("../src/agents/accounts.ts");
   const { issueToolToken } = await import("../src/agents/tools.ts");
   const { createUser } = await import("../src/core/users.ts");
@@ -206,8 +219,11 @@ it.skipIf(!support.ok)("成员执行器仅恢复本账号的声明目录和登�
   for (const dir of [join(home, ".fixture"), cwd, bin]) mkdirSync(dir, { recursive: true });
   vi.stubEnv("HOME", home); vi.stubEnv("OMEM_DESKTOP_TOOLS", "off"); vi.stubEnv("PATH", bin + ":" + process.env.PATH);
   vi.stubEnv("SAMPLE_TOKEN", "owner"); vi.stubEnv("ALTERNATE_TOKEN", "owner");
-  const unregister = registerCredential("fixture", { id: "sample", name: "示例", login: async () => ({ user: "example" }),
-    provides: { commands: [{ name: "samplecli", state: [".fixture"], loginEnv: ["SAMPLE_TOKEN", "ALTERNATE_TOKEN"] }] } });
+  const sample = { name: "samplecli", state: [".fixture"], loginEnv: ["SAMPLE_TOKEN", "ALTERNATE_TOKEN"] };
+  const unregister = source === "凭据插件" ? registerCredential("fixture", {
+    id: "sample", name: "示例", login: async () => ({ user: "example" }), provides: { commands: [sample] },
+  }) : undefined;
+  if (source === "本人登记") app.config.security.protectedCommands = [sample];
   createUser(app, { id: "member", name: "示例成员", role: "member" });
   const member = ensureAccountHome(app, "member");
   writeFileSync(join(member, ".fixture", "login"), "member");
@@ -227,7 +243,7 @@ it.skipIf(!support.ok)("成员执行器仅恢复本账号的声明目录和登�
     expect((await once(child, "close"))[0], output).toBe(0);
     expect(output).toBe("member");
   } finally {
-    revokeToolToken(token); await server.close(); unregister(); vi.unstubAllEnvs();
+    revokeToolToken(token); await server.close(); unregister?.(); vi.unstubAllEnvs();
     app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true });
   }
 }, 45000);
