@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 研究、编码交办与多 Agent 工作自动跟进（2026-11-28）
+
+从 `src/agents/auto-follow.ts` 读起。自动跟进记录工作来源，首版任务书随报告生效。原会话可退出，之后仍能查到已作出的决定。三类工作各有独立开关，编码交办另按拆分和轮数判断。进度卡、可编辑的必问清单和每轮报告在 `src/agents/supervisor-report.ts`。
+
 ## 沙箱在启动前报告后端与命令的登录目录冲突（2026-11-28）
 
 从 `src/agents/credential-registry.ts` 的 `checkBackendCommandState` 读起。本人、成员及借用账号启动 Linux 沙箱时检查两个路径是否相同或互相包含。冲突时提示分开供给独立凭据或改用其他后端。
