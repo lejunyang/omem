@@ -1,3 +1,5 @@
+import WebSocket from "ws";
+import type { DesktopViewer } from "../agents/desktop-executor.ts";
 import type { ChildProcess } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -131,8 +133,8 @@ export function getSession(id: string, userId?: string): Live {
 /** The address the page should load: the viewer with its token. */
 export const viewerPath = (s: Live) => `/remote/${s.id}/?token=${s.assist.token}&lang=zh`;
 
-export async function startAssist(args: string[]) {
-  const proc = spawnAad(["assist", ...args]);
+export async function startAssist(args: string[], viewer?: DesktopViewer) {
+  const proc = viewer ? viewer.assist(args) : spawnAad(["assist", ...args]);
   const announced = await firstJsonLine(proc, 30_000).catch((e) => {
     proc.kill();
     throw e;
@@ -142,7 +144,8 @@ export async function startAssist(args: string[]) {
     proc.kill();
     throw new HttpError(502, "aad assist 没有说明在哪里监听");
   }
-  return { proc, port, token: String(announced.token), args };
+  try { return { proc, port, token: String(announced.token), args, viewer, socketPath: await viewer?.endpoint(port) }; }
+  catch (e) { proc.kill(); throw e; }
 }
 
 /** The screen going away (the browser closed, the desktop locked) ends the session; a replaced viewer does not. */
@@ -264,7 +267,7 @@ export async function openBrowser(app: App, opts: { url?: string; browser?: stri
 
 /** Attach only the viewer. The process that opened the browser retains its lifetime. */
 export async function attachAgentPage(app: App, opts: {
-  userId: string; runId: string; spaceId: string; profile: string; pageId: string; port: number; detach: () => void; guarded?: boolean;
+  userId: string; runId: string; spaceId: string; profile: string; pageId: string; port: number; detach: () => void; guarded?: boolean; viewer?: DesktopViewer;
 }) {
   const existing = () => [...live.values()].find(s => s.origin?.runId === opts.runId && s.userId === opts.userId &&
     s.browser?.port === opts.port && s.browser.pageId === opts.pageId);
@@ -275,7 +278,7 @@ export async function attachAgentPage(app: App, opts: {
   const registered = existing();
   if (registered) return reuse(registered);
   const source = ["--browser-port", String(opts.port), "--page", opts.pageId];
-  const assist = await startAssist(source);
+  const assist = await startAssist(source, opts.viewer);
   const concurrent = existing();
   if (concurrent) {
     assist.proc.kill();
@@ -300,7 +303,7 @@ export async function openDesktop(app: App, opts: { monitor?: number; window?: s
  */
 export async function restartViewer(app: App, id: string, userId: string, viewer: string[]) {
   const s = getSession(id, userId);
-  const next = await startAssist([...s.source, ...viewer]);
+  const next = await startAssist([...s.source, ...viewer], s.assist.viewer);
   if (live.get(id) !== s) {
     // The session ended while the new viewer started.
     next.proc.kill();
@@ -454,7 +457,7 @@ export async function navigate(app: App, sessionId: string, url: string, userId:
  */
 async function goTo(s: Live, url: string) {
   const mcp = s.mcp;
-  if (!mcp) return devtoolsNavigate(s.browser!.port, s.browser!.pageId, url);
+  if (!mcp) return devtoolsNavigate(s.browser!.port, s.browser!.pageId, url, 60_000, await s.assist.viewer?.endpoint(s.browser!.port));
   const targets = await mcp.call("control_targets", {});
   const page = (targets.resources ?? []).find((r: any) => r.metadata?.page_id === s.browser!.pageId && r.metadata?.main_frame === true);
   if (!page) throw new HttpError(409, "找不到会话里的页面");
@@ -465,13 +468,13 @@ async function goTo(s: Live, url: string) {
 }
 
 /** `Page.navigate` on one page over the browser's DevTools protocol, waiting for its load event. */
-export async function devtoolsNavigate(port: number, pageId: string, url: string, timeoutMs = 60_000) {
-  const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(10_000) })
+export async function devtoolsNavigate(port: number, pageId: string, url: string, timeoutMs = 60_000, socketPath?: string) {
+  const list = socketPath ? [] : await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(10_000) })
     .then((r) => r.json() as Promise<{ id: string; webSocketDebuggerUrl?: string }[]>)
     .catch((e) => {
       throw new HttpError(502, `连不上浏览器的调试端口：${(e as Error).message}`);
     });
-  const target = list.find((t) => t.id === pageId)?.webSocketDebuggerUrl;
+  const target = socketPath ? `ws+unix://${socketPath}:/devtools/page/${pageId}` : list.find((t) => t.id === pageId)?.webSocketDebuggerUrl;
   if (!target) throw new HttpError(409, "找不到会话里的页面");
   const socket = new WebSocket(target);
   try {

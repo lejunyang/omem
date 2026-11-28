@@ -354,7 +354,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (viaProxy(req.raw) || !(loopbackIp(req.ip ?? "") || (!!s.remoteAddress && s.remoteAddress === s.localAddress))) throw new HttpError(403, "命令拦截只接受本机的请求");
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
-    const b = q(z.object({ stream: z.boolean().optional(), credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
+    const b = q(z.object({ desktopPort: z.number().int().min(1).max(65535).optional(), stream: z.boolean().optional(), credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
     const burst = gateBurst([ctx.runId ?? digest(bearer(req)), b.command, digest(b.args)].join("\n"));
     if (burst) {
       if (ctx.runId && burst === "first") addRunEvent(app, ctx.runId, "status", { text: `命令 ${b.command} 一分钟内以同样的参数请求了 60 次以上，疑似进程在循环启动自己，已拒绝。` });
@@ -437,7 +437,9 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx.browserProfilesRoot || !ctx.runId) throw new HttpError(403, "只有本机受管运行可以登记浏览器");
     const b = q(z.object({ profile: z.string().regex(/^[\p{L}\p{N}_-]{1,40}$/u), pageId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/) }).strict(), req.body);
     const { registerAgentBrowser } = await import("../remote/agent-browser.ts");
-    return registerAgentBrowser(app, { ...b, root: ctx.browserProfilesRoot, userId: ctx.userId ?? "owner", runId: ctx.runId, spaceId: ctx.spaceId });
+    const viewer = ctx.commandSandbox && (await import("../agents/desktop-executor.ts")).desktopViewer(bearer(req));
+    if (ctx.commandSandbox && !viewer) throw new HttpError(409, "请先在本轮桌面执行器打开浏览器");
+    return registerAgentBrowser(app, { ...b, viewer, root: ctx.browserProfilesRoot, userId: ctx.userId ?? "owner", runId: ctx.runId, spaceId: ctx.spaceId });
   });
   server.get("/api/operation-gate/http", async (req) => (await import("../agents/http-gate.ts")).httpWatch(app, gateCaller(req)));
   server.post("/api/operation-gate/http", async (req) => {

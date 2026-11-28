@@ -1,4 +1,5 @@
 import { checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "./supervisor-code.ts";
+import { closeDesktopExecutor } from "./desktop-executor.ts";
 import { classSchema, specAiSchema } from "../core/ai-policy-schema.ts";
 import { proposalArgs, startPolicyDraft, submitPolicyDraft } from "./ai-policy-proposal.ts";
 import { groupPick, policyScope } from "./ai-policy.ts";
@@ -8218,9 +8219,11 @@ export function issueToolToken(ctx: Omit<ToolContext, "app">) {
 export function retargetToolToken(token: string, runId: string | null, turn?: string) {
   const ctx = tokens.get(token);
   if (!ctx) return;
+  if (ctx.runId !== runId || (turn && turn !== token)) closeDesktopExecutor(token);
   ctx.runId = runId;
   const next = turn && turn !== token ? tokens.get(turn) : undefined;
   if (next) {
+    ctx.browserProfilesRoot = next.browserProfilesRoot;
     ctx.tools = next.tools;
     ctx.sourceSpaces = next.sourceSpaces;
   }
@@ -8230,7 +8233,7 @@ export function beginCommandTurn(token: string) {
   if (!ctx) return;
   const turn = randomBytes(18).toString("base64url");
   ctx.commandTurn = turn;
-  return () => { if (ctx.commandTurn === turn) delete ctx.commandTurn; };
+  return () => { if (ctx.commandTurn === turn) { closeDesktopExecutor(token); delete ctx.commandTurn; } };
 }
 const tokenCleanups = new Map<string, Set<() => void>>();
 export function onToolTokenRevoked(token: string, close: () => void) {

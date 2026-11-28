@@ -64,7 +64,7 @@ const norm = (name: string) => (win ? name.toLowerCase() : name);
 export function syncCommandGate(home: string, rules: ({ command: string; args?: string } & Parameters<typeof commandArgsMatch>[0])[], sandbox = false): string | null {
   const { guarded, script } = gatePaths(home);
   const declared = [...new Set(credentialMethods().flatMap(m => m.provides.commands.map(c => norm(c.name))))];
-  const names = [...new Set([...(sandbox ? ["git", ...standardCommandLogins.keys()] : []), ...declared, ...rules.map(r => norm(r.command.trim())).filter(Boolean)])];
+  const names = [...new Set([...(sandbox ? ["git", "aad", ...standardCommandLogins.keys()] : []), ...declared, ...rules.map(r => norm(r.command.trim())).filter(Boolean)])];
   if (!names.length) {
     if (existsSync(guarded)) rmSync(guarded, { recursive: true, force: true });
     return null;
@@ -257,6 +257,7 @@ async function ask() {
   let res;
   try {
     res = await request("/api/command-gate", { command: name, args, cwd: process.cwd(), credentialExecution: true, stream: isolated,
+      ...(name === "aad" && process.env.AAD_CDP_PORT && { desktopPort: Number(process.env.AAD_CDP_PORT) }),
       approver: process.env.OMEM_APPROVER, reason: process.env.OMEM_REASON }, credentialRules.get(win ? name.toLowerCase() : name)?.length === 0 ? 5000 : 310_000);
   } catch (e) { return offline("连不上 omem：" + e.message + "。命令 " + name + " 受命令规则保护，连不上时不执行。"); }
   if (res.status !== 200 || typeof res.value?.decision !== "string") fail("omem 没有放行命令 " + name + "：" + (res.value?.error || "HTTP " + res.status));
@@ -298,7 +299,7 @@ if (v.permit) {
     }
     for await (const line of createInterface({ input: res })) {
       const [fd, data] = JSON.parse(line);
-      if (fd === 0) { code = data; break; }
+      if (fd === 0) { code = data; continue; }
       const stream = fd === 1 ? process.stdout : process.stderr;
       const bytes = Buffer.from(data, "base64");
       if (v.report) tail = (tail + bytes.toString()).slice(-${COMMAND_OUTPUT_LIMIT});

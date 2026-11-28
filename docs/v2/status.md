@@ -508,3 +508,7 @@
 - 进度投影 attempts 补齐 access（read/write），任务板和运行树使用同一访问枚举。入口 `src/agents/progress.ts`、`progress-runs.ts`。
 
 - 知识查看成员可读裁剪后的后端列表及缓存；普通 probe 只读缓存，缺缓存返回空列表，刷新仅本人。缓存按主键批量读取。入口 `src/server/http.ts`、`src/agents/probe.ts`、`src/auth/routes.ts`。
+
+## 沙箱桌面执行器
+
+沙箱内的 aad 与托管浏览器经独立桌面执行器运行，远程查看沿用运行的身份授权。

@@ -8,9 +8,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { runDesktop } from "./desktop-executor.ts";
+import { toolCommand } from "../core/tools.ts";
 import { audit } from "../auth/permissions.ts";
 import { activeUser, findUser, OWNER } from "../core/users.ts";
-import { COMMAND_TIMEOUT_SEC } from "../core/util.ts";
+import { COMMAND_TIMEOUT_SEC, HttpError } from "../core/util.ts";
 import type { App } from "../core/app.ts";
 import type { AgentProfile } from "../core/config.ts";
 import { accountEntries, accountHome, accountStatePaths } from "./accounts.ts";
@@ -29,7 +31,7 @@ import { larkCliInstallation } from "../channels/lark-cli-path.ts";
 import { actingAs } from "../rules/run-as.ts";
 
 export type CommandSandbox = { profile: AgentProfile; workspace: WorkspaceMounts; own?: OwnSandbox };
-type Call = { command: string; args: string[]; cwd: string };
+type Call = { command: string; args: string[]; cwd: string; desktopPort?: number };
 
 const npmLogin = ["NPM_TOKEN", "NODE_AUTH_TOKEN"];
 const standardLoginEnv: ReadonlyMap<string, readonly string[]> = new Map([
@@ -45,6 +47,11 @@ const standardLoginEnv: ReadonlyMap<string, readonly string[]> = new Map([
 
 function program(name: string, writable: string[]) {
   if (basename(name) !== name || !/^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$/.test(name)) throw new Error("需要命令名");
+  if (name === "aad") {
+    const selected = toolCommand("aad")?.[0];
+    if (!selected) throw new Error("宿主没有安装 aad");
+    if (isAbsolute(selected)) { const file = realpathSync(selected); return { real: file, path: file }; }
+  }
   if (name === "lark-cli") {
     const file = realpathSync(larkCliInstallation().binary);
     return { real: file, path: file };
@@ -161,10 +168,13 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
   const git = call.command === "git" && remoteGit(call.args);
   const declared = credentialMethods().some(method => method.provides.commands.some(c => c.name === call.command));
   const standard = standardCommandLogins.has(call.command);
-  if (!declared && !standard && !git && !currentRules(app).some(r => r.enabled && r.match.kind === "command" && r.match.executable === call.command)) return;
+  const desktop = call.command === "aad";
+  if (desktop && (!ctx.browserProfilesRoot || process.env.OMEM_DESKTOP_TOOLS === "off" || scope.profile.env.OMEM_DESKTOP_TOOLS === "off"))
+    throw new HttpError(403, "本轮没有使用桌面或浏览器的权限");
+  if (!desktop && !declared && !standard && !git && !currentRules(app).some(r => r.enabled && r.match.kind === "command" && r.match.executable === call.command)) return;
   const npm = call.command === "npm" || call.command === "pnpm";
   const user = ctx.userId ?? OWNER;
-  if ((entry || standard || git || npm) && (ctx.actor !== "agent" || ctx.commandHomeUser !== user || ctx.shadow || ctx.view || ctx.boardAccess || ctx.role === "guest"))
+  if ((desktop || entry || standard || git || npm) && (ctx.actor !== "agent" || (desktop ? !ctx.commandHomeUser : ctx.commandHomeUser !== user) || ctx.shadow || ctx.view || ctx.boardAccess || ctx.role === "guest"))
     throw new Error("本轮没有使用这份命令凭据的权限");
   const rules = app.config.security.operationRules, legacy = app.config.security.commandRules;
   const turn = ctx.commandTurn;
@@ -190,6 +200,16 @@ export function executionPermit(ctx: ToolContext, token: string, call: Call) {
       const support = sandboxSupport();
       if (!support.ok || !support.bwrap) throw new Error("命令执行器需要 Linux 沙箱");
       audit(app, user, "command.execute", call.command, { runId, argv: call.args, cwd: call.cwd });
+      if (desktop) {
+        await runDesktop(ctx, token, { home, ro, rw, file, env, masked, links }, call, (mount, network, args, desktopPointers) => {
+          const { args: argv } = bwrapArgs({ minimalRoot: true, privateDirs: [home], network, ro: mount.ro, rw: mount.rw,
+            hide: [canonical(app.home)], masked, links, cwd: "/", command: mount.file, args,
+            pointers: [...(scope.workspace.pointers ?? []), ...desktopPointers] });
+          return withPinnedBinds(argv, undefined, (pinned, fds) => spawn(support.bwrap!, pinned,
+            { env, cwd: "/", stdio: ["pipe", "pipe", "pipe", ...fds], detached: true }) as ChildProcessWithoutNullStreams);
+        }, input, output, signal);
+        return;
+      }
       const child = await launchRun(scope.profile, { app, ownSandbox: scope.own, runId, source: "executor", context: ctx, signal }, (account, own) => {
         signal.throwIfAborted();
         const network = own?.network ?? account?.network;

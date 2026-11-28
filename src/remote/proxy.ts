@@ -48,7 +48,7 @@ function operatingViewer(primary: Assist, grant: string) {
   }
   let entry = group.get(grant);
   if (!entry) {
-    const ready = startAssist(primary.args);
+    const ready = startAssist(primary.args, primary.viewer);
     const created: Operator = { ready, sockets: 0 };
     group.set(grant, created);
     entry = created;
@@ -96,6 +96,7 @@ function route(app: App, req: IncomingMessage) {
   const session = getSession(id);
   let upstreamPath = path;
   let assist = session.assist;
+  if (assist.viewer?.signal.aborted) return 404 as const;
   if (access.grantId) {
     // The assist secret stays on loopback. Construct the upstream URL from known fields only.
     const url = new URL("http://local/" + path.replace(/^\//, ""));
@@ -142,7 +143,7 @@ export function proxyHttp(app: App, req: IncomingMessage, res: ServerResponse) {
     return;
   }
   const port = r.assist.port;
-  const up = request({ hostname: "127.0.0.1", port, path: r.upstreamPath, method: req.method,
+  const up = request({ hostname: "127.0.0.1", port, socketPath: r.assist.socketPath, path: r.upstreamPath, method: req.method,
     headers: { accept: req.headers.accept ?? "*/*" } }, response => {
     if (!r.current()) { response.destroy(); res.destroy(); return; }
     res.writeHead(response.statusCode ?? 502, { ...response.headers, "cache-control": "no-store", "referrer-policy": "no-referrer" });
@@ -206,7 +207,7 @@ export function attachRemoteUpgrade(app: App, server: Server) {
         if (client.readyState !== WebSocket.OPEN || !r.current()) return close();
       }
       const path = operator ? `/ws?token=${encodeURIComponent(endpoint.token)}` : r.upstreamPath;
-      const upstream = new WebSocket(`ws://127.0.0.1:${endpoint.port}${path}`, { perMessageDeflate: false });
+      const upstream = new WebSocket(endpoint.socketPath ? `ws+unix://${endpoint.socketPath}:${path}` : `ws://127.0.0.1:${endpoint.port}${path}`, { perMessageDeflate: false });
       up = upstream;
       upstream.on("error", close).once("close", close);
       upstream.once("open", () => {
