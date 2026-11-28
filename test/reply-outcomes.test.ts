@@ -11,7 +11,7 @@ import { createUser } from "../src/core/users.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { addMessage, createThread } from "../src/agents/threads.ts";
 import { recordLarkSent } from "../src/channels/lark-feedback.ts";
-import { backfillReplies, labelReplies, noteReply, replyLine, replyOutcome, replyOutcomeText, reviseReply } from "../src/agents/reply-outcomes.ts";
+import { askerOf, backfillReplies, labelReplies, noteReply, replyLine, replyOutcome, replyOutcomeText, reviseReply } from "../src/agents/reply-outcomes.ts";
 import { signalOf } from "../src/agents/replay.ts";
 import { clearInsightsCache, insights } from "../src/insights/insights.ts";
 
@@ -149,6 +149,21 @@ describe("回复发出后有没有用", () => {
     expect(replyOutcome(app, runId)!.evidence).toEqual([expect.objectContaining({ who: "小王", text: "换成日均的 UV" })]);
     expect(asked[0]).toContain("小王：换成日均的 UV");
     expect(asked[0]).not.toContain("本人：");
+  });
+
+  it("提问的人：本人、成员（邮箱认得出的飞书用户也算）、没登记的同事、别的机器人、关注里没人认得的署名算系统消息", () => {
+    const app = setup();
+    createUser(app, { id: "xiaowang", name: "小王", email: "wang@example.com" });
+    run(app.db, "insert into lark_people(email, name, bot_open_id, updated_at) values('wang@example.com', '小王', 'ou_wang', ?), ('li@example.com', '小李', 'ou_li', ?), (null, '小赵', 'ou_zhao', ?)", ago(1), ago(1), ago(1));
+    expect(askerOf(app, "user:owner")).toMatchObject({ kind: "owner" });
+    expect(askerOf(app, "user:xiaowang")).toMatchObject({ name: "小王", kind: "member" });
+    expect(askerOf(app, "lark:ou_wang")).toMatchObject({ key: "user:xiaowang", kind: "member" });
+    expect(askerOf(app, "lark:ou_li")).toMatchObject({ key: "email:li@example.com", name: "小李", kind: "colleague" });
+    expect(askerOf(app, "lark:ou_zhao")).toMatchObject({ key: "lark:ou_zhao", name: "小赵", kind: "colleague" });
+    expect(askerOf(app, "name:小李")).toMatchObject({ key: "email:li@example.com", kind: "colleague" });
+    expect(askerOf(app, "name:持续跟进")).toMatchObject({ name: "持续跟进", kind: "system" });
+    expect(askerOf(app, "name:小王")).toMatchObject({ kind: "member" });
+    expect(askerOf(app, "bot:ou_bot1234")).toMatchObject({ name: "机器人 …1234", kind: "bot" });
   });
 
   it("没配决策模型：有后续的先等着，过一周记成没判", async () => {
