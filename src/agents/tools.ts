@@ -1681,7 +1681,7 @@ def({
     if (a.file) {
       return readSkillFile(ctx.app, a.name, a.file);
     }
-    return `# ${sk.name}${sk.status === "draft" ? "（草稿）" : ""}\n${sk.description}\n\n${sk.body}${sk.files.length ? `\n\n附带文件：${sk.files.join(", ")}` : ""}`;
+    return `# ${sk.name}${sk.status === "draft" ? "（草稿）" : ""}\n${sk.description}\n\n${sk.body}${sk.files.length ? `\n\n附带文件：${sk.files.join(", ")}（在 ${sk.dir} 下；要看内容用 read_skill 的 file 参数）` : ""}`;
   },
 });
 

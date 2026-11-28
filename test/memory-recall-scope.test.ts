@@ -103,7 +103,7 @@ describe("memory recall scope", () => {
     }
   });
 
-  it("selects 12 own experiences by task, caps shared lessons at 8 and rejects unvetted ones", async () => {
+  it("tells a task the own and shared lessons close to it, at most 12 and 8, and rejects unvetted ones", async () => {
     const app = setup();
     const own = Array.from({ length: 20 }, (_, i) => {
       const m = memory(app, i === 0 ? "项目 A 周二发布前跑回归测试" : `生日祝福与蛋糕鲜花 ${i}`, { agent: "investigator", folder: "发布" });
@@ -113,16 +113,27 @@ describe("memory recall scope", () => {
     const bad = memory(app, "项目 A 周二发布前跑回归测试，尚未复核", { agent: "investigator", createdBy: "agent" });
     const badShared = memory(app, "项目 A 周二发布前跑回归测试，共享未复核", { createdBy: "agent" });
     await vectors(app);
+    const far = memory(app, "生日祝福与蛋糕鲜花，共享");
+    await embedPendingMemories(app);
     const ids = await lessonIdsForTask(app, task());
     const text = await lessonsForTask(app, task());
-    expect(ids.filter((id) => own.some((m) => m.id === id))).toHaveLength(12);
-    expect(ids).toContain(own[0].id);
-    expect(own.slice(12).some((m) => !ids.includes(m.id))).toBe(true);
+    // Of the profile's own experience only what is close to the task: the birthday ones stay in their folder.
+    expect(ids.filter((id) => own.some((m) => m.id === id))).toEqual([own[0].id]);
     expect(ids.filter((id) => shared.some((m) => m.id === id))).toHaveLength(8);
+    expect(ids).not.toContain(far.id);
     expect(ids).not.toContain(bad.id); expect(ids).not.toContain(badShared.id);
-    expect(text).toContain("还有 8 条"); expect(text).toContain('recall(folder="目录", query="关键词")');
+    expect(text).toContain("还有 19 条"); expect(text).toContain('recall(folder="目录", query="关键词")');
+    // An experience is told with its id, to cite or correct.
+    expect(text).toContain(`- 经验 mem:${own[0].id}（本档案）：项目 A 周二发布前跑回归测试`);
+    expect(text).toContain("照常写它的 mem:<id>");
+    // Without a floor the closest fill the places, however far.
+    app.config.memory.lessonFloor = 0;
+    const loose = await lessonIdsForTask(app, task());
+    expect(loose.filter((id) => own.some((m) => m.id === id))).toHaveLength(12);
+    expect(loose).toContain(own[0].id);
+    app.config.memory.lessonFloor = 0.55;
     expect(await lessonsForTask(app, task(["search"]))).not.toContain("按目录放着");
-    for (const m of [...own, ...shared, bad, badShared]) expect(text.includes(m.content)).toBe(ids.includes(m.id));
+    for (const m of [...own, ...shared, far, bad, badShared]) expect(text.includes(m.content)).toBe(ids.includes(m.id));
     app.config.embeddings.provider = "none";
     expect((await lessonIdsForTask(app, task())).filter((id) => own.some((m) => m.id === id))).toEqual(own.slice(8).reverse().map((m) => m.id));
   });
@@ -173,7 +184,9 @@ describe("recall scope over ACP", () => {
       const result = await runRole(app, { role: "assistant", spaceId: "personal", task: "项目 A 周二发布前跑回归测试", runId: answerRun.id, profileId: "fake" });
       const echo = JSON.parse(result.text);
       expect(echo.prompt).toContain("按这次任务自动找到的"); expect(echo.prompt).toContain(`mem:${fact.id}`);
-      expect(echo.prompt).not.toContain(`mem:${lesson.id}`);
+      // The lesson is in the instructions, with its id to cite; the found memories do not repeat it.
+      expect(echo.prompt.split("## 可能相关的记忆")[1]).not.toContain(`mem:${lesson.id}`);
+      expect(echo.prompt.split("## 可能相关的记忆")[0]).toContain(`经验 mem:${lesson.id}（本档案）`);
       expect(JSON.stringify(echo)).toContain(lesson.content);
       expect(all(app.db, "select memory_id, via, purpose from memory_recalls where run_id = ? order by via", answerRun.id)).toEqual([{ memory_id: lesson.id, via: "lesson", purpose: "answer" }, { memory_id: fact.id, via: "passive", purpose: "answer" }]);
       const upkeep = await runRole(app, { role: "ingest", spaceId: "personal", task: "项目 A 周二发布前跑回归测试", runId: upkeepRun.id, profileId: "fake" });

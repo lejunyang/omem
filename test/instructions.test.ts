@@ -150,9 +150,13 @@ describe("what the instructions carry", () => {
       remember(app, { spaceId: "personal", kind: "preference", content: "实现退款按钮时先弹窗确认退款金额。", createdBy: "user", userId: "owner" });
       await embedPending(app);
       while (await embedPendingMemories(app)) {}
+      // The stand-in vectors count characters, so the floor is set where the related one clears it.
+      app.config.memory.lessonFloor = 0.3;
       const first = await turn("实现退款按钮");
       expect(first.prompt).toContain("实现退款按钮时先弹窗确认退款金额。");
-      expect(first.prompt.match(/^- 偏好/gm)).toHaveLength(8);
+      // Only what is close to the task: the places are not filled with whatever is least far.
+      expect(first.prompt).not.toContain("周末喜欢爬山看日出");
+      expect(first.prompt.match(/^- 偏好/gm)!.length).toBeLessThan(8);
     } finally {
       setEmbedderForTests(null);
     }

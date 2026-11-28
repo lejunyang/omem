@@ -24,7 +24,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   // 情境 became 持续跟进的规则: the assistant's note on save_situation says what to call it with the owner.
   // 实测 2026-11-25：中途交付和编码补充的说明已计入。
   // main 的预算已计入长期 AI 规则和查数结果的存放约定。MCP 对话另含长任务跟进工具说明。
-  "assistant": ["agent", 21526, 20653, 1679, 1581],
+  // 实测 2026-11-29：技能目录每行不再带文件路径之后（11 个内置技能，少约 1,800 字）。
+  "assistant": ["agent", 19735, 18854, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
   // 实测 2026-11-28：加了“优先是倾向、只用别用才写规则”之后。

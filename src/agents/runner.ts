@@ -43,6 +43,7 @@ import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { pluginSourceSpaces } from "../plugins/registry.ts";
 import { trimTools } from "../auth/tools.ts";
 import { agentIndex, listAgentSpecs, DEFAULT_SPEC_TOOLS, skillIndex, skillsOutsideScope, spaceSkillsText, type AgentSpec, type McpServerSpec } from "./specs.ts";
+import { skillBlock, skillSuggestReady, suggestSkills } from "./skill-suggest.ts";
 import { expandTools, ROLE_TOOLS } from "./tool-help.ts";
 import { applyOverlay, GUEST_ROLES, isBuiltinRole, overlayEmpty, roleOverlay, roleOverrideText, rolesDir, type RoleOverlay } from "./builtin-roles.ts";
 import { agentToolEnv } from "./tool-cli.ts";
@@ -205,7 +206,16 @@ function lessonRows(app: App, spaceId: string, userId: string, spec: string | nu
   ).map((r) => ({ ...r, content: asOfContent(view, r.content) }));
 }
 
-const lessonLines = (rows: Lesson[]) => rows.map((r) => `- ${r.kind === "preference" ? "偏好" : "经验"}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`).join("\n");
+/**
+ * An experience carries its id: the run cites the ones its conclusion rests on (which is how the
+ * recall accounting learns they were used) and can correct one that turns out wrong. Preferences
+ * are how to work, not something to cite.
+ */
+const lessonLines = (rows: Lesson[]) => {
+  const lines = rows.map((r) => `- ${r.kind === "preference" ? "偏好" : `经验 mem:${r.id}`}${r.agent ? "（本档案）" : ""}${r.subject ? `（${r.subject}）` : ""}：${r.content}`);
+  if (rows.some((r) => r.kind === "experience")) lines.push("结论用到了哪条经验，照常写它的 mem:<id>；发现哪条不对，用这个编号更正。");
+  return lines.join("\n");
+};
 
 /** The preferences and experience a run is told, and which memories those are (passive recall and the recall accounting leave them out or count them). */
 export type LessonSet = { text: string; ids: string[]; recallNote?: string };
@@ -220,7 +230,11 @@ const STANDING_PREFS = 60;
 const OWN_WHOLE = 12;
 const OWN_RECENT = 6;
 const OWN_PREFS = 16;
-/** Shared preferences and experience a task run is told: the closest to the task, at most this many. */
+/**
+ * Shared preferences and experience a task run is told: the closest to the task, at most this many,
+ * and only those at or above `memory.lessonFloor` (a summary of a chat is not told how the owner
+ * wants refunds calculated because that happened to be the least distant of what there is).
+ */
 const TASK_LESSONS = 8;
 /** A task can be a whole diff; what it is about is at its start. */
 const ABOUT_CHARS = 2000;
@@ -255,22 +269,25 @@ async function taskLessons(app: App, spaceId: string, userId: string, own: strin
   const mine = rows.filter((r) => r.agent);
   const exp = mine.filter((r) => r.kind === "experience");
   const shared = rows.filter((r) => !r.agent);
-  const q = shared.length > TASK_LESSONS || exp.length > OWN_WHOLE ? await embedQuery(app, about.slice(0, ABOUT_CHARS), "query", [spaceId]).catch(() => null) : null;
-  const closest = (list: Lesson[], n: number) => {
-    if (list.length <= n || !q) return list.slice(0, n);
+  const q = shared.length || exp.length > OWN_WHOLE ? await embedQuery(app, about.slice(0, ABOUT_CHARS), "query", [spaceId]).catch(() => null) : null;
+  const floor = app.config.memory.lessonFloor;
+  /** `whole`: a list this short is told whole (a profile's own experience while it is small). */
+  const closest = (list: Lesson[], n: number, whole: number) => {
+    if (list.length <= whole || !q) return list.slice(0, n);
     const scored = list.flatMap((r) => {
       if (!r.embedding) return [];
       const v = new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4);
       if (v.length !== q.length) return [];
       let s = 0;
       for (let i = 0; i < v.length; i++) s += v[i] * q[i];
-      return s > 0 ? [{ r, s }] : [];
+      return [{ r, s }];
     });
     // No vectors yet (just written, or the model changed): the newest, as without a model.
-    return scored.length ? scored.sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.r) : list.slice(0, n);
+    if (!scored.length) return list.slice(0, n);
+    return scored.filter((x) => x.s >= floor).sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.r);
   };
-  const told = closest(exp, OWN_WHOLE);
-  return lessonSet(app, [...mine.filter((r) => r.kind === "preference").slice(0, OWN_PREFS), ...told, ...closest(shared, TASK_LESSONS)], own, exp.length - told.length, canRecall, userId);
+  const told = closest(exp, OWN_WHOLE, OWN_WHOLE);
+  return lessonSet(app, [...mine.filter((r) => r.kind === "preference").slice(0, OWN_PREFS), ...told, ...closest(shared, TASK_LESSONS, 0)], own, exp.length - told.length, canRecall, userId);
 }
 
 type LessonInput = { role: RoleName; spec?: AgentSpec; spaceId: string; userId?: string; task: string; replay?: ReplayArm };
@@ -418,6 +435,11 @@ export type PreparedRun = {
   lessonIds: string[];
   /** What passive recall may draw on: readable spaces (null = all) and whose own memories count. */
   recall: { sourceSpace: string; spaces: string[] | null; agent: string | null; own: string; userId: string } | null;
+  /**
+   * Set when the instructions list skills by name only: each message or task then carries the
+   * descriptions of the skills close to it (skill-suggest.ts). `told`: the ones already described.
+   */
+  skillSuggest: { sourceSpace: string; told: string[]; outside?: ReadonlySet<string> } | null;
 };
 
 /** Resolve defaults and one-run overrides without creating a tool token or session. */
@@ -657,8 +679,12 @@ export function prepareRun(
   const told: LessonSet = guest ? { text: "", ids: [] } : input.lessons !== undefined ? { text: input.lessons, recallNote: input.recallNote, ids: input.lessonIds ?? [] } : standingLessons(app, space.id, userId, spec?.name ?? roleName, tools.has("recall"));
   const lessons = [told.text, tools.has("recall") && told.recallNote].filter(Boolean).join("\n\n");
   const profileSkills = input.boardAccess ? spec?.skills ?? role!.skills : undefined;
-  const namedSkills = spec ? spec.skills : roleName === "assistant" ? undefined : role!.skills;
-  const skills = !tools.has("read_skill") ? "" : skillIndex(app, namedSkills, mounted.names, profileSkills && skillsOutsideScope(app, profileSkills, readable));
+  // With vectors for every skill, the directory is names only and each message or task brings the
+  // descriptions of the skills close to it; a replay arm keeps the directory it is compared on.
+  const suggest = tools.has("read_skill") && !input.replay && skillSuggestReady(app);
+  const namedSkills = spec ? spec.skills : roleName === "assistant" && !suggest ? undefined : role!.skills;
+  const skillsOutside = profileSkills && skillsOutsideScope(app, profileSkills, readable);
+  const skills = !tools.has("read_skill") ? "" : skillIndex(app, namedSkills, mounted.names, skillsOutside, suggest);
   // Only what this run can do with them: an assistant run by a rule may consult but not hand work over.
   const agentUse = tools.has("run_agent") ? "可用 run_agent 交给它们" : tools.has("ask_agent") ? "这次运行不能交办，需要它们的专长时用 ask_agent 请教" : "";
   const agents = roleName === "assistant" && !spec && agentUse ? agentIndex(app) : "";
@@ -680,7 +706,7 @@ export function prepareRun(
   // A key's model that reads text only (its listing says so): the agent says it cannot see an image instead of sending one.
   const inputs = profile.keyModels ? keyedModelInfo(profile)?.inputs : undefined;
   const textOnly = !!inputs && !inputs.includes("image") ? "\n- 这次用的模型只读文字、看不了图片：遇到图片（飞书消息里的、附件里的）不要用图片工具打开，直接说明这个模型看不了图，需要的话请对方用文字描述，或换一个能看图的模型再问" : "";
-  const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}${capabilities.localTools ? commandLoginNote(app, userId) : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${textOnly}${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, searchTools)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
+  const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}${capabilities.localTools ? commandLoginNote(app, userId) : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${textOnly}${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, searchTools)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先用 read_skill 读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
   const commandWork = (): WorkspaceMounts => {
     if (isolation.box) return isolation.box.plan.work;
@@ -717,7 +743,7 @@ export function prepareRun(
     system, scene, awareness, sceneGuide: matched.join("\n\n"),
     // A replay arm answers as of the question's time.
     now: `现在：${localTime(app, input.replay?.view.asOf)}`,
-    parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
+    parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").filter((l) => l.startsWith("- 偏好") || l.startsWith("- 经验")).length : 0, skills: skills.length + mounted.text.length },
     token,
     mcp: { url: `${toolBase}/mcp`, baseUrl: toolBase, token, stdio: mcpBridge(), env: {
       ...agentToolEnv(app.home, toolBase, token, commandGateDir(app, !!commandSandbox)),
@@ -739,6 +765,7 @@ export function prepareRun(
     // Guests never see the owner's memories unasked. `agent` names the run in the recall accounting
     // (none for the main assistant); `own` is whose memories it sees besides the shared ones.
     recall: guest ? null : { sourceSpace: input.spaceId, spaces: memorySpaces?.filter(id => !readable || readable.includes(id)) ?? readable, agent: spec?.name ?? (roleName === "assistant" ? null : roleName), own: spec?.name ?? roleName, userId },
+    skillSuggest: suggest ? { sourceSpace: input.spaceId, told: [...(namedSkills ?? []), ...mounted.names], outside: skillsOutside } : null,
   };
 }
 
@@ -1158,6 +1185,13 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       console.warn("[omem] 给任务带上相关记忆失败：", (e as Error).message);
     }
   }
+  // …and the skills close to it, whose descriptions its instructions left out (skill-suggest.ts).
+  const skillHits = base.skillSuggest
+    ? await suggestSkills(app, { text: input.task.slice(0, ABOUT_CHARS), sourceSpace: base.skillSuggest.sourceSpace, exclude: new Set(base.skillSuggest.told), outside: base.skillSuggest.outside }).catch((e) => {
+        console.warn("[omem] 给任务带上相近的技能失败：", (e as Error).message);
+        return [];
+      })
+    : [];
   // A restart cut this run off (runs.ts markRestarted): the first agent turn it starts again
   // continues in the session it was in, when that is the same AI and folder, told what happened.
   const restarted = input.runId && !input.shadow && !input.replay ? takeRestart(app, input.runId) : null;
@@ -1208,7 +1242,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
       try {
         recordIsolation(app, input.runId, input.userId!, prep.profile);
         if (prep.isolation.note) emit({ type: "status", text: prep.isolation.note });
-        const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall"))].filter(Boolean).join("\n\n");
+        const task = [input.task, passiveBlock(hits, "这次任务", prep.tools.has("recall")), prep.tools.has("read_skill") ? skillBlock(skillHits, "这次任务") : ""].filter(Boolean).join("\n\n");
         const workspace = prep.workspace;
         let resumeSessionId = retry ? retry.sessionId : primaryKept && i === 0 ? input.resumeSessionId ?? (!coding && restarted?.sessionId && restarted.profileId === prep.profile.id && restarted.cwd === prep.cwd ? restarted.sessionId : undefined) : undefined;
         if (member && resumeSessionId && prep.profile.transport === "acp") {

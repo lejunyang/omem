@@ -413,15 +413,18 @@ export function skillsOutsideScope(app: App, profileSkills: string[] | undefined
   return outside;
 }
 
-const skillLine = (s: Skill) => `- ${s.name}：${s.description}（全文：read_skill，或读取 ${join(s.dir, "SKILL.md")}）`;
+/** A name and what it is for. Where its files are is said by read_skill, when it has any to run. */
+const skillLine = (s: Skill) => `- ${s.name}：${s.description}`;
 
 /**
  * The skills a run is told about. `names`: its own (a profile's or a role's regular skills), each
  * with its description; the rest only by name, so a specialist does not carry every runbook's
  * summary. Without `names` (the main assistant, which hands work out) every skill is described. `mounted`: the skills of the run's spaces, which go in their own
  * section (spaceSkillsText) and so are left out here; skills mounted on other spaces are left out too.
+ * `compact`: the run is handed the descriptions of the skills close to each message or task
+ * (skill-suggest.ts), so the groups are named in one line instead of described one by one.
  */
-export function skillIndex(app: App, names?: string[], mounted: string[] = [], outside = skillsOutsideScope(app, names, [])) {
+export function skillIndex(app: App, names?: string[], mounted: string[] = [], outside = skillsOutsideScope(app, names, []), compact = false) {
   const groups = loadSkillGroups(app, outside);
   const list = listSkills(app, { exclude: outside }).filter((s) => skillUsable(app, s) && skillEnabled(groups, s.name) && !mounted.includes(s.name));
   // A skill in a group is offered through the group (agent-skills.ts), one line for all of them,
@@ -437,7 +440,14 @@ export function skillIndex(app: App, names?: string[], mounted: string[] = [], o
   if (!names) return [...loose.map(skillLine), ...groupLines].join("\n");
   const own = loose.filter((s) => names.includes(s.name));
   const rest = loose.filter((s) => !names.includes(s.name));
-  return [...own.map(skillLine), ...(rest.length ? [`- 其他技能（用到时 read_skill 读全文）：${rest.map((s) => s.name).join("、")}`] : []), ...groupLines].join("\n");
+  if (!compact) return [...own.map(skillLine), ...(rest.length ? [`- 其他技能（用到时 read_skill 读全文）：${rest.map((s) => s.name).join("、")}`] : []), ...groupLines].join("\n");
+  const groupNames = [...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([g, ms]) => `${g}「${groupTitle(groups, g)}」${ms.length} 个`);
+  return [
+    ...own.map(skillLine),
+    ...(rest.length ? [`- 其他技能：${rest.map((s) => s.name).join("、")}`] : []),
+    ...(groupNames.length ? [`- 技能分组（read_skill name=<组名> 按用途列出组里的技能）：${groupNames.join("、")}`] : []),
+    ...(rest.length || groupNames.length ? ["- 和每条消息或任务相近的技能，说明会自动附在那条消息后面；要看全部说明用 list_skills"] : []),
+  ].join("\n");
 }
 
 /** The skills mounted on these spaces, each with the spaces it is for. */

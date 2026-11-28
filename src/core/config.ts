@@ -646,6 +646,13 @@ export const configSchema = z.object({
        */
       promptLog: z.object({ enabled: z.boolean().default(true), days: z.number().int().min(1).max(365).default(14) }).default({ enabled: true, days: 14 }),
       /**
+       * Skills close to a turn or a task are put in front of the agent with their descriptions, and the
+       * standing instructions list the others by name only (agents/skill-suggest.ts). Needs a vector
+       * model; without one, or while off, every run gets the whole directory. `threshold`: the cosine a
+       * skill's description must reach (0.55 on bge-small-zh keeps about nine in ten related ones).
+       */
+      skillSuggest: z.object({ enabled: z.boolean().default(true), limit: z.number().int().min(1).max(10).default(4), threshold: z.number().min(0).max(1).default(0.55) }).default({ enabled: true, limit: 4, threshold: 0.55 }),
+      /**
        * Members' runs on a backend that can use their own account (docs/v2/agent-accounts.md), when
        * they have not logged in to it: `owner` borrows the owner's login (as before), `own` fails the
        * run and tells them to log in, `own-or-other` moves the run to another backend they are logged
@@ -655,7 +662,7 @@ export const configSchema = z.object({
       accountsDefault: z.enum(["owner", "own", "own-or-other"]).default("owner"),
       accounts: z.record(z.string(), z.enum(["owner", "own", "own-or-other"])).default({}),
     })
-    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, restartHold: { enabled: true, minutes: 5 }, promptLog: { enabled: true, days: 14 }, accountsDefault: "owner" as const, accounts: {}, groups: emptyGroups(), policy: policySchema.parse({}), tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
+    .default(() => ({ cloudTools: cloudToolsSchema.parse({}), ownSandbox: { mode: "off" as const, writable: [], hidden: [] }, fullAccess: "per-role" as const, accountIsolation: "prefer" as const, restartHold: { enabled: true, minutes: 5 }, promptLog: { enabled: true, days: 14 }, skillSuggest: { enabled: true, limit: 4, threshold: 0.55 }, accountsDefault: "owner" as const, accounts: {}, groups: emptyGroups(), policy: policySchema.parse({}), tiers: {}, roles: {}, roleModels: {}, fallback: [], networkPolicies: [], queueTimeoutMinutes: 30, workBoard: { concurrency: 3, deadlineMinutes: 30 }, autoAdvance: { turns: 6, codeRounds: 3, codeRoundsMax: 12, taskLoop: true, parallelCoders: 3, preCheck: true }, design: { mode: "auto" as const, confirm: "owner" as const }, progress: { messages: "milestones" as const, thinking: "own" as const }, capacity: { perModel: 3, limits: [], quotaAvoidAbove: 90, quotaPerDayBelow: 0, quotaBySource: {} }, routing: { automatic: true, guidance: "", candidates: [], choose: { conversation: "decision" as const, rules: "decision" as const, tasks: "off" as const }, pinnedFallback: "unavailable" as const }, profiles: [] })),
   /**
    * omem tools an agent may only use with the owner's OK (e.g. lark_send, apply_code_run, forget):
    * the call waits for approval on a card or in the web, a refusal's reason goes back to the agent.
@@ -806,6 +813,12 @@ export const configSchema = z.object({
        */
       maxChars: z.number().int().min(100).default(400),
       longChars: z.number().int().min(60).default(180),
+      /**
+       * The cosine a preference or an experience must reach against a task to be told to its run
+       * (runner.ts taskLessons); below it none are told, however few that leaves. Lower than passive
+       * recall's gate: these are how the owner wants things done.
+       */
+      lessonFloor: z.number().min(0).max(1).default(0.55),
       /** Bigram overlap above which a new memory counts as a duplicate of an existing one. */
       duplicateThreshold: z.number().min(0.3).max(1).default(0.72),
       review: z
@@ -837,7 +850,7 @@ export const configSchema = z.object({
         })
         .default({ enabled: true, threshold: 0.6, limit: 5 }),
     })
-    .default({ maxChars: 400, longChars: 180, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [], passive: { enabled: true, threshold: 0.6, limit: 5 } }),
+    .default({ maxChars: 400, longChars: 180, lessonFloor: 0.55, duplicateThreshold: 0.72, review: { enabled: true, batch: 30 }, compare: [], passive: { enabled: true, threshold: 0.6, limit: 5 } }),
   embeddings: z
     .object({
       provider: z.string().regex(/^(none|local|openai|api|plugin:[a-z0-9-]+:[a-z0-9-]+)$/).transform(p => p === "openai" ? "api" : p).default("none"),

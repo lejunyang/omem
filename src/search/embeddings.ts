@@ -303,6 +303,26 @@ export async function embedQuery(app: App, text: string, kind: Kind = "query", s
   return (await encode(app, e, [text.slice(0, 2000)], kind))?.[0] ?? null;
 }
 
+/**
+ * Several vectors at once (skill descriptions); null when the provider is unavailable, or is a plugin
+ * that may not see material from `sourceSpaces`.
+ */
+export async function embedTexts(app: App, texts: string[], kind: Kind, sourceSpaces?: readonly string[] | null): Promise<Float32Array[] | null> {
+  if (!texts.length) return [];
+  if (app.config.embeddings.provider === "none") return null;
+  const e = await getEmbedder(app);
+  if (!e || !stillSelected(app, e)) return null;
+  if (e.spaces && (sourceSpaces === null || sourceSpaces?.some(id => !e.spaces!.includes(id)))) return null;
+  const size = Math.max(1, Math.min(e.maxBatch ?? app.config.embeddings.batch, app.config.embeddings.batch));
+  const out: Float32Array[] = [];
+  for (let i = 0; i < texts.length; i += size) {
+    const rows = await encode(app, e, texts.slice(i, i + size).map(t => t.slice(0, 2000)), kind);
+    if (!rows) return null;
+    out.push(...rows);
+  }
+  return out;
+}
+
 /** Only the isolated process loads the local runtime. The parent keeps batching and writes. */
 export async function embedLocally(app: App, texts: string[], kind: "query" | "passage") {
   const e = await getEmbedder(app, true);
