@@ -11,8 +11,9 @@
  * fictional. CHROMIUM=path picks the browser, SCHEME=dark the dark theme.
  *
  * Where it differs from the Feishu client (checked 2026-11-27 against the card builder): an icon on a
- * Markdown element is not drawn; images show only as placeholders (no img_key lookup); folds, forms and
- * buttons are drawn but do nothing. HTML entities in Markdown (omem writes `:` as `&#58;`) are decoded
+ * Markdown element is not drawn; a Markdown table shows as raw `|` text (the client draws it); a column
+ * set's grey background is left out; dropdowns are empty boxes; images show only as placeholders (no
+ * img_key lookup); folds, forms and buttons are drawn but do nothing. HTML entities in Markdown (omem writes `:` as `&#58;`) are decoded
  * here, as the client does. The card builder (open.larkoffice.com/cardkit, “导入卡片”) is the closer
  * check when someone is signed in.
  */
