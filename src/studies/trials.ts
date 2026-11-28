@@ -1,13 +1,17 @@
+import { autoFollowFor } from "../agents/auto-follow.ts";
+import { registerAskHandler } from "../agents/asks.ts";
+import { studyOperation } from "../flows/engine.ts";
+import { checkStudyGate, studyGate } from "./auto-follow.ts";
 import { finishStage } from "../flows/plugin-gates.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
-import { now } from "../core/util.ts";
+import { HttpError, now } from "../core/util.ts";
 import { userBy } from "../core/run-trigger.ts";
 import { cancelRun, createRun, getRun } from "../agents/runs.ts";
 import type { Execution } from "../agents/execution.ts";
 import type { Item } from "../items/store.ts";
 import type { FlowStage } from "../flows/definitions.ts";
-import { changeStage, type ItemFlow, type StageControl, type StageRow } from "../flows/store.ts";
+import { changeStage, getStage, type ItemFlow, type StageControl, type StageRow } from "../flows/store.ts";
 import { stageTiming } from "../flows/timing.ts";
 import { continuing, direction, trial, trials, type Trial } from "./store.ts";
 import { checkDirectionChoice, resolveEnv, trialStage } from "./envs.ts";
@@ -24,8 +28,32 @@ export function trialMinutes(app: App, s: StageRow, at: Date) {
 }
 export type TrialAI = (app: App, f: ItemFlow, d: FlowStage, s: StageRow, at: Date) => Promise<{ s: StageRow; execution: Execution | undefined; waitUntil: string | null }>;
 
+function queueEscalation(app: App, t: Trial, c: StageControl, summary: string) {
+  run(app.db, "update study_trials set state='queued',escalated=1,summary=?,updated_at=? where id=?", summary, now(), t.id);
+  c.trialEscalated = true; c.escalated = true; c.escalations = (c.escalations ?? 0) + 1;
+}
+
+registerAskHandler("study-escalate", async (app, ask, ctx) => {
+  const t = trial(app, String(ctx.trialId)), s = getStage(app, t.item_id, String(ctx.stageId));
+  const c = { ...s.control, trialId: undefined, trialFailures: 0, escalated: false, trialEscalated: false };
+  if (ask.choice === 0) queueEscalation(app, t, c, t.summary);
+  else c.completedTrials = (c.completedTrials ?? 0) + 1;
+  changeStage(app, t.item_id, s.id, "doing", { askId: null, waitingOn: null, control: c },
+    { actor: ask.answeredBy === "supervisor" ? "supervisor" : "owner" }, `试验 ${t.seq}：${ask.answer}`);
+}, (app, ask, ctx, by, answer) => {
+  const f = checkStudyGate(app, ask, ctx, by, answer.choice, answer.choice === 0);
+  const s = getStage(app, f.itemId, String(ctx.stageId)), d = f.definition.stages.find(d => d.id === s.id)!;
+  const t = trial(app, String(ctx.trialId));
+  if (answer.choice === null || s.state !== "doing" || s.control.trialId !== t.id || t.state !== "reported")
+    throw new HttpError(409, "试验已变化，请重新核对");
+  if (answer.choice === 0 && (!d.escalate || (s.control.escalations ?? 0) >= d.escalate.max ||
+      (s.control.usedMinutes ?? 0) >= (d.budget?.minutes ?? Infinity) || (s.control.completedTrials ?? 0) >= (d.budget?.trials ?? Infinity)))
+    throw new HttpError(409, "本轮预算已用完，无法升档");
+}, (app, ctx, answer) => studyOperation(app, String(ctx.itemId), answer));
+
 /** Called only inside the engine's per-item serial queue, also by its existing patrol. */
 export async function tickTrials(app: App, item: Item, f: ItemFlow, d: FlowStage, s: StageRow, at: Date, chooseAI: TrialAI) {
+  if (s.askId) return false;
   let c: StageControl = { ...s.control };
   const save = (note: string, waitingOn: string | null = null) => {
     s = changeStage(app, item.id, d.id, "doing", { control: c, by: c.runId ?? null, waitingOn }, host, note);
@@ -88,8 +116,18 @@ export async function tickTrials(app: App, item: Item, f: ItemFlow, d: FlowStage
       c.trialFailures = (c.trialFailures ?? 0) + 1; retry = t.id;
       run(app.db, "update study_trials set state='queued',failures=failures+1,summary=?,updated_at=? where id=?", r.error ?? "后端错误", now(), t.id);
     } else if ((t.state !== "reported" && t.state !== "skipped" && r.status !== "failed" || t.result === "unclear" && t.unsure) && !live && !t.escalated && d.escalate && (c.escalations ?? 0) < d.escalate.max && !minutesExhausted) {
-      c.trialEscalated = true; c.escalated = true; c.escalations = (c.escalations ?? 0) + 1; retry = t.id;
-      run(app.db, "update study_trials set state='queued',escalated=1,summary=?,updated_at=? where id=?", t.summary || r.error || "运行结束了，没有交结果", now(), t.id);
+      const follow = autoFollowFor(app, "study", item.id), summary = t.summary || r.error || "运行结束了，没有交结果";
+      if (follow) {
+        const ask = studyGate(app, follow, { runId: null, userId: item.userId,
+          question: `试验 ${t.seq}（${t.object} × ${t.check}）是否升档重跑？\n${summary}\n本轮已升档 ${c.escalations ?? 0} 次，最多 ${d.escalate.max} 次。`,
+          options: [{ label: "升档重跑" }, { label: "保留当前结果" }], allowText: false,
+          context: { handler: "study-escalate", itemId: item.id, stageId: d.id, startedAt: f.startedAt, round: f.round, trialId: t.id } });
+        run(app.db, "update study_trials set state='reported',result='unclear',summary=?,updated_at=? where id=?", summary, now(), t.id);
+        changeStage(app, item.id, d.id, "doing", { askId: ask.id, by: null, waitingOn: "跟进助手", control: c }, host, `试验 ${t.seq} 等待决定是否升档`);
+        return true;
+      }
+      queueEscalation(app, t, c, summary);
+      retry = t.id;
     } else {
       if (t.state !== "skipped") {
         if (t.state !== "reported") run(app.db, "update study_trials set state='reported',result=?,summary=?,updated_at=? where id=?", r.status === "failed" ? "blocked" : "unclear", r.status === "failed" ? r.error ?? "后端错误" : "运行结束了，没有交结果", now(), t.id);

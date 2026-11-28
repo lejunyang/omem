@@ -1,3 +1,5 @@
+import { autoFollowFor } from "../agents/auto-follow.ts";
+import { askStudyNextRound, checkStudyGate, followStudyRound } from "../studies/auto-follow.ts";
 import { groupItems, groupPick, policyScope } from "../agents/ai-policy.ts";
 import { hasHostTools } from "../agents/capabilities.ts";
 import { continuedUpstream, finishStage, overrideStageGate } from "./plugin-gates.ts";
@@ -605,6 +607,7 @@ function closeRound(app: App, f: ItemFlow, at: Date) {
   const ended = at.toISOString();
   const idle = idleRounds(app, f.itemId, true, ended);
   const pause = idle >= app.config.flows.idleRounds && f.definition.repeat?.every !== "manual";
+  const follow = f.definition.repeat && (pause || f.definition.repeat.every === "manual") && isStudy(f) && autoFollowFor(app, "study", f.itemId);
   atomic(app, () => {
     run(app.db, `insert into item_flow_rounds(item_id,started_at,round,ended_at,stages,updated_at) values(?,?,?,?,?,?)
       on conflict(item_id,started_at,round) do update set ended_at=excluded.ended_at,stages=excluded.stages,updated_at=excluded.updated_at`, f.itemId, f.startedAt, f.round, ended, JSON.stringify(itemStages(app, f.itemId)), now());
@@ -614,13 +617,15 @@ function closeRound(app: App, f: ItemFlow, at: Date) {
     changeStage(app, f.itemId, last.id, s.state, {}, host, `第 ${f.round} 轮已完成${f.definition.repeat?.every === "manual" ? "，等本人开始下一轮" : ""}`);
     // The line above is for the history and the item's timeline; the stage keeps its own conclusion.
     run(app.db, "update item_stages set note=? where item_id=? and stage_id=?", s.note, f.itemId, last.id);
+    if (follow) askStudyNextRound(app, f, follow, idle);
   });
-  if (pause && f.definition.repeat) notify(app, { userId: getItem(app, f.itemId).userId, title: `连着 ${idle} 轮没有新发现`, body: `「${getItem(app, f.itemId).title}」连着 ${idle} 轮没有新发现，要换方向、暂停还是结束由你定。`, urgency: "later", link: `#/items/${f.itemId}` });
+  if (!follow && pause && f.definition.repeat) notify(app, { userId: getItem(app, f.itemId).userId, title: `连着 ${idle} 轮没有新发现`, body: `「${getItem(app, f.itemId).title}」连着 ${idle} 轮没有新发现，要换方向、暂停还是结束由你定。`, urgency: "later", link: `#/items/${f.itemId}` });
 }
 function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date, note = "") {
   if (!f.definition.repeat) throw new HttpError(409, "这份流程没有设置轮次");
   if (!roundComplete(app, f)) throw new HttpError(409, "这一轮还没做完，不能开始下一轮");
   closeRound(app, f, at);
+  followStudyRound(app, f, by.runId, note);
   const from = f.definition.stages.findIndex((d) => d.id === f.definition.repeat!.from);
   const noStarts = !itemStages(app, f.itemId).some((s) => f.definition.stages.slice(from).some((d) => d.id === s.id) && s.attempt > 0);
   atomic(app, () => {
@@ -640,6 +645,17 @@ function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date, note = "") {
     }
   });
 }
+registerAskHandler("study-next-round", async (app, ask, ctx) => {
+  const f = running(app, String(ctx.itemId));
+  const by = { actor: ask.answeredBy === "supervisor" ? "supervisor" : "owner", userId: ask.userId };
+  const s = getStage(app, f.itemId, String(ctx.stageId));
+  run(app.db, "update item_stages set ask_id=null where item_id=? and stage_id=?", f.itemId, s.id);
+  if (ask.choice === 0) roundNow(app, f, by, new Date());
+}, (app, ask, ctx, by, answer) => {
+  const f = checkStudyGate(app, ask, ctx, by, answer.choice, answer.choice === 0);
+  if (answer.choice === null || !f.roundClosedAt || !roundComplete(app, f)) throw new HttpError(409, "请在本轮完成后选择是否开始下一轮");
+}, (app, ctx, answer) => studyOperation(app, String(ctx.itemId), answer));
+
 /** `note`: what the owner wants this round to look at; the stages of the round read it as the owner's words. */
 export function startRound(app: App, itemId: string, by: FlowActor, at = new Date(), note = "") {
   return serial(app, itemId, async () => {
@@ -675,6 +691,7 @@ export async function startFlow(app: App, itemId: string, flowId: string | Inlin
     for (const d of f.stages) changeStage(app, itemId, d.id, "pending", {}, by, "加入流程");
     // The matter gets its 「关注」 (only reading) if it has none: its groups, one context, later replies.
     try { (await import("../channels/listen-items.ts")).flowStarted(app, itemId); } catch (e) { console.warn(`[omem] 没能给事项建关注：${(e as Error).message}`); }
+    followStudyRound(app, itemFlow(app, itemId)!, by.runId);
     initFollow(app, itemId, true);
     await advanceNow(app, item.id, "开始流程");
     return flowView(app, itemId);

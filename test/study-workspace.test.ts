@@ -222,6 +222,7 @@ describe("研究的工作区", () => {
   it("环境指定的 AI 用于入队和 worker、额度只等同一模型，升档仍去阶段目标", async () => {
     const f = await setup(1, (a) => {
       a.config.agents.profiles.push(agentProfileSchema.parse({ id: "env-ai", command: "node", transport: "acp", model: "small" }), agentProfileSchema.parse({ id: "stage-ai", command: "node", transport: "acp", model: "large" }));
+      a.config.longTasks.auto.studies = false; // Exercise the original automatic escalation path.
       a.config.agents.tiers.strong = { profile: "stage-ai", model: "large" };
       a.config.studies.envs = [{ id: "registered", name: "登记环境", note: "按登记的技能使用", thirdParty: false, ai: { profile: "env-ai", model: "small", effort: "low" } }];
     });
