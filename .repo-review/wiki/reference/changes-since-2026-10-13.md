@@ -5,6 +5,12 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 研究可以重新交给跟进（2026-11-28）
+
+- 研究退出跟进后，或 `longTasks.auto.studies` 关着时，本人可以在事项页的流程块点“交给跟进”（`POST /api/items/:id/flow/follow`，权限 `flows.operate`），用设置里的跟进 AI 新开一份跟进（`source_generation` 加一）。`ensureAutoFollow` 多了 `explicit`：本人要求的不看自动开关，也不受之前退出的限制，设置不对时直接报错。
+- 研究的补挂和重新交给跟进共用 `adoptStudy`（`src/studies/auto-follow.ts`）：等着的选方向、验收结果改问跟进；退出后已经发给本人的“下一轮”卡先撤回，再问跟进，不会有两张。
+- 流程视图多了 `supervisor`（`{id,status,ai}`），流程块显示由谁跟进，旁边是“不用跟进”或“交给跟进”（`web/src/components/ItemFlow.vue`）。
+
 ## API key 的每分钟限额和英语课程的网页（2026-11-28）
 
 - 设置 → 后端与模型 → API key 每一行多了“每分钟限额”：`web/src/components/AiKeyLimits.vue`，整体和按模型的 RPM / TPM、最近一小时排队、各模型这一分钟的用量；保存走 `ai.providers[].limits`，清空传 `null`（`AiModels.vue` 的 `plain` 现在带上 `limits`）。

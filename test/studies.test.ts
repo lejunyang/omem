@@ -28,7 +28,7 @@ import { agentProfileSchema } from "../src/core/config.ts";
 import { upsertItem } from "../src/items/store.ts";
 import { writeWorkFile } from "../src/sources/work.ts";
 import { parseFlow, describeStage, saveFlow, seedBuiltinFlows } from "../src/flows/definitions.ts";
-import { advance, flowReminders, flowView, ownerAction, reopenStage, reportStage, startFlow, startRound, stopFlow, updateStageBudget } from "../src/flows/engine.ts";
+import { advance, flowReminders, flowView, followStudyNow, ownerAction, reopenStage, reportStage, startFlow, startRound, stopFlow, updateStageBudget } from "../src/flows/engine.ts";
 import { getStage, itemFlow, stageLog } from "../src/flows/store.ts";
 import { closeDirection, confirmDirection, direction, directions, findings, idleRounds, recordFinding, saveProposals, trial, trials, reconcile, type Trial } from "../src/studies/store.ts";
 import { coverage, capabilitiesPath, planningMaterials } from "../src/studies/materials.ts";
@@ -39,6 +39,7 @@ import { cleanupFetched, mergeLibrary, snapshotStream, type Fetched } from "../s
 import { appendToSource } from "../src/sources/store.ts";
 import * as runner from "../src/agents/runner.ts";
 import { putScope, scopeView } from "../src/studies/scope.ts";
+import { followStudy } from "../src/studies/auto-follow.ts";
 
 const apps: App[] = [], servers: FastifyInstance[] = [];
 const owner = { actor: "owner", userId: "owner" };
@@ -179,6 +180,35 @@ it("研究正常完成后本人再来一轮，按新目标和预算把方向交�
   await proposeDirections(app, { item: item.id, directions: [planned(1)] }, f.by());
   expect(autoFollowFor(app, "study", item.id)).toBeNull();
   expect(s("plan").waitingOn).toBe("owner");
+});
+
+it("本人说过不用跟进后可以再交给跟进，开关关着也行；等本人答的下一轮改问跟进，不留两张", async () => {
+  const f = await setup({}, "manual", true), { app, item, s } = f;
+  const first = autoFollowFor(app, "study", item.id)!;
+  await proposeDirections(app, { item: item.id, directions: [planned(1)] }, f.by());
+  await answerWorkerQuestion(app, first.id, s("plan").askId!, planned(1).goal);
+  await result(f);
+  await summary(f);
+  const ownerCard = s("summary").askId!;
+  await changeLongTask(app, first.id, { action: "detach" });
+  expect(listAsks(app, { status: "pending" }).map(a => a.id)).toEqual([ownerCard]);
+  app.config.longTasks.auto.studies = false;
+  expect(() => followStudy(app, item.id, "someone-else")).toThrow("只有研究本人");
+
+  const view = await followStudyNow(app, item.id, "owner");
+  const next = autoFollowFor(app, "study", item.id)!;
+  expect(next).toMatchObject({ status: "active", sourceGeneration: 2 });
+  expect(next.id).not.toBe(first.id);
+  expect(view.supervisor).toMatchObject({ id: next.id, status: "active" });
+  expect(getAsk(app, ownerCard).status).toBe("cancelled");
+  const routed = s("summary").askId!;
+  expect(routed).not.toBe(ownerCard);
+  expect(listAsks(app, { status: "pending" })).toEqual([]);
+  expect(one(app.db, "select 1 from messages where conversation_id=? and text like '已按你的要求交给%'", next.threadId)).toBeTruthy();
+  await followStudyNow(app, item.id, "owner");
+  expect(autoFollowFor(app, "study", item.id)!.id).toBe(next.id);
+  await answerWorkerQuestion(app, next.id, routed, "开始下一轮");
+  expect(itemFlow(app, item.id)!.round).toBe(2);
 });
 
 it("任务书的必问事项按原选项发给本人，回答记在同一个方向上", async () => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { del, get, onServerEvent, onServerResync, post } from "../api";
+import { del, get, onServerEvent, onServerResync, patch, post } from "../api";
 import { confirmDialog, promptDialog } from "../lib/dialog";
 import { actorWords, aiName, changeChoices, changeHeads, changeStatus, changeWords, clockTime, evidenceLink, evidenceWord, minutesWords, nextWords, objectStatusWords, ownerTurn, reviewHow, reviewNotes, stageActions, stageColour, stageLine, stageWords, testSummary, testWords, verdictWords, type FlowAction, type FlowChange, type FlowDefinition, type FlowFile, type FlowStage, type FlowView, type StageTest } from "../lib/flow";
 import FlowStagePlugin from "./FlowStagePlugin.vue";
@@ -112,6 +112,21 @@ async function nextRound() {
   }
   await mutate(id, `/api/items/${id}/flow/round`, {});
 }
+/** The owner hands the study to a follow-up, or takes its decisions back. */
+async function follow() {
+  const id = props.itemId, generation = epoch;
+  if (!await confirmDialog("交给跟进", { message: "由设置里的跟进 AI 接手这个研究：选方向、开始下一轮、验收结果由它来定，要你拍板的才问你。之后随时可以点“不用跟进”。", okText: "交给跟进" })) return;
+  if (generation === epoch) await mutate(id, `/api/items/${id}/flow/follow`, {});
+}
+async function unfollow() {
+  const task = data.value?.supervisor, generation = epoch;
+  if (!task || !await confirmDialog("不用跟进", { message: "研究照常进行，之后方向和下一轮由你来定。", okText: "不用跟进" })) return;
+  if (generation !== epoch || busy.value) return;
+  busy.value = true; error.value = "";
+  try { await patch(`/api/long-tasks/${encodeURIComponent(task.id)}`, { action: "detach" }); if (generation === epoch) await load(); }
+  catch (e) { if (generation === epoch) error.value = (e as Error).message; }
+  finally { if (generation === epoch) busy.value = false; }
+}
 /** The owner changes how long this stage may run in this round, and how often a stronger model may look. */
 async function editBudget(s: FlowStage) {
   const id = props.itemId, generation = epoch;
@@ -192,6 +207,12 @@ async function stop() {
         <router-link :to="`/items/${itemId}/flow`" class="btn sm">打开流程页</router-link>
         <button v-if="editable && !data.flow.endedAt" type="button" class="link small" :disabled="busy" @click="stop">停止流程</button>
       </div>
+      <p v-if="data.flow.study && !data.flow.endedAt && !carrier" class="muted small follow-line">
+        <template v-if="data.supervisor">由 {{ data.supervisor.ai }} 跟进{{ data.supervisor.status === "paused" ? "（已暂停）" : "" }}：方向、下一轮和验收由它来定，要你拍板的才问你。</template>
+        <template v-else>方向、下一轮和验收都等你来定。</template>
+        <button v-if="editable && data.supervisor" type="button" class="link small" :disabled="busy" @click="unfollow">不用跟进</button>
+        <button v-else-if="editable" type="button" class="link small" :disabled="busy" @click="follow">交给跟进</button>
+      </p>
       <div class="flow-strip" aria-label="阶段">
         <button v-for="s in data.stages" :key="s.id" type="button" class="segment" :class="[stageColour(s), { selected: stage?.id === s.id, skipped: s.state === 'skipped' }]" :aria-pressed="stage?.id === s.id" @click="selected = s.id">
           <span class="segment-bar" />
@@ -357,6 +378,8 @@ async function stop() {
 .item-flow { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
 .flow-head { display: flex; align-items: baseline; gap: 8px; }
 .flow-name { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.follow-line { margin: 0; }
+.follow-line .link { margin-left: 6px; }
 .once { font-size: 11.5px; }
 .link { padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12.5px; }
 .link:hover { color: var(--ink); text-decoration: underline; }

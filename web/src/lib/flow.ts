@@ -120,6 +120,8 @@ export type FlowView = {
   /** What changed around this item since the flow began: the ones waiting for the owner and the latest ten. */
   changes?: FlowChange[];
   follow?: FollowPlace[];
+  /** A study's long-task follow-up: the AI that decides its directions, next rounds and results; null when the owner decides. */
+  supervisor?: { id: string; status: string; ai: string } | null;
   /** Earlier rounds of a repeating flow, newest first: how each stage ended. */
   rounds?: { round: number; endedAt: string; stages: { id: string; state: StageState; note: string }[] }[];
   stages: FlowStage[]; suits: FlowDefinition[];

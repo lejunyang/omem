@@ -7,7 +7,7 @@ import type { App } from "../core/app.ts";
 import { HttpError } from "../core/util.ts";
 import { itemScope, requireItem } from "../items/access.ts";
 import { hasRunner, runnerApproved, flowVisibleIn, listFlows, parseFlow, parseFlowForSave, unavailableFlowReferences, summarizeStage, removeFlow, saveFlow, describeStage, describeFlow, budgetSchema } from "./definitions.ts";
-import { proposeFlow, flowView, flowStageCards, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
+import { proposeFlow, flowView, flowStageCards, followStudyNow, ownerAction, recordStage, signStageTest, startFlow, startRound, stopFlow, updateStageBudget, type OwnerAction } from "./engine.ts";
 import { itemStages } from "./store.ts";
 import { settleChange } from "./follow.ts";
 import { all } from "../core/db.ts";
@@ -122,6 +122,8 @@ export function registerFlowRoutes(server: FastifyInstance, app: App, who: (req:
     const note = body(z.object({ note: z.string().max(4000).optional() }), req.body ?? {}).note ?? "";
     return view(app, id, who(req), await startRound(app, id, { actor: "owner", userId: who(req) }, new Date(), note));
   });
+  // The owner hands a running study to a long-task follow-up (docs/v2/supervisor.md).
+  server.post("/api/items/:id/flow/follow", async (req) => { const id = itemId(req, true); return view(app, id, who(req), await followStudyNow(app, id, who(req))); });
   // The owner settles one change the follow-up found: fold it in, make it its own item, or leave it.
   server.post("/api/items/:id/flow/changes/:change", async (req) => {
     const id = itemId(req, true), b = body(z.object({ choice: z.enum(["merge", "split", "dismiss"]) }), req.body);

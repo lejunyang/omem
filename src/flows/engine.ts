@@ -1,6 +1,6 @@
 import type { LongTask } from "../agents/long-tasks.ts";
 import { autoFollowFor } from "../agents/auto-follow.ts";
-import { askStudyNextRound, checkStudyGate, followStudyRound, studyGate } from "../studies/auto-follow.ts";
+import { askStudyNextRound, checkStudyGate, followStudy, followStudyRound, studyFollowView, studyGate } from "../studies/auto-follow.ts";
 import { groupItems, groupPick, policyScope } from "../agents/ai-policy.ts";
 import { hasHostTools } from "../agents/capabilities.ts";
 import { continuedUpstream, finishStage, overrideStageGate } from "./plugin-gates.ts";
@@ -665,6 +665,14 @@ export function startRound(app: App, itemId: string, by: FlowActor, at = new Dat
     roundNow(app, f, by, at, note.trim());
     resetStreak(app, itemId);
     await advanceNow(app, itemId, "本人开始下一轮", at);
+    return flowView(app, itemId);
+  });
+}
+
+/** The owner hands a running study to a follow-up: also after "不用跟进", and with the auto switch off. */
+export function followStudyNow(app: App, itemId: string, userId: string) {
+  return serial(app, itemId, async () => {
+    followStudy(app, itemId, userId);
     return flowView(app, itemId);
   });
 }
@@ -1479,6 +1487,8 @@ export function flowView(app: App, id: string) {
         ...(object ? { object: { title: object.title, status: object.status, link: object.link, ...(object.statusLabel !== undefined ? { statusLabel: object.statusLabel, fields: object.fields ?? [], disabled: !!object.disabled } : {}) } } : {}), ...(s.askId ? { askId: s.askId } : {}), ...(s.askId && s.state === "doing" && d.tools?.includes("propose_directions") ? { asking: "direction" } : {}), ...(signal ? { waitingSignal: signal } : {}), upstream: s.control.upstream ? { askId: s.control.upstream.askId, stage: s.control.upstream.stage, name: stageName(f!, s.control.upstream.stage), reason: s.control.upstream.reason } : null, tests: stageTests(app, id, d.id, f!.startedAt, s.round, s.control.runId), shots: stageShots(app, id, d.id, f!.startedAt, s.round, s.control.runId) };
     }) ?? [], log: stageLog(app, id), suits: f ? [] : flowsFor(app, item), rounds: f ? roundHistory(app, f) : [],
     changes: shownChanges(app, id), follow: followView(app, id),
+    // A study's long-task follow-up (the AI that decides its gates), not the context follow-up above.
+    supervisor: f && !f.endedAt && isStudy(f) ? studyFollowView(app, id) : null,
     // How it went, once it ended: figures from its records (review.ts).
     review: f?.endedAt ? storedReview(app, id, f.startedAt) : null,
   };

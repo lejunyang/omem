@@ -284,6 +284,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/items/:id/flow/stages/:stage/record": cap("flows.operate", "item:p.id"),
   "POST /api/items/:id/flow/stages/:stage/tests/:test": cap("flows.operate", "item:p.id"),
   "POST /api/items/:id/flow/round": cap("flows.operate", "item:p.id"),
+  "POST /api/items/:id/flow/follow": cap("flows.operate", "item:p.id"),
   "POST /api/items/:id/flow/stages/:stage/budget": cap("flows.operate", "item:p.id"),
   "GET /api/rules": cap("rules.view"),
   "GET /api/rules/:id": cap("rules.view"),

@@ -3,21 +3,60 @@ import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { autoFollowFor, ensureAutoFollow } from "../agents/auto-follow.ts";
 import { cancelAsk, conversationOfRun, createAsk, getAsk, type Ask } from "../agents/asks.ts";
-import type { LongTask } from "../agents/long-tasks.ts";
+import { followAiLabel, type LongTask } from "../agents/long-tasks.ts";
 import { wakeSupervisor } from "../agents/supervisor.ts";
 import { findThread } from "../agents/threads.ts";
 import { CLOSED_STATUSES, getItem } from "../items/store.ts";
 import { changeStage, getStage, itemFlow, itemStages, type ItemFlow } from "../flows/store.ts";
 import { idleRounds, isStudy } from "./store.ts";
 
-export function followStudyRound(app: App, f: ItemFlow, reason: "start" | "backfill", runId?: string, note?: string) {
+/** `owner`: the owner asked for a follow-up on this study, also after an earlier "不用跟进" or with the switch off. */
+export function followStudyRound(app: App, f: ItemFlow, reason: "start" | "backfill" | "owner", runId?: string, note?: string) {
   if (!isStudy(f)) return null;
   const item = getItem(app, f.itemId);
   const origin = conversationOfRun(app, runId ?? null);
   const thread = origin ? findThread(app, origin) : null;
-  return ensureAutoFollow(app, { kind: "study", startingRound: reason === "start", sourceId: item.id, userId: item.userId, spaceId: item.spaceId,
+  return ensureAutoFollow(app, { kind: "study", startingRound: reason === "start", explicit: reason === "owner", sourceId: item.id, userId: item.userId, spaceId: item.spaceId,
     threadId: thread?.spaceId === item.spaceId && thread.userId === item.userId ? thread.id : undefined,
     goal: note || item.detail || item.title });
+}
+
+/** Attach a follow-up to a running study and hand it the study's open decisions (directions, results to accept, the next round). */
+function adoptStudy(app: App, f: ItemFlow, reason: "backfill" | "owner") {
+  const id = f.itemId;
+  const origin = one<{ run_id: string }>(app.db, "select run_id from item_stage_log where item_id=? and at>=? and run_id is not null and note='加入流程' order by at limit 1", id, f.startedAt);
+  const follow = followStudyRound(app, f, reason, origin?.run_id);
+  if (!follow) return null;
+  for (const s of itemStages(app, id)) {
+    if (!s.askId) continue;
+    const old = getAsk(app, s.askId);
+    if (old.status !== "pending") continue;
+    // The owner's "next round?" card is asked again below, of the follow-up.
+    if (old.handler === "study-next-round") { cancelAsk(app, old.id, "研究关卡已交给跟进助手"); continue; }
+    const stage = f.definition.stages.find(d => d.id === s.id);
+    const confirmResult = old.handler === "flow-stage" && s.control.question === "done" && stage?.confirm === "supervisor";
+    if (old.handler !== "study-plan" && !confirmResult) continue;
+    const ctx = one<{ context: string }>(app.db, "select context from asks where id=?", old.id)!;
+    cancelAsk(app, old.id, "研究关卡已交给跟进助手");
+    const ask = studyGate(app, follow, { runId: null, userId: old.userId, question: old.question, options: old.options, allowText: old.allowText, context: { ...JSON.parse(ctx.context), round: f.round } });
+    changeStage(app, id, s.id, s.state, { askId: ask.id, waitingOn: "跟进助手" }, { actor: "host" }, confirmResult ? "等跟进助手验收结果" : "等跟进助手选方向");
+  }
+  if (f.roundClosedAt && f.definition.repeat && !f.nextRoundAt) askStudyNextRound(app, f, follow, idleRounds(app, id));
+  return follow;
+}
+
+/** The owner hands a running study to a follow-up again (the auto switch can stay off). */
+export function followStudy(app: App, itemId: string, userId: string) {
+  const item = getItem(app, itemId), f = itemFlow(app, itemId);
+  if (item.userId !== userId) throw new HttpError(403, "只有研究本人可以交给跟进");
+  if (!f || f.endedAt || !isStudy(f) || CLOSED_STATUSES.includes(item.status)) throw new HttpError(409, "这件事项没有进行中的研究");
+  return autoFollowFor(app, "study", itemId) ?? withinTx(app.db, () => adoptStudy(app, f, "owner"))!;
+}
+
+/** Who follows a study now, for its flow view. */
+export function studyFollowView(app: App, itemId: string) {
+  const task = autoFollowFor(app, "study", itemId);
+  return task ? { id: task.id, status: task.status, ai: followAiLabel(task.ai) } : null;
 }
 
 export function studyGate(app: App, follow: LongTask | null, input: Parameters<typeof createAsk>[1]) {
@@ -83,23 +122,7 @@ export async function backfillStudyFollow(app: App) {
     for (const { item_id: id, definition } of rows) {
       if (!isStudy({ definition: JSON.parse(definition) })) continue;
       const f = itemFlow(app, id)!;
-      withinTx(app.db, () => {
-        const origin = one<{ run_id: string }>(app.db, "select run_id from item_stage_log where item_id=? and at>=? and run_id is not null and note='加入流程' order by at limit 1", id, f.startedAt);
-        const follow = followStudyRound(app, f, "backfill", origin?.run_id);
-        if (!follow) return;
-        for (const s of itemStages(app, id)) {
-          if (!s.askId) continue;
-          const old = getAsk(app, s.askId);
-          const stage = f.definition.stages.find(d => d.id === s.id);
-          const confirmResult = old.handler === "flow-stage" && s.control.question === "done" && stage?.confirm === "supervisor";
-          if (old.status !== "pending" || (old.handler !== "study-plan" && !confirmResult)) continue;
-          const ctx = one<{ context: string }>(app.db, "select context from asks where id=?", old.id)!;
-          cancelAsk(app, old.id, "研究关卡已交给跟进助手");
-          const ask = studyGate(app, follow, { runId: null, userId: old.userId, question: old.question, options: old.options, allowText: old.allowText, context: { ...JSON.parse(ctx.context), round: f.round } });
-          changeStage(app, id, s.id, s.state, { askId: ask.id, waitingOn: "跟进助手" }, { actor: "host" }, confirmResult ? "等跟进助手验收结果" : "等跟进助手选方向");
-        }
-        if (f.roundClosedAt && f.definition.repeat && !f.nextRoundAt) askStudyNextRound(app, f, follow, idleRounds(app, id));
-      });
+      withinTx(app.db, () => adoptStudy(app, f, "backfill"));
     }
     if (rows.length < 100) return;
     after = rows.at(-1)!.item_id;
