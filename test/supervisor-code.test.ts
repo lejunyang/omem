@@ -306,6 +306,27 @@ describe("助手的编码交办", () => {
     if (next.length) expect(getRun(app, next[0].id)).toMatchObject({ status: "queued", input: { longTaskId: task.id } });
   });
 
+  it("跟进处理过的修改项不能再交本人回答；卡发出后修改项变了，本人的选择仍作为补充交给跟进", async () => {
+    const { app, task, lead, delegate } = await setup();
+    confirmLongTaskBrief(app, task.id, { doneWhen: ["说明已校对"] });
+    const worker = delegate();
+    codeChainFor(app, worker);
+    const item = addTask(app, worker.id, { kind: "build", title: "核对示例" }, "coder");
+    const question = { question: "示例怎么处理？", options: ["保留", "替换"], why: "需要确定示例" };
+    const settled = `task:${item.id}:${toDecide(app, worker.id, item.seq, question).origin.questionId}`;
+    await answerWorkerQuestion(app, task.id, settled, "保留");
+    run(app.db, "update runs set status='running' where id=?", lead.id);
+    const report = { stage: "校对", status: "needs-owner" as const, goalCheck: [], progress: { done: [], doing: [], next: [] }, decisions: [], actions: [] };
+    await expect(submitSupervisorReport(app, lead.id, { ...report, askOwner: [{ ...question, questionId: settled, prefer: "保留" }] })).rejects.toThrow(/已经处理过/);
+
+    const waiting = `task:${item.id}:${toDecide(app, worker.id, item.seq, question).origin.questionId}`;
+    await submitSupervisorReport(app, lead.id, { ...report, askOwner: [{ ...question, questionId: waiting, prefer: "保留" }] });
+    updateTask(app, worker.id, item.seq, { state: "todo" });
+    const [card] = listAsks(app, { conversationId: task.threadId, status: "pending" });
+    await answerAsk(app, card.id, { by: task.userId, value: { q0: "替换" } });
+    expect(getLongTask(app, task.id).supplements.at(-1)?.text).toBe("示例怎么处理？：替换（回答时这一项已经处理过，请按这个选择接着做）");
+  });
+
   it("检查点按路径边界识别范围外文件", async () => {
     const { app, delegate } = await setup();
     const worker = delegate();

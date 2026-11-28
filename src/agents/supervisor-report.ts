@@ -108,8 +108,15 @@ registerAskHandler("supervisor-questions", async (app, ask, context) => {
   for (const [i,q] of qs.entries()) {
     const picked = ask.value?.[`q${i}`];
     if (typeof picked !== "string" || !q.options.includes(picked)) throw new HttpError(400, "请在卡片上逐项选择");
-    if (q.questionId) await answerWorkerQuestion(app, task.id, q.questionId, picked, ask.answeredBy!);
-    choices.push(q.question + "：" + picked);
+    let moved = false;
+    try {
+      if (q.questionId) await answerWorkerQuestion(app, task.id, q.questionId, picked, ask.answeredBy!);
+    } catch (error) {
+      // The work moved on after the card went out: the owner's choice still reaches the follow-up, as their words.
+      if (!(error instanceof HttpError) || ![404, 409].includes(error.status)) throw error;
+      moved = true;
+    }
+    choices.push(q.question + "：" + picked + (moved ? "（回答时这一项已经处理过，请按这个选择接着做）" : ""));
   }
   await changeLongTask(app, task.id, { action: "supplement", text: choices.join("\n") });
 });
@@ -130,6 +137,14 @@ export async function submitSupervisorReport(app: App, runId: string, report: Re
   for (const a of report.answers ?? []) {
     checkSupervisorBasis(app, runId, runId, a.basis);
     await answerWorkerQuestion(app, task.id, a.questionId, a.answer);
+  }
+  // A task question goes to the owner only while it still waits on the follow-up: one it already settled
+  // (retried, set aside) would take the owner's answer nowhere.
+  for (const q of report.askOwner) {
+    const ref = q.questionId && /^task:(\d+):(.+)$/.exec(q.questionId);
+    const row = ref ? one<{ state: string; origin: string; seq: number }>(app.db, "select state,origin,seq from code_tasks where id=?", Number(ref[1])) : null;
+    if (ref && row && (row.state !== "assistant" || JSON.parse(row.origin).questionId !== ref[2]))
+      throw new HttpError(400, `askOwner 里的 ${q.questionId}（T${row.seq}）已经处理过，本人回答不了。要本人决定的另一件事（比如给交办追加轮次）不带 questionId 问。`);
   }
   const prior = supervisorState(app, task.id);
   const text = withinTx(app.db, () => {

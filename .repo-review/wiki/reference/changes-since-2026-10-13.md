@@ -16,6 +16,7 @@ updated: 2026-11-28
 - 研究退出跟进后，或 `longTasks.auto.studies` 关着时，本人可以在事项页的流程块点“交给跟进”（`POST /api/items/:id/flow/follow`，权限 `flows.operate`），用设置里的跟进 AI 新开一份跟进（`source_generation` 加一）。`ensureAutoFollow` 多了 `explicit`：本人要求的不看自动开关，也不受之前退出的限制，设置不对时直接报错。
 - 研究的补挂和重新交给跟进共用 `adoptStudy`（`src/studies/auto-follow.ts`）：等着的选方向、验收结果改问跟进；退出后已经发给本人的“下一轮”卡先撤回，再问跟进，不会有两张。
 - 研究里改缺陷的交办（没有 `codeChain`，不向哪个助手汇报）没有跟进时，修改项改不好就直接问本人。交给跟进时，`handOwnerTasksToFollow`（`src/agents/code-tasks.ts`）把这些还没答的改成等跟进，关掉本人的卡；自动接管编码交办（`followCodePlan`）也调它。
+- 跟进交报告时，`askOwner` 里带 `task:` 编号的问题，修改项必须还在等跟进（`submitSupervisorReport` 校验）。同一轮里已经重做或放下的那项再问本人，本人答了也落不到任何地方。卡片发出后修改项才变的，本人的选择照样记成补充并叫醒跟进，不再整张卡报 409、丢掉选择。
 - 流程视图多了 `supervisor`（`{id,status,ai}`），流程块显示由谁跟进，旁边是“不用跟进”或“交给跟进”（`web/src/components/ItemFlow.vue`）。
 
 ## API key 的每分钟限额和英语课程的网页（2026-11-28）
