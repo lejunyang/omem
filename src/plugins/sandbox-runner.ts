@@ -61,6 +61,7 @@ function contextOf(c: { call: number; userId: string; spaceId: string; runId: st
     emit: (signal: unknown) => rpc("emit", { signal, call }),
     conversationId: c.conversationId,
     settings: () => c.settings,
+    saveSettings: (patch: unknown) => rpc("settings.save", { patch, call }),
     store: { get: store("get"), put: store("put"), list: store("list"), delete: store("delete") },
     block: unsupported("内容块"),
     setBlockResult: unsupported("内容块"),

@@ -53,7 +53,7 @@ const CALL_MS = 5 * 60_000;
 export async function startSandbox(
   app: App,
   plugin: { id: string; dir: string; server: string; services: { name: string }[] },
-  opts: Omit<import("./types.ts").ProcessApi, "metricProvider"> & { prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
+  opts: Omit<import("./types.ts").ProcessApi, "metricProvider"> & { prefix: string; packageRoot: string; connected: (app: App, userId: string) => boolean; settings: (userId: string) => Record<string, unknown>; saveSettings: (userId: string, patch: Record<string, unknown>) => Record<string, unknown>; services: (name: string) => Parameters<typeof ensureService>[2] | undefined },
 ): Promise<Sandbox> {
   const data = join(app.home, "plugin-data", plugin.id);
   mkdirSync(data, { recursive: true });
@@ -139,6 +139,11 @@ export async function startSandbox(
         const x = need();
         const store = pluginStore(app, plugin.id, x.userId ?? OWNER, x.spaceId) as unknown as Record<string, (...args: unknown[]) => unknown>;
         return store[op.slice(6)](...(a.args ?? []));
+      }
+      case "settings.save": {
+        const patch = a.patch;
+        if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("设置要写成对象");
+        return opts.saveSettings(need().userId ?? OWNER, patch);
       }
       case "saveSource":
         return saveSourceFor(need(), a.input);

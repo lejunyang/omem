@@ -41,6 +41,12 @@ export type PluginContext = {
   store: PluginStore;
   /** The owner's settings for this plugin, defaults filled in. */
   settings(): PluginSettings;
+  /**
+   * Save some of this user's values of this plugin's settings (the ones `settings()` reads), checked
+   * against the manifest's fields like 设置 → 插件; null clears a value back to its default. Returns the
+   * values after the change. For a tool that edits its own lists when the person asks in a conversation.
+   */
+  saveSettings(patch: Record<string, unknown>): Promise<PluginSettings>;
   /** Resolve source metadata in the material spaces this user granted to this call. */
   materialSources(ids: string[]): Map<string, { title: string; lines: number }>;
   /** One of this plugin's blocks for this user (null when missing or someone else's). */

@@ -24,6 +24,8 @@ export type PluginEnv = {
   /** The plugin's own block of this kind. */
   def(kind: string): PluginBlock | undefined;
   settings(app: App, userId: string): PluginSettings;
+  /** Save some of a user's values (validated against the manifest's fields); absent where a plugin has no settings to save. */
+  saveSettings?(app: App, userId: string, patch: Record<string, unknown>): PluginSettings;
   /** Where a block handed in outside a plugin session goes: a new session with this agent. */
   sessionFor(spec: string | undefined): { agent: string; spaceId: string } | null;
   title: string;
@@ -117,6 +119,12 @@ export function pluginContext(app: App, env: PluginEnv, c: { userId: string; spa
     conversationId: c.conversationId ?? runConversation(app, c.runId),
     store: pluginStore(app, env.id, c.userId, c.spaceId),
     settings,
+    saveSettings: async (patch) => {
+      if (!env.saveSettings) throw new HttpError(400, `插件 ${env.id} 没有可保存的设置`);
+      const values = env.saveSettings(app, c.userId, patch);
+      app.emit({ type: "plugin", plugin: env.id, conversationId: "", settings: true });
+      return values;
+    },
     materialSources: ids => {
       const selected = env.sourceSetting && settings()[env.sourceSetting];
       if (!ids.length || !Array.isArray(selected) || !selected.length) return new Map();
