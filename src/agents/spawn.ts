@@ -72,7 +72,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   const npmrc = account && join(canonical(account.home), ".npmrc");
   const registryFile = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => under(npmrc, p)) ? npmrc : undefined;
   const runtime = base.XDG_RUNTIME_DIR;
-  const desktopPrivate = account ? [
+  const desktopPrivate = account && guarded ? [
     ...[".ai-auto-desktop", ".aad-request-gates", ".Xauthority", ".omem/remote/profiles"].map(name => join(canonical(account.home), name)),
     ...(base.XAUTHORITY && isAbsolute(base.XAUTHORITY) ? [base.XAUTHORITY] : []),
     ...(runtime && isAbsolute(runtime) ? [join(runtime, "at-spi"), join(runtime, "bus"),
