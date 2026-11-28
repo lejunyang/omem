@@ -1,4 +1,4 @@
-import { join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { restrictedSourceFilter } from "../auth/visibility.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import { canReadRun } from "../auth/permissions.ts";
@@ -16,12 +16,21 @@ export function sandboxData(app: App, user: string) {
   const spaces = user === "owner" ? null : known.map(s => s.id).filter(id => !allowed || allowed.includes(id));
   const roots = new Map<string, boolean>();
   const repoDir = join(data, "repos");
+  const pulled = join(repoDir, "pulled");
+  const grantRepo = (root: string, space: string) => {
+    const path = relative(data, root);
+    roots.set(path, !!roots.get(path) || !spaces || spaces.includes(space));
+  };
   for (const space of known) {
     if (!space.rootPath) continue;
     const root = canonical(space.rootPath);
-    if (!root.startsWith(repoDir + "/")) continue;
-    const path = relative(data, root);
-    roots.set(path, !!roots.get(path) || !spaces || spaces.includes(space.id));
+    const expected = join(data, relative(app.home, space.rootPath));
+    if (expected.startsWith(pulled + sep) && root !== expected) continue;
+    if (root.startsWith(repoDir + sep)) grantRepo(root, space.id);
+  }
+  for (const copy of all<{ space_id: string; checkout: string }>(app.db, "select space_id, checkout from pulled_repositories")) {
+    const root = join(pulled, copy.checkout);
+    if (dirname(root) === pulled && canonical(root) === root) grantRepo(root, copy.space_id);
   }
   const grants = all<{ id: string; space_id: string | null; run_id: string }>(app.db,
     "select id, space_id, run_id from run_artifacts" + (spaces ? " where space_id in (select value from json_each(?))" : ""),

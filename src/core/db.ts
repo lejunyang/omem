@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+import { backfillPulledRepositories, PULLED_REPOSITORIES_MIGRATION } from "./pull-repos.ts";
 import { SITUATIONS_MIGRATION, SITUATION_CHAT_MIGRATION, SITUATION_RULE_NAME_MIGRATION, SITUATION_SPEAKER_MIGRATION } from "../situations/schema.ts";
 import { migrateItemProviders } from "../items/provider-schema.ts";
 import { FILE_REFS_MIGRATION, FILE_REF_TOMBSTONES_MIGRATION } from "./file-refs.ts";
@@ -2586,6 +2588,7 @@ export const migrations: readonly string[] = [
    create index item_flows_unfinished on item_flows(item_id) where ended_at is null;
    create index if not exists runs_done_code_verdict on runs(json_extract(output,'$.verdict')) where kind='code' and status='done';`,
   `create index if not exists sources_recent_in_space on sources(space_id, updated_at desc) where deleted_at is null;`,
+  PULLED_REPOSITORIES_MIGRATION,
 ];
 
 export type Db = DatabaseSync;
@@ -2613,6 +2616,7 @@ export function openDb(path: string): Db {
       const fromCapabilitiesBranch = migrations[i] === MEMBER_CAPABILITIES_MIGRATION
         && db.prepare("select 1 from sqlite_schema where type='table' and name='member_capability_overrides'").get();
       db.exec(fromCapabilitiesBranch ? METRIC_SERIES_INDEX : migrations[i]);
+      if (migrations[i] === PULLED_REPOSITORIES_MIGRATION) backfillPulledRepositories(db, dirname(path));
       db.exec(`pragma user_version = ${i + 1}`);
       db.exec("commit");
     } catch (error) {

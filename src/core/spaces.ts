@@ -254,7 +254,7 @@ export function unrelateSpaces(app: App, a: string, b: string, by: "owner" | "ag
 }
 
 /** Rows that say who may see a space or how it relates to others, and bookkeeping: they go with it. */
-const SPACE_BOOKKEEPING = new Set(["space_members", "change_log", "metrics", "vector_log", "page_reads", "git_commit_cursors"]);
+const SPACE_BOOKKEEPING = new Set(["space_members", "change_log", "metrics", "vector_log", "page_reads", "git_commit_cursors", "pulled_repositories"]);
 const CONTENT_LABEL: Record<string, string> = { sources: "原件", chunks: "原件切块", pages: "Wiki 页面", memories: "记忆", items: "事项", runs: "运行", conversations: "对话", rules: "规则", schedules: "定时任务", designs: "方案", req_nodes: "需求", repo_lessons: "仓库约定", plugin_records: "插件记录", symbols: "代码符号", code_refs: "代码引用" };
 
 /** What a space still holds (table → rows), apart from its members and bookkeeping. */
