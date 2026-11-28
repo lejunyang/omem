@@ -117,6 +117,16 @@ async function actOnCard(app: App, data: any, nameOf: (openId: string) => Promis
     const task = getLongTask(app, String(inter.payload.longTaskId));
     if (task.userId !== operatorUser() || !canWrite(app, task.userId, task.spaceId)) return { toast: { type: "error", content: "只有任务发起人可以操作" } };
     const action = String(value?.action ?? "");
+    if (action === "detach") {
+      const { changeLongTask } = await import("../agents/long-tasks.ts");
+      await changeLongTask(app, task.id, { action: "detach" });
+      return { toast: { type: "success", content: "已退出自动跟进" } };
+    }
+    if (action === "edit-brief") {
+      const { editAutoBrief } = await import("../agents/supervisor-report.ts");
+      editAutoBrief(app, task);
+      return { toast: { type: "info", content: "在话题里的卡片上修改任务书" } };
+    }
     if (action === "change-ai") {
       const { createAsk } = await import("../agents/asks.ts");
       createAsk(app, { conversationId: task.threadId, runId: null, userId: task.userId, question: "这件长任务接下来由哪个 AI 跟进？",

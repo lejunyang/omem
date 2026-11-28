@@ -31,7 +31,7 @@ export function registerLongTaskRoutes(server: FastifyInstance, app: App, who: (
       where.push("(user_id=? or space_id in (select value from json_each(?)))");
       params.push(scope.userId, JSON.stringify(scope.sharedSpaces ?? []));
     }
-    const tasks = all(app.db, `select id,space_id spaceId,user_id userId,thread_id threadId,item_id itemId,goal,status,
+    const tasks = all(app.db, `select id,space_id spaceId,user_id userId,thread_id threadId,item_id itemId,source_kind sourceKind,source_id sourceId,goal,status,
       created_at createdAt,updated_at updatedAt from long_tasks ${where.length ? "where " + where.join(" and ") : ""}
       order by updated_at desc,id limit ? offset ?`, ...params, limit, offset);
     return { tasks };

@@ -23,7 +23,7 @@ export const settingSections = {
   firstLook: "assistant", longTasks: "assistant",
 } satisfies Record<keyof Config, Section>;
 export const sectionByPath: Record<string, Section> = {
-  ...settingSections, "agents.accounts": "members", "agents.accountsDefault": "security", "agents.accountIsolation": "members",
+  ...settingSections, "longTasks.auto": "assistant", "agents.accounts": "members", "agents.accountsDefault": "security", "agents.accountIsolation": "members",
   "agents.progress": "assistant", "agents.design": "assistant", "agents.autoAdvance": "assistant",
   "agents.workBoard": "assistant", "lark.capture": "knowledge", "lark.knowledge": "knowledge",
   "lark.commands": "assistant", "lark.guests": "assistant", "lark.invite": "assistant",
@@ -225,6 +225,7 @@ export function settingsPatch(config: Config, body: unknown): Values {
     if (!Object.hasOwn(settingSections, key)) throw new HttpError(400, `不认识的设置：${key}`);
     if ((splitRoots.has(key) || key === "node") && object(val)) {
       const merged = { ...(config[key as keyof Config] as Values), ...val };
+      if (key === "longTasks" && object(val.auto)) merged.auto = { ...config.longTasks.auto, ...val.auto };
       if (key === "embeddings") {
         for (const field of ["keyRef", "url", "dimensions"]) if (merged[field] === null) delete merged[field];
       }

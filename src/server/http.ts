@@ -545,7 +545,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
       if (e.type === "notification") return can(app, userId, "notifications.view") && one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
       if (e.type === "ask") return one<{ user_id: string }>(app.db, "select user_id from asks where id = ?", e.id)?.user_id === userId;
-      if (e.type === "plugin") return one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", e.conversationId)?.user_id === userId;
+      if (e.type === "plugin" || e.type === "conversation") return one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", e.conversationId)?.user_id === userId;
       if (e.type === "changed") {
         const space = e.spaceId ?? (e.entity === "space" ? e.id : null);
         return !space || (accessibleSpaces(app, userId) ?? []).includes(space);

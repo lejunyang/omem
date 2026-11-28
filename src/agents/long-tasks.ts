@@ -7,7 +7,7 @@ import { canWrite } from "../core/users.ts";
 import { HttpError, newId, now, truncate } from "../core/util.ts";
 import { itemAccess } from "../items/access.ts";
 import { addItemEvent, upsertItem } from "../items/store.ts";
-import { policyScope } from "./ai-policy.ts";
+import { groupPick, policyScope } from "./ai-policy.ts";
 import { validateExecution } from "./execution.ts";
 import { setRunOutput } from "./runs.ts";
 import type { SupervisorReport } from "./supervisor-schema.ts";
@@ -35,6 +35,8 @@ export const startLongTaskSchema = z.strictObject({
   budget: budgetPatch.optional(), notifications: notificationsSchema.partial().optional(),
 });
 export const longTaskCommandSchema = z.discriminatedUnion("action", [
+  z.strictObject({ action: z.literal("detach") }),
+  z.strictObject({ action: z.literal("brief"), brief: briefSchema.partial() }),
   z.strictObject({ action: z.literal("pause") }), z.strictObject({ action: z.literal("resume") }),
   z.strictObject({ action: z.literal("end") }), z.strictObject({ action: z.literal("ai"), ai: supervisorAiSchema }),
   z.strictObject({ action: z.literal("budget"), budget: budgetPatch }),
@@ -48,7 +50,9 @@ type SupervisorNote = {
   at: string; runId: string; stage: string; plan: string[]; decisions: { what: string; why: string }[];
   actions: string[]; setAside: string[]; overruled: string[];
 };
+export type FollowKind = "study" | "code" | "agentWork";
 export type LongTask = {
+  sourceKind: FollowKind | null; sourceId: string | null;
   id: string; spaceId: string; userId: string; threadId: string; itemId: string;
   goal: string; ai: SupervisorAi; status: "draft" | "active" | "paused" | "ended" | "done";
   brief: Brief; confirmedAt: string | null; supplements: { at: string; text: string }[];
@@ -56,7 +60,7 @@ export type LongTask = {
   createdAt: string; updatedAt: string;
 };
 
-const columns = `id, space_id spaceId, user_id userId, thread_id threadId, item_id itemId, goal, ai, status,
+const columns = `source_kind sourceKind, source_id sourceId, id, space_id spaceId, user_id userId, thread_id threadId, item_id itemId, goal, ai, status,
   brief, confirmed_at confirmedAt, supplements, budget, notifications, notes, created_at createdAt, updated_at updatedAt`;
 type JsonColumn = "ai" | "brief" | "supplements" | "budget" | "notifications" | "notes";
 type Row = Omit<LongTask, JsonColumn> & Record<JsonColumn, string>;
@@ -86,7 +90,7 @@ export function followAiLabel(ai: SupervisorAi) {
 }
 
 function supervisorAi(app: App, userId: string, ai?: SupervisorAi): SupervisorAi {
-  const pick = ai ?? app.config.longTasks.supervisor ?? app.config.agents.tiers.strong;
+  const pick = ai ?? app.config.longTasks.supervisor ?? groupPick(app, "strong", policyScope(app, "supervise"), true);
   if (!pick) throw new HttpError(400, "请指定跟进的 AI，或配置“长任务跟进用的 AI”或强模型档位");
   const profile = allProfiles(app.config).find(p => p.id === pick.profile);
   // Keep the chosen model even when the backend is temporarily down. The supervisor queues that exact choice.
@@ -95,13 +99,13 @@ function supervisorAi(app: App, userId: string, ai?: SupervisorAi): SupervisorAi
   return { profile: e.profile, model: e.model, effort: e.effort };
 }
 
-export function startLongTask(app: App, input: z.input<typeof startLongTaskSchema> & { userId: string }): LongTask {
+export function startLongTask(app: App, input: z.input<typeof startLongTaskSchema> & { userId: string }, source?: { kind: FollowKind; id: string }): LongTask {
   const { userId, ...args } = input;
   const { spaceId, threadId, goal, ...settings } = parse(startLongTaskSchema, args);
   requireTaskWrite(app, { userId, spaceId });
   getSpace(app, spaceId);
   const parent = threadId ? getThread(app, threadId) : null;
-  if (parent && (parent.spaceId !== spaceId || parent.userId !== userId)) throw new HttpError(403, "发起会话不属于当前用户和空间");
+  if (parent && ((!source && parent.spaceId !== spaceId) || parent.userId !== userId)) throw new HttpError(403, "发起会话不属于当前用户和空间");
   const ai = supervisorAi(app, userId, settings.ai);
   const budget = { dailyWakes: 40, codeRounds: app.config.agents.autoAdvance.codeRoundsMax, hours: 8, ...settings.budget };
   const notifications = { milestones: true, owner: true, corrections: true, summaryHours: 3, ...settings.notifications };
@@ -114,10 +118,10 @@ export function startLongTask(app: App, input: z.input<typeof startLongTaskSchem
       settings: { itemId: item.id, links: parent ? [parent.id] : [], ...(lark && { isolatedTopic: true,
         lastMessageId: parent.settings.lastMessageId, group: parent.settings.group, lark: parent.settings.lark }) } });
     const id = newId("lt"), at = now();
-    run(app.db, `insert into long_tasks(id,space_id,user_id,thread_id,item_id,goal,ai,brief,budget,notifications,created_at,updated_at)
-      values(?,?,?,?,?,?,?,?,?,?,?,?)`, id, spaceId, userId, thread.id, item.id, goal, JSON.stringify(ai),
-      JSON.stringify(initialBrief), JSON.stringify(budget), JSON.stringify(notifications), at, at);
-    wakeSupervisor(app, id, "长任务已创建，请起草任务书", { immediate: true });
+    run(app.db, `insert into long_tasks(id,space_id,user_id,thread_id,item_id,goal,ai,brief,budget,notifications,created_at,updated_at,status,source_kind,source_id)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, spaceId, userId, thread.id, item.id, goal, JSON.stringify(ai),
+      JSON.stringify(initialBrief), JSON.stringify(budget), JSON.stringify(notifications), at, at, source ? "active" : "draft", source?.kind ?? null, source?.id ?? null);
+    wakeSupervisor(app, id, source ? `已接管现有工作 ${source.kind} ${source.id}。请为它起草首版任务书，写入报告的 brief，直接生效。现有工作照常推进，避免重复派活。` : "长任务已创建，请起草任务书", { immediate: true });
     return getLongTask(app, id);
   });
 }
@@ -127,6 +131,13 @@ function requireTaskWrite(app: App, task: Pick<LongTask, "spaceId" | "userId">) 
     throw new HttpError(403, "需要长任务所在空间的编辑权限");
 }
 
+function closeFollowNotice(app: App, task: LongTask) {
+  if (!task.sourceKind) return;
+  const row = one<{ thread: string }>(app.db, `update messages set meta=json_remove(meta,'$.autoFollowId')
+    where id=(select json_extract(state,'$.notice') from long_tasks where id=?) returning conversation_id as thread`, task.id);
+  if (row) app.emit({ type: "conversation", conversationId: row.thread });
+}
+
 function requireOpen(task: LongTask) {
   if (task.status === "ended" || task.status === "done") throw new HttpError(409, "这件长任务已结束");
 }
@@ -134,6 +145,10 @@ function requireOpen(task: LongTask) {
 /** Caller has authenticated the owner of this task (HTTP, command or confirmation card). Budget fields are new totals. */
 export async function changeLongTask(app: App, id: string, command: LongTaskCommand): Promise<LongTask> {
   const task = saveLongTaskChange(app, id, command);
+  if (command.action === "detach") {
+    const { restoreWorkerQuestions } = await import("./asks.ts");
+    await restoreWorkerQuestions(app, task.id);
+  }
   if (command.action !== "supplement") {
     const { refreshSupervisorCard } = await import("./supervisor-report.ts");
     await refreshSupervisorCard(app, id);
@@ -145,15 +160,25 @@ function saveLongTaskChange(app: App, id: string, command: LongTaskCommand): Lon
   const c = parse(longTaskCommandSchema, command);
   return withinTx(app.db, () => {
     const task = getLongTask(app, id);
-    requireOpen(task);
     requireTaskWrite(app, task);
+    if (c.action === "detach" && task.sourceKind && task.status === "ended") return task;
+    requireOpen(task);
     const at = now();
     let note: string;
     switch (c.action) {
+      case "brief":
+        return confirmLongTaskBrief(app, id, c.brief);
+      case "detach": {
+        if (!task.sourceKind) throw new HttpError(409, "请在自动跟进的任务上使用此操作");
+        note = "本人选择不用跟进，工作按原来的方式继续";
+        run(app.db, "update long_tasks set status='ended',updated_at=? where id=?", at, id);
+        upsertItem(app, task.itemId, { status: "cancelled", note }, "user");
+        break;
+      }
       case "pause":
       case "resume":
       case "end": {
-        const status = c.action === "end" ? "ended" : c.action === "pause" ? "paused" : task.confirmedAt ? "active" : "draft";
+        const status = c.action === "end" ? "ended" : c.action === "pause" ? "paused" : task.confirmedAt || task.sourceKind ? "active" : "draft";
         if (status === task.status) return task;
         if (c.action === "resume" && task.status !== "paused") throw new HttpError(409, "只有暂停的长任务可以继续");
         note = { end: "本人结束了长任务", pause: "本人暂停了长任务", resume: "本人继续了长任务" }[c.action];
@@ -180,6 +205,7 @@ function saveLongTaskChange(app: App, id: string, command: LongTaskCommand): Lon
     }
     if (c.action === "supplement" || c.action === "budget" || c.action === "ai")
       addItemEvent(app, task.itemId, c.action, note, "user");
+    if (c.action === "detach" || c.action === "end") closeFollowNotice(app, task);
     wakeSupervisor(app, id, note, { immediate: true });
     return getLongTask(app, id);
   });
@@ -222,6 +248,9 @@ export function saveLongTaskReport(app: App, id: string, runId: string, report: 
     run(app.db, `update long_tasks set notes=json_insert(notes,'$[#]',json(?)), updated_at=?,
       status=case when ?='done' then 'done' else status end where id=?`, JSON.stringify(note), note.at, report.status, id);
     addItemEvent(app, task.itemId, "supervise", progressText, "supervisor", [`run:${runId}`], runId);
-    if (report.status === "done") upsertItem(app, task.itemId, { status: "done" }, "agent", runId);
+    if (report.status === "done") {
+      closeFollowNotice(app, task);
+      upsertItem(app, task.itemId, { status: "done" }, "agent", runId);
+    }
   });
 }
