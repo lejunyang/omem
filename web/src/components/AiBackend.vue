@@ -193,6 +193,8 @@ function resetUsage() {
 }
 watch(() => JSON.stringify([capacity.value.limits, capacity.value.quotaBySource?.[props.source]]), resetUsage, { immediate: true });
 const clamp = (v: unknown, min: number, max: number) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));
+// v-model on a number input gives a number once something is typed (an empty box stays "").
+const filled = (v: unknown) => String(v ?? "").trim() !== "";
 function addModelLimit() {
   const free = models.value.find((m) => !modelLimits.value.some((l) => l.model === m));
   modelLimits.value.push({ profile: limitKey.value, model: free ?? "", max: capacity.value.perModel ?? 3 });
@@ -200,7 +202,7 @@ function addModelLimit() {
 function saveUsage() {
   if (modelLimits.value.some((l) => !l.model)) return toast("每一行都要选模型", "error");
   const own: Limit[] = [
-    ...(cap.value.trim() !== "" ? [{ profile: limitKey.value, max: clamp(cap.value, 0, 32) }] : []),
+    ...(filled(cap.value) ? [{ profile: limitKey.value, max: clamp(cap.value, 0, 32) }] : []),
     ...modelLimits.value.map((l) => {
       const perDay = l.perDay !== undefined && String(l.perDay) !== "" ? clamp(l.perDay, 0, 100000) : undefined;
       return { profile: limitKey.value, model: l.model, max: clamp(l.max, 0, 32), ...(perDay !== undefined ? { perDay } : {}) };
@@ -209,8 +211,8 @@ function saveUsage() {
   const limits = [...(capacity.value.limits as Limit[]).filter((l) => !mineLimit(l)), ...own];
   const bySource = { ...(capacity.value.quotaBySource ?? {}) };
   const t = {
-    ...(avoidAbove.value.trim() !== "" ? { avoidAbove: clamp(avoidAbove.value, 50, 100) } : {}),
-    ...(perDayBelow.value.trim() !== "" ? { perDayBelow: Math.max(0, Math.min(100, Number(perDayBelow.value) || 0)) } : {}),
+    ...(filled(avoidAbove.value) ? { avoidAbove: clamp(avoidAbove.value, 50, 100) } : {}),
+    ...(filled(perDayBelow.value) ? { perDayBelow: Math.max(0, Math.min(100, Number(perDayBelow.value) || 0)) } : {}),
   };
   if (Object.keys(t).length) bySource[props.source] = t;
   else delete bySource[props.source];
