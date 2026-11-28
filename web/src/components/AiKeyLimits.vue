@@ -135,6 +135,20 @@ const modelChoice = computed(() => ({ default: "", models: props.choice.models.f
 </template>
 
 <style scoped>
+.linkish {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.linkish:hover {
+  text-decoration: underline;
+}
+.err-text {
+  color: var(--danger);
+}
 .lim {
   margin-top: 10px;
 }
