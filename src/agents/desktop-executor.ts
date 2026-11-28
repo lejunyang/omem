@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { OWNER } from "../core/users.ts";
+import { runBrowserProfilesRoot } from "./accounts.ts";
 import { canonical, under } from "./own-sandbox.ts";
 import { launchRun } from "./egress-run.ts";
 import { stop } from "./spawn.ts";
@@ -24,15 +25,13 @@ export function closeDesktopExecutor(token: string) { sessions.get(token)?.close
 
 function openDesktop(ctx: ToolContext, token: string, mounts: Mounts, start: Start): Session {
   const { app, commandSandbox: scope, browserProfilesRoot } = ctx;
-  const owner = (ctx.userId ?? OWNER) === OWNER;
-  const root = browserProfilesRoot!;
-  const account = accountOf(scope!.profile);
-  const profiles = account ? join(canonical(account.home), ".omem", "remote", "profiles")
-    : join(canonical(app.home), "remote", "profiles", ...(owner ? [] : ["@" + ctx.userId]));
+  const userId = ctx.userId ?? OWNER;
+  const owner = userId === OWNER;
+  const profiles = runBrowserProfilesRoot(app, userId, !!accountOf(scope!.profile));
   const state = join(mounts.home, ".ai-auto-desktop");
   const writable = scope!.own?.plan.rw ?? [...scope!.workspace.rw, mounts.home];
   // Resolve only the host HOME alias, never a profile or state directory through a symlink.
-  if (canonical(root) !== profiles || canonical(profiles) !== profiles || canonical(state) !== state)
+  if (browserProfilesRoot !== profiles || canonical(profiles) !== profiles || canonical(state) !== state)
     throw new Error("桌面状态路径已改变");
   for (const path of [profiles, state]) mkdirSync(path, { recursive: true, mode: 0o700 });
   mounts.rw.push(profiles, state);

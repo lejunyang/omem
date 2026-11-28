@@ -1,19 +1,22 @@
 import { once } from "node:events";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { catalogProfile } from "../src/agents/catalog.ts";
+import { accountFor, accountHome } from "../src/agents/accounts.ts";
+import { credentialHold, registerCredential, setCredentialSharing, startCredentialLogin } from "../src/agents/credentials.ts";
 import { launchRun } from "../src/agents/egress-run.ts";
 import { createRun } from "../src/agents/runs.ts";
 import { getSession, closeSession } from "../src/remote/sessions.ts";
 import { prepareRun } from "../src/agents/runner.ts";
-import { egressSupport } from "../src/agents/sandbox.ts";
+import { accountOf, egressSupport } from "../src/agents/sandbox.ts";
 import { launch } from "../src/agents/spawn.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { startServer } from "../src/server/http.ts";
+import { createUser, personalSpaceId } from "../src/core/users.ts";
 import { testApp } from "./helpers.ts";
 
 const support = egressSupport();
@@ -96,6 +99,66 @@ const fs=require("node:fs"), net=require("node:net"), cp=require("node:child_pro
     expect((await invoke("aad check")).code).toBe(126);
   } finally {
     revokeToolToken(prep.token); await server.close(); display.close(); vi.unstubAllEnvs(); app.db.close();
+    rmSync(root, { recursive: true, force: true }); rmSync(app.home, { recursive: true, force: true });
+  }
+}, 30000);
+
+it.skipIf(!support.ok)("成员借用 AI 账号时，aad 只挂载发起人的资料并以发起人身份回调", async () => {
+  const app = testApp(), root = mkdtempSync(join(tmpdir(), "desktop-loan-"));
+  const cwd = join(root, "work"), executable = join(root, "aad");
+  mkdirSync(cwd);
+  const borrower = "member-a", lender = "member-b";
+  const profileDir = (id: string) => join(accountHome(app, id), ".omem", "remote", "profiles");
+  for (const id of [borrower, lender]) {
+    createUser(app, { id, name: id });
+    mkdirSync(profileDir(id), { recursive: true });
+    writeFileSync(join(profileDir(id), "marker"), id);
+  }
+  writeFileSync(executable, `#!/usr/bin/env node
+const fs = require("node:fs"), path = require("node:path");
+(async () => {
+  const marker = path.join(process.env.OMEM_BROWSER_PROFILES, "marker");
+  const before = fs.readFileSync(marker, "utf8");
+  const seesLender = fs.existsSync(process.argv[2]);
+  fs.writeFileSync(marker, "updated");
+  const res = await fetch(process.env.OMEM_URL + "/api/operation-gate/http", {
+    headers: { authorization: "Bearer " + process.env.OMEM_TOKEN }
+  });
+  console.log(JSON.stringify({ before, seesLender, watch: (await res.json()).watch }));
+})().catch(e => { console.error(e); process.exitCode = 1; });
+`, { mode: 0o755 });
+  vi.stubEnv("OMEM_TOOL_AAD", executable); vi.stubEnv("OMEM_DESKTOP_TOOLS", "");
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
+  const unregister = registerCredential("fixture", { id: "ai", name: "示例登录", provides: { backends: ["traex"] },
+    login: async ctx => ({ user: ctx.userId }) }, undefined, app);
+  let token: string | undefined;
+  try {
+    setCredentialSharing(app, "owner", "fixture:ai", { scope: "self" });
+    await startCredentialLogin(app, lender, "fixture:ai");
+    await expect.poll(() => credentialHold(app, lender, "fixture:ai").state).toBe("logged-in");
+    setCredentialSharing(app, lender, "fixture:ai", { scope: "members", members: [borrower] });
+    const profile = accountFor(app, borrower, catalogProfile({ id: "traex", name: "fixture", command: "/bin/sh" }));
+    expect(accountOf(profile)).toMatchObject({ userId: lender, borrowed: expect.anything() });
+    app.config.security.operationRules = [{ id: "borrower", enabled: true, revision: 1, action: "deny", scope: { members: [borrower] },
+      match: { kind: "http", source: "browser", host: "borrower.test" } }];
+    const spaceId = personalSpaceId(borrower);
+    const job = createRun(app, { kind: "agent", spaceId, title: "借用账号的浏览器", userId: borrower });
+    const prep = prepareRun(app, { actor: { role: "assistant" }, spaceId, runId: job.id, profile, cwd });
+    token = prep.token;
+    expect(prep.mcp.env?.OMEM_BROWSER_PROFILES).toBe(profileDir(borrower));
+    const lenderMarker = join(profileDir(lender), "marker");
+    const child = await launchRun(profile, { app, mcp: prep.mcp }, account =>
+      launch("/bin/sh", ["-ec", 'exec aad "$1"', "sh", lenderMarker], { cwd, sandbox: account, workspace: prep.workspace, env: prep.mcp.env }));
+    let out = "", err = "";
+    child.stdout.on("data", b => out += b); child.stderr.on("data", b => err += b);
+    child.stdin.end();
+    expect((await once(child, "close"))[0], err).toBe(0);
+    expect(JSON.parse(out)).toEqual({ before: borrower, seesLender: false, watch: [{ host: "borrower.test", methods: null }] });
+    expect(readFileSync(join(profileDir(borrower), "marker"), "utf8")).toBe("updated");
+    expect(readFileSync(lenderMarker, "utf8")).toBe(lender);
+  } finally {
+    if (token) revokeToolToken(token);
+    await server.close(); unregister(); vi.unstubAllEnvs(); app.db.close();
     rmSync(root, { recursive: true, force: true }); rmSync(app.home, { recursive: true, force: true });
   }
 }, 30000);
