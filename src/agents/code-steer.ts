@@ -42,8 +42,7 @@ export function latestRound(app: App, runId: string): Run {
   const r = getRun(app, runId);
   if (r.kind === "review" && typeof r.input.codeRunId === "string") return latestRound(app, r.input.codeRunId);
   const chain = (r.output.codeChain ?? null) as { askRunId: string; lastCodeRunId: string | null } | null;
-  const fresh = chain ? ((getRun(app, chain.askRunId).output.codeChain ?? chain) as { lastCodeRunId: string | null }) : null;
-  if (fresh?.lastCodeRunId) return getRun(app, fresh.lastCodeRunId);
+  if (chain?.lastCodeRunId) return getRun(app, chain.lastCodeRunId);
   if (r.kind === "code") {
     const root = String(r.input.continueFrom ?? r.id);
     const last = one<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at desc, rowid desc limit 1", root, root);

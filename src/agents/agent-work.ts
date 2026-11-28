@@ -1,6 +1,8 @@
 import type { Execution } from "./execution.ts";
 import type { App } from "../core/app.ts";
-import { getLongTask, longTaskInThread } from "./long-tasks.ts";
+import { followAgentWork } from "./code-auto-follow.ts";
+import { autoFollowFor } from "./auto-follow.ts";
+import { getLongTask } from "./long-tasks.ts";
 import { wakeSupervisor } from "./supervisor.ts";
 import { longTaskForRun, workBudgetStop } from "./supervisor-code.ts";
 import { all, one, run, withinTx } from "../core/db.ts";
@@ -104,6 +106,7 @@ export function createAgentWork(app: App, input: { askRunId: string; rootConvers
   // Record the request in the work conversation.
   addWorkMessage(app, work, { role: "user", text: input.startMessage, meta: { agentWork: true, spec: input.agent } });
 
+  followAgentWork(app, work, input.startMessage);
   return work;
 }
 
@@ -148,8 +151,10 @@ export function queueSupervisedAgent(app: App, runId: string, round: AgentRoundI
     const parent = getRun(app, runId);
     const task = getLongTask(app, String(parent.input.longTaskId));
     if (task.status !== "active" || parent.output.supervisorReport) throw new Error("本轮当前不能派活");
-    const stop = workBudgetStop(app, task);
-    if (stop) throw new Error(stop);
+    if (task.sourceKind === "agentWork" && task.sourceId) {
+      const adopted = refreshWork(app, task.sourceId)!;
+      return queueAgentRound(app, adopted, { ...round, spaceId: task.spaceId, queuedBy: runId });
+    }
     const thread = getThread(app, task.threadId);
     const work: AgentWork = workOfRun(app, parent) ?? {
       askRunId: runId, rootConversationId: thread.parentId ?? thread.id, workConversationId: thread.id,
@@ -162,17 +167,25 @@ export function queueSupervisedAgent(app: App, runId: string, round: AgentRoundI
 
 /** Queue the next agent round inside an existing work conversation. */
 export function queueAgentRound(app: App, work: AgentWork, a: AgentRoundInput, longTaskId?: string): string {
-  if (work.runs >= MAX_AGENT_WORK_RUNS) throw new Error(`多 Agent 循环已达上限 ${MAX_AGENT_WORK_RUNS} 轮`);
-  const r = createRun(app, {
-    kind: "agent",
-    spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
-    title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
-    userId: a.assistantScope.userId,
-    input: { ...(longTaskId ? { longTaskId } : {}), ...(a.boardDevice ? { boardDevice: a.boardDevice } : {}), ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
-    parentId: work.askRunId,
+  return withinTx(app.db, () => {
+    work = refreshWork(app, work.askRunId) ?? work;
+    if (work.runs >= MAX_AGENT_WORK_RUNS) throw new Error(`多 Agent 循环已达上限 ${MAX_AGENT_WORK_RUNS} 轮`);
+    const task = longTaskId ? getLongTask(app, longTaskId) : autoFollowFor(app, "agentWork", work.askRunId);
+    if (task) {
+      const stop = workBudgetStop(app, task);
+      if (stop) throw new Error(stop);
+    }
+    const r = createRun(app, {
+      kind: "agent",
+      spaceId: a.spaceId ?? getThread(app, work.workConversationId).spaceId,
+      title: truncate(`${a.agent}：${a.task.split("\n")[0]}`, 80),
+      userId: a.assistantScope.userId,
+      input: { ...(longTaskId ? { longTaskId } : {}), ...(a.boardDevice ? { boardDevice: a.boardDevice } : {}), ...(a.taskId ? { boardTaskId: a.taskId } : {}), spaces: a.assistantScope.readScope ?? a.assistantScope.spaces, spec: a.agent, task: a.task, execution: a.execution, assistantScope: a.assistantScope, threadId: work.workConversationId, agentWorkId: work.askRunId, ...(a.queuedBy ? { queuedBy: a.queuedBy } : {}), ...(a.extraTools?.length ? { extraTools: a.extraTools } : {}) },
+      parentId: work.askRunId,
+    });
+    recordAgentRound(app, work, r.id, a.agent);
+    return r.id;
   });
-  recordAgentRound(app, work, r.id, a.agent);
-  return r.id;
 }
 
 function recordAgentRound(app: App, work: AgentWork, runId: string, agent: string) {
@@ -189,7 +202,7 @@ export function resumeAgentAfterSupervisorAnswer(app: App, worker: Run, answer: 
     return;
   }
   const next = createRun(app, { kind: "agent", title: "按助手的回答继续", spaceId: worker.spaceId,
-    parentId: worker.parentId, userId: task.userId, lane: worker.lane, input: { ...worker.input, longTaskId: task.id,
+    parentId: worker.parentId, userId: task.userId, lane: worker.lane, input: { ...worker.input,
       resumeFromRun: worker.id, task: `${worker.input.task ?? ""}\n\n${answer}` } });
   const work = workOfRun(app, worker);
   if (work) recordAgentRound(app, refreshWork(app, work.askRunId)!, next.id, String(worker.input.spec));
@@ -277,7 +290,7 @@ export function onWorkRunSettled(app: App, run: Run): { work: AgentWork; coordin
   markRound(app, work, run.id, status);
   // Rounds of an older version's digest step are bookkeeping only; cancelled rounds wait for the owner.
   if ((run.input as { role?: string }).role || run.status === "cancelled") return { work };
-  const task = longTaskInThread(app, work.workConversationId);
+  const task = longTaskForRun(app, run.id);
   if (task) {
     const note = `工作运行 ${run.id} ${status === "done" ? "已完成" : "失败"}：${truncate(String(run.output.answer ?? run.error ?? ""), 2000)}`;
     addWorkMessage(app, work, { role: "assistant", text: note, runId: run.id, meta: { record: true } });
@@ -392,6 +405,7 @@ export function forkAgentWorkTo(app: App, opts: { askRunId: string; rootConversa
   saveWork(app, work, [opts.askRunId]);
   // Old ask runs keep the previous work so earlier rounds' reports still resolve where they ran.
   addWorkMessage(app, work, { role: "user", text: opts.task, meta: { agentWork: true, spec: opts.agent, movedFrom: prev.workConversationId } });
+  followAgentWork(app, work, opts.task);
   const runId = queueAgentRound(app, work, { agent: opts.agent, task: opts.task, execution: opts.execution, assistantScope: opts.assistantScope, queuedBy: opts.queuedBy, extraTools: opts.extraTools });
   return { work, runId };
 }

@@ -17,6 +17,7 @@ describe("协同任务板", async () => {
   const home = mkdtempSync(join(tmpdir(), "omem-board-"));
   writeFileSync(join(home, "config.json"), JSON.stringify({
     interactiveConcurrency: 5,
+    longTasks: { auto: { agentWork: false } }, // Exercise the original coordination turns.
     agents: { default: "fake", workBoard: { concurrency: 2 }, tiers: { strong: { profile: "fake", model: "m2" } },
       profiles: [{ id: "fake", transport: "acp", model: "m1", command: process.execPath, args: [resolve("test/fake-acp-agent.ts")],
         env: { FAKE_MODE: "board", FAKE_TRAE: "1", FAKE_USAGE: "321" } }] },
