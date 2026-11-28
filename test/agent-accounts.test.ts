@@ -32,7 +32,7 @@ describe("bubblewrap arguments", () => {
     command: "/home/svc/.npm-global/bin/codex-acp",
     args: ["--flag"],
   };
-  const args = bwrapArgs(plan);
+  const { args } = bwrapArgs(plan);
   const at = (...xs: string[]) => args.findIndex((_, i) => xs.every((x, k) => args[i + k] === x));
 
   it("starts from a read-only root in new user and PID namespaces, network shared", () => {
@@ -54,14 +54,14 @@ describe("bubblewrap arguments", () => {
   });
 
   it("keeps a data folder hidden when it sits inside a read-only checkout", () => {
-    const a = bwrapArgs({ hide: ["/home/svc/omem/.omem"], ro: ["/home/svc/omem"], rw: ["/home/svc/omem/.omem/accounts/ann/home"], cwd: "/x", command: "/bin/true", args: [] });
+    const { args: a } = bwrapArgs({ hide: ["/home/svc/omem/.omem"], ro: ["/home/svc/omem"], rw: ["/home/svc/omem/.omem/accounts/ann/home"], cwd: "/x", command: "/bin/true", args: [] });
     const i = (...xs: string[]) => a.findIndex((_, k) => xs.every((x, j) => a[k + j] === x));
     expect(i("--ro-bind-try", "/home/svc/omem", "/home/svc/omem")).toBeLessThan(i("--tmpfs", "/home/svc/omem/.omem"));
     expect(i("--tmpfs", "/home/svc/omem/.omem")).toBeLessThan(i("--bind", "/home/svc/omem/.omem/accounts/ann/home", "/home/svc/omem/.omem/accounts/ann/home"));
   });
 
   it("lets writable win over read-only at the same path and ignores the root", () => {
-    const a = bwrapArgs({ hide: ["/"], ro: ["/w", "/"], rw: ["/w"], cwd: "/w", command: "/bin/true", args: [] });
+    const { args: a } = bwrapArgs({ hide: ["/"], ro: ["/w", "/"], rw: ["/w"], cwd: "/w", command: "/bin/true", args: [] });
     expect(a.filter((x) => x === "--ro-bind-try")).toEqual([]);
     expect(a).toContain("--bind");
     expect(a.filter((x) => x === "--tmpfs").length).toBe(1);
@@ -82,6 +82,13 @@ describe("the sandbox environment", () => {
     ["/srv/omem-data", "/home/svc", "/tmp"],
     "/opt/node/bin",
   );
+  it("keeps command login variables out of a member Agent even when set by its profile", () => {
+    const run = { OMEM_COMMAND_GATE: "/data/bin/sandbox/bin/guarded", OMEM_TOKEN: "turn", NPM_TOKEN: "fixture" };
+    const env = sandboxEnv({}, run, { home: "/account", env: { GH_TOKEN: "fixture", OPENAI_API_KEY: "model" } }, [], "/usr/bin");
+    expect(env).not.toHaveProperty("NPM_TOKEN");
+    expect(env).not.toHaveProperty("GH_TOKEN");
+    expect(env).toMatchObject({ OMEM_TOKEN: "turn", OPENAI_API_KEY: "model" });
+  });
   it("sets HOME and the account's variables, keeps the run's token and drops the owner's credentials", () => {
     expect(env.HOME).toBe("/srv/omem-data/accounts/ann/home");
     expect(env.CODEX_HOME).toBe("/srv/omem-data/accounts/ann/home/.codex");
@@ -112,7 +119,7 @@ describe("whether this machine can sandbox", () => {
     const seen: string[][] = [];
     const ok = detectSandbox("linux", { OMEM_BWRAP: "/opt/bwrap" }, (_f, a) => {
       seen.push(a);
-      return { status: 0, stdout: a[0] === "--version" ? "bubblewrap 0.9.0" : "", stderr: "" };
+      return { status: 0, stdout: a[0] === "--version" ? "bubblewrap 0.9.0" : a[0] === "--help" ? "--bind-fd --ro-bind-fd" : "", stderr: "" };
     });
     expect(ok).toEqual({ ok: true, bwrap: "/opt/bwrap", version: "0.9.0" });
     expect(seen).toContainEqual(PROBE_ARGS);
@@ -203,13 +210,13 @@ describe("accounts of members", async () => {
       setSandboxSupportForTests({ ok: true, bwrap: "test-bwrap" });
       app.config.agents.accountIsolation = "require";
       launch.mockImplementation((cmd, args, env, _cwd, account) => ({
-        file: cmd.file, args: [...cmd.prefix, ...args], env: { ...env, HOME: account.home } as Record<string, string>,
+        pinned: new Set(), npmrc: undefined, file: cmd.file, args: [...cmd.prefix, ...args], env: { ...env, HOME: account.home } as Record<string, string>,
       }));
       // Bob cannot borrow the owner's Codex login in strict mode. The configured local ACP can run in his HOME.
       expect((await start("bob", "codex").result).profileId).toBe(fake.id);
       expect(launch.mock.calls.at(-1)?.[4]).toMatchObject({ userId: "bob", home: accountHome(app, "bob") });
       launch.mockImplementation(() => ({
-        file: process.execPath, args: ["-e", "console.error('bwrap: mount failed'); process.exit(1)"], env: {},
+        pinned: new Set(), npmrc: undefined, file: process.execPath, args: ["-e", "console.error('bwrap: mount failed'); process.exit(1)"], env: {},
       }));
       await expect(start("bob", fake.id).result).rejects.toThrow(/不能隔离成员的运行.*mount failed/);
       expect(accountBlocked(app, "bob", { ...fake, transport: "doubao" })).toContain("云端");

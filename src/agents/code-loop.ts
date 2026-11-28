@@ -522,7 +522,7 @@ function queueRound(app: App, rootId: string, last: Run, label?: string): Run | 
   try {
     const chain = codeChainFor(app, last);
     if (chain) {
-      const fresh = (getRun(app, chain.askRunId).output.codeChain as CodeChain | undefined) ?? chain;
+      const fresh = (getRun(app, rootId).output.codeChain as CodeChain | undefined) ?? chain;
       const ready = { ...fresh, maxRounds: w.until, awaitingUser: false, waitReason: undefined };
       saveCodeChain(app, ready, ready.askRunId, ...ready.rounds);
       return queueNextCodeRound(app, ready, title, { manual: !running, resumeSessionId: sessionId, execution: w.execution, reviewExecution: w.reviewExecution })?.run ?? null;
@@ -809,7 +809,8 @@ function watchTaskDurations(app: App) {
   const check = () => {
     const coding = all<{ work_id: string; seq: number }>(app.db, `select t.work_id,t.seq from runs r join code_tasks t
       on t.work_id=coalesce(json_extract(r.input,'$.continueFrom'),r.id)
-      where r.kind='code' and r.status='running' and json_extract(r.input,'$.longTaskId') is not null
+      where r.kind='code' and r.status='running' and (json_extract(r.input,'$.longTaskId') is not null
+        or exists (select 1 from long_tasks lt where lt.source_kind='code' and lt.source_id=t.work_id and lt.status='active'))
       and t.state='coding' and json_extract(t.origin,'$.slow') is null`);
     for (const row of coding) {
       const t = getTask(app, row.work_id, row.seq);

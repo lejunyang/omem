@@ -19,20 +19,30 @@ export const executionSchema = z.object({
 });
 export type Execution = z.infer<typeof executionSchema>;
 
+/** A member's group can still use a backend after the owner's quota runs out. */
+export function memberLoginGroupPick(app: App, id: string, userId: string, scope?: PolicyScope) {
+  return groupPick(app, id, scope, true, p => {
+    if (!backendAvailable(p, app.home)) return false;
+    const plan = memberAccountPlan(app, userId, p, false, true);
+    return plan.kind === "login" || (plan.kind === "ready" && !excluded(app, plan.profile));
+  });
+}
+
 /** `userId`: whose run it is: a member logged in to the backend is checked against their own account's models. */
-export function validateExecution(app: App, choice?: Execution, userId?: string, recorded = false, scope: PolicyScope | null | undefined = policyScope(app, "agent"), ownerNamed = false): Execution | undefined {
+export function validateExecution(app: App, choice?: Execution, userId?: string, recorded = false, scope: PolicyScope | null | undefined = policyScope(app, "agent"), ownerNamed = false, ownAccountOnly = false): Execution | undefined {
   if (!choice) return undefined;
   const e = executionSchema.parse(choice);
   if (e.source === "auto" && !app.config.agents.routing.automatic) throw new HttpError(403, "已关闭助手自主选型；使用档案默认值，只有本人明确指定才能临时更换");
   if (app.config.agents.groups.some(g => g.id === e.profile)) {
-    const pick = groupPick(app, e.profile, scope ?? undefined);
+    const pick = scope?.classId === "supervise" && userId && isAiMember(app, userId)
+      ? memberLoginGroupPick(app, e.profile, userId, scope) : groupPick(app, e.profile, scope ?? undefined);
     if (!pick) throw new HttpError(400, "AI 组 " + e.profile + " 没有符合规则的可用后端");
     Object.assign(e, pick);
   }
   const backend = allProfiles(app.config).find((p) => p.id === e.profile);
   if (!backend || (!recorded && !backendAvailable(backend, app.home))) throw new HttpError(400, `后端 ${e.profile} 不可用，请先 list_ai_backends 核对`);
   const candidate = { ...backend, model: e.model ?? backend.model };
-  const plan = userId && isAiMember(app, userId) ? memberAccountPlan(app, userId, candidate) : null;
+  const plan = userId && isAiMember(app, userId) ? memberAccountPlan(app, userId, candidate, ownAccountOnly) : null;
   const probe = plan ? plan.kind === "ready" ? probeFor(app, plan.profile) : null : userProbe(app, userId, e.profile);
   if (e.model && probe?.models.length) {
     const resolved = resolveModelOption(e.model, probe.models);

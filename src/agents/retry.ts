@@ -1,6 +1,6 @@
-import { createCodeRound } from "./supervisor-code.ts";
+import { createCodeRound, longTaskForRun, workBudgetStop } from "./supervisor-code.ts";
 import type { App } from "../core/app.ts";
-import { all, one } from "../core/db.ts";
+import { all, one, withinTx } from "../core/db.ts";
 import { HttpError, truncate } from "../core/util.ts";
 import { createRun, getRun, runUser, type Run } from "./runs.ts";
 
@@ -19,15 +19,31 @@ export async function retryRun(app: App, id: string, userId?: string): Promise<R
   if (r.kind === "code") {
     const continued = await continueCode(app, r, owner);
     if (continued) return { ...continued, continued: true };
-    return createCodeRound(app, { kind: "code", spaceId: r.spaceId, title: r.title, input: r.input, parentId: r.parentId, lane: r.lane, userId: owner });
+    // A failure before checkout has no worktree to continue, but its retry still uses the same budget.
+    const task = longTaskForRun(app, r.id);
+    const input = task ? { ...r.input, longTaskId: task.id, retryOf: r.id } : r.input;
+    return createCodeRound(app, { kind: "code", spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane, userId: owner });
   }
   if (r.kind === "agent") {
     // Only work rounds and silent investigations keep their session; others start a new one.
     const session = r.input.agentWorkId || r.input.silent ? lastSession(app, r.id) : undefined;
     const input = { ...r.input, retryOf: r.id, ...(session ? { resumeSessionId: session } : {}) };
-    return { ...createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane, ...(owner ? { userId: owner } : {}) }), continued: true };
+    return withinTx(app.db, () => {
+      const task = r.input.agentWorkId ? longTaskForRun(app, r.id) : null;
+      if (task) {
+        if (owner !== task.userId) throw new HttpError(403, "工作运行与跟进必须属于同一用户");
+        const stop = workBudgetStop(app, task);
+        if (stop) throw new HttpError(409, stop);
+      }
+      return { ...createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane, userId: owner }), continued: true };
+    });
   }
-  return createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input: r.input, parentId: r.parentId, lane: r.lane, ...(owner ? { userId: owner } : {}) });
+  // A chat question (Feishu, a group) is answered by the channel adapter that awaited the first run;
+  // nobody awaits the retry, so it posts its answer itself, like a turn resumed after a restart.
+  const chatAsk = r.kind === "ask" && typeof r.input.conversationId === "string" &&
+    !!one(app.db, "select 1 from conversations where id = ? and channel not in ('web','cli')", r.input.conversationId);
+  const input = chatAsk ? { ...r.input, recoverReply: true } : r.input;
+  return createRun(app, { kind: r.kind, spaceId: r.spaceId, title: r.title, input, parentId: r.parentId, lane: r.lane, ...(owner ? { userId: owner } : {}) });
 }
 
 /** The latest agent session a run opened (ACP reports it as soon as it is open), coding phase first. */

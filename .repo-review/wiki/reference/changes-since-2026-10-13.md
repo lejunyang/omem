@@ -10,6 +10,64 @@ updated: 2026-11-28
 - 从 `plugins/english/server.ts` 看题目、口语简报、评价及每日课程，从 `materials.ts` 看引用核对与去重。表达跟着画像里的知识点复习，语音模型收到匿名简述。
 - `src/plugins/settings.ts` 和 `src/agents/runner.ts` 限定材料读取范围。规则 `plugins/english/rules/daily-lesson.yaml` 初次导入停用；启用后每天准备课程并用宿主通知发链接。页面数据约定在 `docs/v2/plugins.md` 的“材料出处和今日学习”。
 
+## 交回的报告只存报告本身，网页上折叠（2026-11-28）
+
+`run_agent` 的报告交回会话时（`src/agents/wakes.ts` 的 `returnChildReport`），会话里那条消息的正文只有报告；“按报告给本会话写回复……stay_quiet”这段说明放在 `meta.wake.note`，`meta.wake.report` 记下是哪个 Agent、哪次运行。助手那一轮看到的内容没变：`renderMessages` 把说明拼回报告前面，署名“<Agent> 交回的报告（宿主转交，不是本人说的）”；摘要和 `read_conversation` 也按这个署名，不再记成“助理”。问答页把交回的报告、多 Agent 工作里各轮的报告和定时唤醒都收成一行，点开看正文；旧数据里正文带着说明的，展示时去掉说明只留报告。这类消息本来就不发到飞书。
+
+## “用一句话改”的规则卡：倾向不写成规则，提醒被挡住的指定 AI（2026-11-28）
+
+起草角色 `ai-policy-writer` 只把“禁止 / 别用 / 只用 / 必须用”这类话写成 `use` / `deny`；“优先 / 尽量 / 可考虑”放进草稿新加的 `prefer`，卡片上单列，不改范围。预览（`src/agents/ai-policy-proposal.ts`）在长任务跟进用的 AI 或角色默认 AI 会被新规则挡住时加一段提醒，起草时也把这些指定告诉起草角色。卡片上的具体 AI 写成“Codex · gpt-6.2-astra · xhigh”（原来是 `ai:codex · · high`），后端去掉“(ACP)”，每个类别的范围、顺序、兜底写在类别的框里，不再用飞书上画成半宽、值另起一行的字段块。
+
+## 回扫：分几次做完的事，中间的进展算接着往下（2026-11-28）
+
+`roles/outcome-reviewer.md`：盯发布、等部署、交办的一轮这类如实报告做到哪一步、之后助手自己接着做的回答标 `next`，不再标 `supplement`；`supplement` 只留给漏了原话要的、说做完其实没做完、运行没出结果的。
+
+## 回补时回扫一段接一段（2026-11-28）
+
+`src/agents/outcome-review.ts` 的运行交完一段、回补还没完时立刻排下一段，不再等巡检的下一个节拍（原来一刻钟只跑一段，每段三四分钟）。这一段一次回答都没交时不接着排，留给巡检。
+
+## 研究正常完成后再来一轮（2026-11-28）
+
+从 `src/agents/auto-follow.ts` 读起。正常完成后再开研究，新一轮有自己的任务书和预算，上一轮的报告和进度保留在原话题。已选择“不用跟进”的研究继续由本人确认方向。
+
+## 研究、编码交办与多 Agent 工作自动跟进（2026-11-28）
+
+从 `src/agents/auto-follow.ts` 读起。自动跟进记录工作来源，首版任务书随报告生效。原会话可退出，之后仍能查到已作出的决定。三类工作各有独立开关，编码交办另按拆分和轮数判断。进度卡、可编辑的必问清单和每轮报告在 `src/agents/supervisor-report.ts`。
+
+服务启动时同时补挂研究和编码。编码交办即使没有活跃运行，只要当前轮还在等确认或等修改项答复，重启时也会按原门槛补挂一次。等待中的研究关卡随退出操作交回本人。研究流程的运行阶段可在 `done: confirm` 旁写 `confirm: supervisor`，详见 `src/flows/engine.ts`。
+
+## 沙箱在启动前报告后端与命令的登录目录冲突（2026-11-28）
+
+从 `src/agents/credential-registry.ts` 的 `checkBackendCommandState` 读起。本人、成员及借用账号启动 Linux 沙箱时检查两个路径是否相同或互相包含。冲突时提示分开供给独立凭据或改用其他后端。
+
+## 登录目录重合的凭据插件可注册（2026-11-28）
+
+从 `src/agents/credential-registry.ts` 读起。注册接受后端与命令的状态目录相同或互为父子。本人关闭沙箱时可照常使用这类登录。
+
+## 按运行类型分批启用沙箱，分开后端与命令登录（2026-11-28）
+
+从 `src/agents/own-run.ts` 读起。非空的 `includeKinds` 只隔离列出的本人运行，`excludeKinds` 优先。飞书 CLI 在执行器里使用本账号的登录，常见浏览器资料加入默认隐藏清单。凭据插件分别供给后端与命令状态的例子见 `examples/plugins/acmeauth`。
+
+## Git 远端与子模块更新使用本身份的登录（2026-11-28）
+
+`src/agents/git-command.ts` 供垫片和执行器共同识别 `git remote update` 与 `git submodule update --remote`。这两类更新与 fetch 共用执行许可和命令审计。查看、添加或删除 remote 仍按本地操作处理。
+
+## 执行器恢复命令登录变量（2026-11-28）
+
+`src/agents/command-executor.ts` 为 gh、npm 等命令恢复各自的登录环境，受信任的凭据插件可按子命令声明 `loginEnv`。本人使用后端档案或宿主环境中的值，成员只使用本账号的值。
+
+## 沙箱命令使用本人授权的额外目录（2026-11-28）
+
+从 `src/agents/own-sandbox.ts` 的挂载计划读起。执行器沿用启动时确定的工作区权限，额外仓库可通过 cwd 或 Git 的 `-C` 使用。后端状态、隐藏路径和各命令自己的登录仍分别隔离。
+
+## 沙箱保留 npm 的源设置（2026-11-28）
+
+从 `src/agents/sandbox-npmrc.ts` 读起。Linux 本人和成员沙箱把用户 npm 配置作为只读快照挂回原位，保留源、作用域、代理及 CA 设置，去掉登录字段。私有源需要认证时由明确授权的执行器处理，或由本人安装。
+
+## 本人沙箱的登录路径与运行类型（2026-11-28）
+
+从 `src/agents/own-run.ts` 读起。挂载工作区后再遮住登录文件、SSH agent 套接字和插件状态，设置可替换内置路径或排除指定类型的本人运行。`src/agents/egress-run.ts` 将本人沙箱接入已有的 all-sandboxed 出网模式。命令启动从 `src/agents/command-executor.ts` 读起，同身份的命令使用独立沙箱和流式管道，原有借用流程保留。
+
 ## 用 /跟进 开启和管理长任务（2026-11-28）
 
 从 `src/agents/supervisor-command.ts` 读起。在工作话题发 `/跟进` 看进展，进度卡显示由哪个 AI 跟进。跟进消息沿用主助手署名，设置项名为“长任务跟进用的 AI”。
@@ -81,7 +139,8 @@ updated: 2026-11-28
 
 - `node scripts/card-preview.ts`：用真实的卡片代码（`askCard`、`viewCard`、阶段卡和方案确认的排版）在临时数据目录里生成样例，用开发依赖 open-feishu-card 按电脑和手机宽度画出来截图；`--json` 画任意卡片，`--site` 重画文档站的 `lark-card-stage` / `lark-card-design` / `lark-card-view`（机器人与卡片页）。和客户端的差别写在脚本开头和 docs/v2/lark-cards.md 第 5 节。
 - 方案确认的排版提成纯函数 `designConfirmation`（`src/designs/work.ts`），脚本和交办共用。
-- 预览里看出来的：回答后的宿主卡片原来还是灰色卡片头，灰色的“已回答”标签几乎看不见；现在宿主卡片回答后也是不着色的卡片头，颜色只在标签上。
+- 预览里看出来的：回答后的宿主卡片原来还是灰色卡片头，灰色的“已回答”标签几乎看不见；现在宿主卡片回答后也是不着色的卡片头，颜色只在标签上。展示块的卡片（`show`）第一个结论不是需要关注或故障时，卡片头从灰色改成不着色：飞书规范里灰色表示失效，真实 Agent 的一张运行盘点卡看起来像过期了。
+- 常驻实例上用真实 Agent（codex gpt-6.2-sol）问了一次“过去 24 小时的运行情况”：它用了 `callout`、`metric` 和四个 `fold`（明细收在折叠里），没用 `list`。
 
 ## 长任务的任务书、跟进报告和查询接口（2026-11-27）
 

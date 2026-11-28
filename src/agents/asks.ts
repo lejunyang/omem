@@ -203,6 +203,21 @@ export function createAsk(
   return ask;
 }
 
+/** Return still-unanswered worker questions to their original conversations on opt-out. */
+export async function restoreWorkerQuestions(app: App, taskId: string) {
+  const task = one<{ thread_id: string }>(app.db, "select thread_id from long_tasks where id=?", taskId)!;
+  for (const { id } of all<{ id: string }>(app.db, `select id from asks where conversation_id=? and status='pending'
+    and json_extract(context,'$.handler') in ('supervisor-questions','supervisor-brief','supervisor-ai')`, task.thread_id))
+    cancelAsk(app, id, "本人已退出跟进");
+  const rows = all<{ id: string }>(app.db, `update asks set context=json_remove(context,'$.supervisorTaskId','$.notificationOnly')
+    where status='pending' and json_extract(context,'$.supervisorTaskId')=? returning id`, taskId);
+  for (const { id } of rows) {
+    const ask = getAsk(app, id);
+    app.emit({ type: "ask", id, status: "pending", conversationId: ask.conversationId });
+    await show(app, ask);
+  }
+}
+
 async function show(app: App, ask: Ask) {
   app.events.emit("outlet-ask", ask);
   run(app.db, "update asks set shown_at = coalesce(shown_at, ?) where id = ?", now(), ask.id);

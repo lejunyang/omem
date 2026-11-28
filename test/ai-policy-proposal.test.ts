@@ -128,6 +128,28 @@ it("在原类别规则上增减选择，保留顺序、严格模式、其他类�
   expect(saved.classes.routine).toEqual(routine);
 }, 60000);
 
+it("预览用人话写具体的 AI，倾向不写成规则，提示设置里指定的 AI 会被挡住", async () => {
+  app.config.longTasks.supervisor = { profile: "second" };
+  try {
+    const ask = await askFor(sentence("长任务跟进只用 first 的 neon，写作优先 first", {
+      changes: [{ class: "supervise", addUse: ["ai:first · gemini-neon"] }], prefer: ["写作优先 first"] }));
+    const view = ask.ui!.view!;
+    const summary = viewText(view);
+    expect(summary).toContain("可选范围：first · gemini-neon");
+    expect(summary).not.toContain("· ·");
+    expect(summary).not.toContain("ai:");
+    // The rule sits in the class's box as a sentence, not in label/value tiles.
+    expect(view.some(c => c.type === "fields")).toBe(false);
+    expect(summary).toContain("设置里指定的这些 AI 会被新规则挡住");
+    expect(summary).toContain("长任务跟进用的 AI：second（长任务跟进）");
+    expect(summary).toContain("这些是倾向，没有写成规则");
+    expect(summary).toContain("写作优先 first");
+    await answerAsk(app, ask.id, { by: "owner", choice: 2 });
+  } finally {
+    app.config.longTasks.supervisor = undefined;
+  }
+}, 60000);
+
 it("保存总体偏好时提示把硬性要求转成规则", async () => {
   const submit = (guidance: string) => server.inject({ method: "PUT", url: "/api/settings",
     payload: { agents: { routing: { ...app.config.agents.routing, guidance } } } });

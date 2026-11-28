@@ -10,7 +10,7 @@ import type { ViewComponent } from "./ui-blocks.ts";
 import { createAsk, registerAskAction } from "./asks.ts";
 import { createRun, getRun, runUser, setRunOutput, type RunContext } from "./runs.ts";
 import { groupPick, matchesSelector, policyReason, policyScope, policyUsage, validatePolicy, type PolicyAI } from "./ai-policy.ts";
-import { runClasses } from "./run-classes.ts";
+import { runClass, runClasses, type RunClass } from "./run-classes.ts";
 import { modelFamily } from "./families.ts";
 import { cachedProbe, effortsFor } from "./probe.ts";
 import { backendAvailable } from "./availability.ts";
@@ -22,13 +22,15 @@ const changeSchema = z.object({
   addDeny: refs.optional(), removeDeny: refs.optional(),
   order: z.enum(["fixed", "choose"]).optional(), strict: z.boolean().optional(),
 }).strict();
+const quotes = z.array(z.string().trim().min(1).max(8000)).max(20).default([]);
 const draftSchema = z.object({
   changes: z.array(changeSchema).max(Object.keys(runClasses).length),
-  unmatched: z.array(z.string().trim().min(1).max(8000)).max(20).default([]),
+  unmatched: quotes,
+  prefer: quotes,
 }).strict();
 export const proposalArgs = z.object({
   text: policyText.optional().describe("主助手原样转交本人的一句话"),
-  draft: draftSchema.optional().describe("只给规则起草运行，按类别增减 use 和 deny。unmatched 放没有对应设置的原话"),
+  draft: draftSchema.optional().describe("只给规则起草运行，按类别增减 use 和 deny。prefer 放只表示倾向（优先、尽量、可考虑）的原话，不改规则；unmatched 放没有对应设置的原话"),
 }).strict();
 type Draft = z.infer<typeof draftSchema>;
 
@@ -65,6 +67,7 @@ export async function runPolicyDraft(ctx: RunContext) {
     signal: ctx.signal, onEvent: e => ctx.event(e.type, e),
     task: [`本人原话：\n${run.input.text}`, `类别：${JSON.stringify(runClasses)}`,
       `组：${JSON.stringify(app.config.agents.groups)}`, `可用的 AI：${JSON.stringify(backends)}`,
+      `设置里另外指定的 AI：${JSON.stringify(pinnedAIs(app).map(({ label, classId, pick }) => ({ label, class: classId, ...pick })))}`,
       `当前规则：${JSON.stringify(app.config.agents.policy)}`].join("\n\n"),
   });
   if (!getRun(app, run.id).output.askId) throw new Error("强组没有提交规则草稿，请换个说法重试");
@@ -118,19 +121,21 @@ function preview(app: App, draft: Draft) {
     }
   }
   const view: ViewComponent[] = [];
-  const groupName = (id: string) => app.config.agents.groups.find(g => g.id === id)?.name ?? id;
   for (const id of changed) {
     const before = policyScope(app, undefined, undefined, { class: id })!;
     const after = policyScope(proposed, undefined, undefined, { class: id })!;
     const rule = policy.classes[id]!;
     const affected = history.filter(h => h.class === id && !policyReason(before, h.ai) && policyReason(after, h.ai))
       .reduce((total, h) => total + h.count, 0);
-    view.push({ type: "callout", tone: "info", title: runClasses[id].name, text: `近 7 天有 ${affected} 次选择的 AI 将被移出范围。` });
-    const settings = [];
-    if (JSON.stringify(before.use) !== JSON.stringify(after.use)) settings.push({ label: "可选范围", value: rule.use.map(groupName).join(" → ") || "不限组" });
-    if (before.order !== after.order) settings.push({ label: "顺序", value: rule.order === "fixed" ? "按组的先后" : "由决策模型选择" });
-    if (before.strict !== after.strict) settings.push({ label: "范围内均不可用时", value: rule.strict ? "排队等待" : "沿用普通兜底设置" });
-    if (settings.length) view.push({ type: "fields", items: settings });
+    // One sentence per setting inside the class's box: a fields block draws as half-width tiles with the value
+    // under its label (lark-send.ts), which suits numbers, not a rule read as a sentence.
+    const lines = [];
+    if (JSON.stringify(before.use) !== JSON.stringify(after.use)) lines.push(`可选范围：${rule.use.map(ref => refText(app, ref)).join(" → ") || "不限"}`);
+    if (before.order !== after.order) lines.push(`顺序：${rule.order === "fixed" ? "按上面的先后" : "由决策模型选择"}`);
+    if (before.strict !== after.strict) lines.push(`范围内都用不了时：${rule.strict ? "排队等待" : "沿用普通兜底设置"}`);
+    lines.push(`近 7 天有 ${affected} 次选择的 AI 将被移出范围。`);
+    // A list: the web reads the text as Markdown without soft line breaks; Feishu draws it line by line either way.
+    view.push({ type: "callout", tone: "info", title: runClasses[id].name, text: lines.map(line => "- " + line).join("\n") });
     for (const selector of rule.deny) {
       const single = { ...after, use: [], deny: [{ selector, rule: "" }] };
       const matches = catalog.filter(ai => policyReason(single, ai))
@@ -141,9 +146,58 @@ function preview(app: App, draft: Draft) {
     const removed = (app.config.agents.policy.classes[id]?.deny ?? []).filter(s => !rule.deny.includes(s));
     if (removed.length) view.push({ type: "markdown", text: "取消排除：" + removed.map(s => selectorText(app, s, catalog)).join("、") });
   }
+  // An AI fixed elsewhere in the settings (the long-task follow-up, a role's default) that the new rules would refuse.
+  const blocked = pinnedAIs(app).filter(({ classId, ai }) => changed.has(classId)
+    && !policyReason(policyScope(app, undefined, undefined, { class: classId })!, ai)
+    && policyReason(policyScope(proposed, undefined, undefined, { class: classId })!, ai));
+  if (blocked.length) view.push({ type: "callout", tone: "warning", title: "设置里指定的这些 AI 会被新规则挡住",
+    text: blocked.map(b => `- ${b.label}：${aiWords(app, b.pick)}（${runClasses[b.classId].name}）`).join("\n") });
   if (!changed.size) view.push({ type: "markdown", text: "没有可保存的规则变更。" });
+  if (draft.prefer.length) view.push({ type: "callout", tone: "info", title: "这些是倾向，没有写成规则",
+    text: draft.prefer.map(s => "- " + s).join("\n") + "\n\n决策模型在范围内排先后时参考总体偏好。要一定做到，请说“只用”或“别用”。" });
   if (draft.unmatched.length) view.push({ type: "callout", tone: "warning", title: "这些要求没有对应的设置", text: draft.unmatched.map(s => "- " + s).join("\n") });
   return { view, changed };
+}
+
+type AiPick = { profile: string; model?: string; effort?: string };
+/** AIs the owner fixed outside the rules: the long-task follow-up and the per-role defaults. */
+function pinnedAIs(app: App) {
+  const profiles = new Map(allProfiles(app.config).map(p => [p.id, p]));
+  const pins: { label: string; classId: RunClass; pick: AiPick }[] = [];
+  const supervisor = app.config.longTasks.supervisor;
+  if (supervisor) pins.push({ label: "长任务跟进用的 AI", classId: "supervise", pick: supervisor });
+  for (const [role, profile] of Object.entries(app.config.agents.roles)) {
+    const classId = runClass(undefined, role);
+    if (classId) pins.push({ label: `角色 ${role} 的默认 AI`, classId, pick: { profile, ...app.config.agents.roleModels[role]?.[profile] } });
+  }
+  return pins.flatMap(({ pick, ...pin }) => {
+    const base = profiles.get(pick.profile);
+    if (!base) return [];
+    const model = pick.model ?? base.model;
+    const effort = pick.effort ?? (pick.model && pick.model !== base.model ? undefined : base.effort);
+    return [{ ...pin, pick, ai: { ...base, model, effort } as PolicyAI }];
+  });
+}
+
+const plainName = (name: string) => name.replace(/\s*[(（](ACP|CLI|命令行)[)）]\s*$/i, "");
+/** “Codex · gpt-6.2-astra · xhigh”, as the settings page says it (web/src/lib/ai-policy.ts aiText). */
+function aiWords(app: App, p: AiPick, all?: { model: string; effort: string }) {
+  const profile = allProfiles(app.config).find(x => x.id === p.profile);
+  const parts = [profile?.name ? plainName(profile.name) : p.profile];
+  if (p.model) parts.push(cachedProbe(app, p.profile)?.modelNames?.[p.model] ?? p.model);
+  else if (all) parts.push(all.model);
+  if (p.effort) parts.push(p.effort);
+  else if (all && p.model) parts.push(all.effort);
+  return parts.join(" · ");
+}
+const parseRef = (value: string): AiPick => {
+  const [profile, model, effort] = value.split("·").map(x => x.trim());
+  return { profile, model: model || undefined, effort: effort || undefined };
+};
+/** A `use` entry: a group by its name, or one AI in words. */
+function refText(app: App, ref: string) {
+  if (ref.startsWith("ai:")) return aiWords(app, parseRef(ref.slice(3)));
+  return app.config.agents.groups.find(g => g.id === ref)?.name ?? ref;
 }
 
 const FAMILY_NAMES: Record<string, string> = {
@@ -159,13 +213,13 @@ export function selectorText(app: App, selector: string, catalog: PolicyAI[]) {
     const same = catalog.filter(p => matchesSelector(selector, p));
     const best = same.find(p => !p.keyRef && !p.peer && !/-cli$/.test(p.id)) ?? same[0];
     const name = best && allProfiles(app.config).find(p => p.id === best.id)?.name;
-    return `${name || best?.id || value}（全部模型）`;
+    return `${name ? plainName(name) : best?.id || value}（全部模型）`;
   }
   if (type === "model") {
     const family = modelFamily({ model: value }) ?? value;
     return `${FAMILY_NAMES[family] ?? value} 系列模型`;
   }
-  if (type === "ai") return value;
+  if (type === "ai") return aiWords(app, parseRef(value), { model: "全部模型", effort: "全部强度" });
   if (type === "key") return `API key「${app.config.ai.providers.find(k => k.id === value)?.name || value}」生成的后端`;
   return selector;
 }

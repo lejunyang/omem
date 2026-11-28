@@ -39,7 +39,7 @@ export async function askModel(app: App, prompt: string, opts: { timeoutMs?: num
       try {
         const profile = opts.memberRouting ? candidate : accountFor(app, opts.userId, candidate);
         const cwd = accountOf(profile)?.home ?? app.home;
-        const isolation = ownRun(app, profile, cwd, true);
+        const isolation = ownRun(app, profile, cwd, true, undefined, { kind: opts.userId && opts.userId !== "owner" ? null : undefined });
         const access = runAccess(app.config.agents.fullAccess, { owner: !opts.userId || opts.userId === "owner", box: isolation.box, allowWrites: false });
         if (opts.userId) recordIsolation(app, null, opts.userId, profile);
         const r = await runBackend(app, profile, { cwd, codeReview: opts.codeReview, ownSandbox: isolation.box, ...access, prompt, allowWrites: false, modes: ["read-only"], signal: ctrl.signal }, () => {});

@@ -1,10 +1,12 @@
+import { autoFollowFor } from "../agents/auto-follow.ts";
+import { checkStudyGate, studyGate } from "./auto-follow.ts";
 import { finishStage } from "../flows/plugin-gates.ts";
 import type { App } from "../core/app.ts";
 import { one, run } from "../core/db.ts";
 import { HttpError, json, now } from "../core/util.ts";
 import { getItem } from "../items/store.ts";
 import { describeStage } from "../flows/definitions.ts";
-import { answerAsk, createAsk, getAsk, registerAskHandler } from "../agents/asks.ts";
+import { answerAsk, getAsk, registerAskHandler } from "../agents/asks.ts";
 import { artifactInbox, artifactsByIds, attachPath, attachText } from "../agents/artifacts.ts";
 import { getRun } from "../agents/runs.ts";
 import { changeStage, getStage, itemFlow, type FlowActor } from "../flows/store.ts";
@@ -54,46 +56,47 @@ export function proposeDirections(app: App, p: Proposal, by: FlowActor) {
       const words = describeStage(d);
       return `「${d.name}」这一段：${[words.budget, words.ai].filter(Boolean).join("；") || "没有设预算"}。要改，在事项页这一段的“预算”里改。`;
     }).join("\n");
-    const ask = createAsk(app, { runId: null, userId: getItem(app, p.item).userId, question: [text, p.note && proposed.length ? p.note.trim() : "", budgets, proposed.length ? "回答时可以附一句要改的地方。" : ""].filter(Boolean).join("\n\n"), options: proposed.length ? [...proposed.map((d) => ({ label: d.goal })), { label: "这一轮不跑" }] : [{ label: "知道了" }], allowText: true, context: { handler: "study-plan", itemId: p.item, stageId: d.id, startedAt: f.startedAt, round: f.round, directions: proposed.map((d) => d.id) } });
-    changeStage(app, p.item, d.id, "doing", { askId: ask.id, waitingOn: "owner", control: { ...s.control, reported: true } }, by, `提案已交，等本人选方向${p.note?.trim() ? `。${p.note.trim()}` : ""}`);
-    return `提案已交，等本人选择：${ask.id}`;
+    const follow = autoFollowFor(app, "study", p.item);
+    const who = follow ? "跟进助手" : "本人";
+    const ask = studyGate(app, follow, { runId: null, userId: getItem(app, p.item).userId, question: [text, p.note && proposed.length ? p.note.trim() : "", budgets, proposed.length ? "回答时可以附一句要改的地方。" : ""].filter(Boolean).join("\n\n"), options: proposed.length ? [...proposed.map((d) => ({ label: d.goal })), { label: "这一轮不跑" }] : [{ label: "知道了" }], allowText: true, context: { handler: "study-plan", itemId: p.item, stageId: d.id, startedAt: f.startedAt, round: f.round, directions: proposed.map((d) => d.id) } });
+    changeStage(app, p.item, d.id, "doing", { askId: ask.id, waitingOn: follow ? who : "owner", control: { ...s.control, reported: true } }, by, `提案已交，等${who}选方向${p.note?.trim() ? `。${p.note.trim()}` : ""}`);
+    return `提案已交，等${who}选择：${ask.id}`;
   });
 }
 registerAskHandler("study-plan", async (app, ask, ctx) => {
   const itemId = String(ctx.itemId), stageId = String(ctx.stageId);
-  await studyOperation(app, itemId, async () => {
-    const f = itemFlow(app, itemId), s = getStage(app, itemId, stageId), item = getItem(app, itemId);
-    if (!f || f.endedAt || f.startedAt !== ctx.startedAt || f.round !== ctx.round || s.askId !== ask.id || ask.userId !== item.userId || ask.answeredBy !== item.userId) return;
-    if (ask.choice === null) {
-      const again = createAsk(app, { runId: null, userId: item.userId, question: ask.question, options: ask.options, allowText: true, context: { ...ctx, handler: "study-plan" } });
-      changeStage(app, itemId, stageId, "doing", { askId: again.id }, { actor: "host" }, "请先选择方向或这一轮不跑，可另附改动要求");
-      return;
-    }
-    const ids = ctx.directions as string[], id = ids[ask.choice];
-    const label = ask.options[ask.choice ?? -1]?.label ?? "";
-    const note = (ask.answer ?? "").startsWith(label) ? (ask.answer ?? "").slice(label.length).replace(/^[：:，,\s]+/, "") : ask.answer ?? "";
-    let baselineNote = "";
-    if (id) {
-      const allowCode = checkDirectionChoice(app, itemId, direction(app, id), typeof ctx.allowCode === "boolean" ? ctx.allowCode : undefined);
-      const { baseline, headFallbacks } = await captureBaseline(app, itemId);
-      confirmDirection(app, id, note, baseline, allowCode);
-      if (headFallbacks.size) baselineNote = `\n${[...headFallbacks.values()].join("、")} 的代码索引基线引用不可用，使用本地 HEAD。`;
-    }
-    for (const other of ids.filter((x) => x !== id)) run(app.db, "update study_directions set state='dropped',conclusion='本轮未选',updated_at=? where id=? and state='proposed'", now(), other);
-    await finishStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, control: { ...s.control, reported: true } }, { actor: "owner", userId: item.userId }, id ? `本人确认方向：${direction(app, id).goal}${note ? `；${note}` : ""}${baselineNote}` : "本人确认这一轮不跑");
-    if (!id) {
-      const start = f.definition.stages.findIndex((d) => d.id === stageId);
-      for (const d of f.definition.stages.slice(start + 1)) changeStage(app, itemId, d.id, "skipped", { control: { reported: true } }, { actor: "owner" }, ids.length ? "本人选择这一轮不跑" : "这一轮没有提出方向，本人已知晓");
-    }
-    run(app.db, "update item_flows set auto_streak=0,updated_at=? where item_id=?", now(), itemId);
-  });
+  const f = itemFlow(app, itemId)!, s = getStage(app, itemId, stageId), item = getItem(app, itemId);
+  const followed = ask.answeredBy === "supervisor", who = followed ? "跟进助手" : "本人";
+  const by = { actor: followed ? "supervisor" : "owner", userId: item.userId };
+  if (ask.choice === null) {
+    const follow = autoFollowFor(app, "study", itemId);
+    const again = studyGate(app, follow, { runId: null, userId: item.userId, question: ask.question, options: ask.options, allowText: true,
+      context: { handler: "study-plan", itemId, stageId, startedAt: f.startedAt, round: f.round, directions: ctx.directions } });
+    changeStage(app, itemId, stageId, "doing", { askId: again.id, waitingOn: follow ? "跟进助手" : "owner" }, { actor: "host" }, "请先选择方向或这一轮不跑，可另附改动要求");
+    return;
+  }
+  const ids = ctx.directions as string[], id = ids[ask.choice];
+  const label = ask.options[ask.choice ?? -1]?.label ?? "";
+  const note = (ask.answer ?? "").startsWith(label) ? (ask.answer ?? "").slice(label.length).replace(/^[：:，,\s]+/, "") : ask.answer ?? "";
+  let baselineNote = "";
+  if (id) {
+    const allowCode = checkDirectionChoice(app, itemId, direction(app, id), typeof ctx.allowCode === "boolean" ? ctx.allowCode : undefined);
+    const { baseline, headFallbacks } = await captureBaseline(app, itemId);
+    confirmDirection(app, id, note, baseline, allowCode);
+    if (headFallbacks.size) baselineNote = `\n${[...headFallbacks.values()].join("、")} 的代码索引基线引用不可用，使用本地 HEAD。`;
+  }
+  for (const other of ids.filter((x) => x !== id)) run(app.db, "update study_directions set state='dropped',conclusion='本轮未选',updated_at=? where id=? and state='proposed'", now(), other);
+  await finishStage(app, itemId, stageId, "done", { askId: null, waitingOn: null, control: { ...s.control, reported: true } }, by, id ? `${who}确认方向：${direction(app, id).goal}${note ? `；${note}` : ""}${baselineNote}` : `${who}确认这一轮不跑`);
+  if (!id) {
+    const start = f.definition.stages.findIndex((d) => d.id === stageId);
+    for (const d of f.definition.stages.slice(start + 1)) changeStage(app, itemId, d.id, "skipped", { control: { reported: true } }, by, ids.length ? `${who}选择这一轮不跑` : `这一轮没有提出方向，${who}已知晓`);
+  }
+  run(app.db, "update item_flows set auto_streak=0,updated_at=? where item_id=?", now(), itemId);
 }, (app, ask, ctx, by, answer) => {
-  const item = getItem(app, String(ctx.itemId)), f = itemFlow(app, item.id);
-  if (ask.userId !== item.userId || by !== item.userId) throw new HttpError(403, "方向只能由事项本人选择");
-  if (!f || f.endedAt || f.startedAt !== ctx.startedAt || f.round !== ctx.round || getStage(app, item.id, String(ctx.stageId)).askId !== ask.id) throw new HttpError(409, "提案已失效");
   const id = answer.choice === null ? undefined : (ctx.directions as string[])[answer.choice];
-  if (id) checkDirectionChoice(app, item.id, direction(app, id), typeof ctx.allowCode === "boolean" ? ctx.allowCode : undefined);
-});
+  const f = checkStudyGate(app, ask, ctx, by, answer.choice, !!id);
+  if (id) checkDirectionChoice(app, f.itemId, direction(app, id), typeof ctx.allowCode === "boolean" ? ctx.allowCode : undefined);
+}, (app, ctx, answer) => studyOperation(app, String(ctx.itemId), answer));
 
 export async function reportTrial(app: App, report: TrialReport, by: FlowActor) {
   const t = trial(app, report.trial);

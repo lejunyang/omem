@@ -91,13 +91,13 @@ import { addWatch, listWatches, removeWatch, syncWatches } from "../plugins/plat
 import { checkSlug, confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { keepOwnerSection } from "./work-state.ts";
 import { addRunEvent, cancelRun, createRun, getRun, listRuns, runEvents, runUser, setRunOutput, stopRequested } from "./runs.ts";
-import { takeCodeSteering } from "./code-steer.ts";
+import { latestRound, takeCodeSteering } from "./code-steer.ts";
 import { abortBranchSyncForBlock, assertBranchSyncIdle, checkSyncBranch, normalizeBranchSync, queueBranchSync, syncBranchTool, takeBranchSyncSteering, type BranchSync } from "./code-round-sync.ts";
 import { afterToolCall, isBackgroundNotification, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
 import { findAgentSpec, findSkill, listAgentSpecs, listSkills, readSkillFile, skillsOutsideScope, skillUsable, readAgentSpec, readSkill, saveAgentSpec, saveSkill } from "./specs.ts";
 import { isBuiltinRole, listRoleStates, updateRoleMeta } from "./builtin-roles.ts";
-import { describeThread, findThread, getThread, listThreads, threadMessages, updateThread } from "./threads.ts";
+import { describeThread, findThread, getThread, handedReportAgent, listThreads, threadMessages, updateThread } from "./threads.ts";
 import { AGENT_NOTE, setApprovalExecutor } from "./asks.ts";
 import { auditOperation, decide, digest, fingerprint, operationWho, type OperationWho, type Operation } from "./operation-policy.ts";
 import type { OperationRule } from "../core/config.ts";
@@ -119,6 +119,7 @@ export type ToolContext = {
   commandTurn?: string;
   /** Account whose HOME the local process sees. Defaults to the machine login. */
   commandHomeUser?: string | null;
+  commandSandbox?: import("./command-executor.ts").CommandSandbox;
   /** Host-selected directory for browsers opened locally by this run. */
   browserProfilesRoot?: string;
   app: App;
@@ -1105,7 +1106,8 @@ def({
     const msgs = threadMessages(ctx.app, t.id, { limit: a.limit ?? 30, before: a.before });
     recordReadMessages(ctx.app, ctx.runId, t.spaceId, msgs, t);
     const head = describeThread(t, ctx.app.config.timezone);
-    return `${head}\n\n${msgs.map((m) => `[${localStamp(m.createdAt, ctx.app.config.timezone)}] ${m.role === "user" ? "本人" : "助理"}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
+    const who = (m: (typeof msgs)[number]) => m.role === "user" ? "本人" : handedReportAgent(m.meta) ? `${handedReportAgent(m.meta)} 交回的报告` : "助理";
+    return `${head}\n\n${msgs.map((m) => `[${localStamp(m.createdAt, ctx.app.config.timezone)}] ${who(m)}（msg:${m.id}）：${truncate(m.text, 2000)}`).join("\n\n")}`;
   },
 });
 
@@ -1383,6 +1385,14 @@ function authorizedWork(ctx: ToolContext, id: string, edit: boolean) {
   if (!work || work.askRunId !== id || !canReadRun(ctx.app, ctx.userId ?? OWNER, id)) throw new HttpError(404, "找不到工作会话");
   const parent = getRun(ctx.app, id);
   if (parent.spaceId) space(ctx, parent.spaceId);
+  if (edit && ctx.role === "supervisor") {
+    const task = longTaskForRun(ctx.app, origin.id);
+    if (task?.sourceKind !== "agentWork" || task.sourceId !== id || task.userId !== (ctx.userId ?? OWNER))
+      throw new HttpError(403, "只能处理本次跟进的任务板");
+    if (task.status !== "active" || getRun(ctx.app, origin.id).output.supervisorReport)
+      throw new HttpError(409, "当前跟进轮已停止派活");
+    return work;
+  }
   if (edit && (!([work.workConversationId, work.rootConversationId].includes(origin.conversation)) || runUser(ctx.app, id) !== (ctx.userId ?? OWNER)))
     throw new HttpError(403, "请在发起或承接这项工作的会话中操作");
   return work;
@@ -1446,11 +1456,13 @@ def({
     const work = authorizedWork(ctx, a.work_id, true);
     if (a.decisions.some(d => d.decision === "redo")) await autoTurnGuard(ctx, work);
     const { selectDevice } = await import("./work-device.ts");
-    const board = readBoard(ctx.app,a.work_id);
+    const board = ctx.role === "supervisor"
+      ? (await import("./progress.ts")).boardForReader(ctx.app, a.work_id, { user: ctx.userId ?? OWNER, spaces: ctx.spaces })
+      : readBoard(ctx.app, a.work_id);
+    if (a.decisions.some(d => !board.tasks.some(t => t.id === d.task))) throw new HttpError(404, "找不到本板的块");
     const decisions = await Promise.all(a.decisions.map(async d => {
       if (d.decision !== "redo") return { ...d, execution: undefined };
-      const t = board.tasks.find(t => t.id === d.task);
-      if (!t) throw new HttpError(400,"找不到本板的块");
+      const t = board.tasks.find(t => t.id === d.task)!;
       const last = t.attempts.at(-1)!;
       const target = { device: d.device ?? (last.mode ? last.device : undefined), mode: d.mode ?? (d.device === "local" ? "borrow" : last.mode), access: d.access ?? (d.device === "local" || d.mode === "borrow" ? "read" : last.access) };
       const execution = resolveBoardExecution(ctx,d.execution ?? (target.device === "local" ? undefined : t.execution),target.device);
@@ -5850,8 +5862,10 @@ def({
   handler: async (ctx, a) => {
     const by = ctx.role === "supervisor" ? "supervisor" : ctx.userId ?? OWNER;
     if (ctx.role === "supervisor") {
-      checkSupervisorBasis(ctx.app, ctx.runId, a.run_id, a.basis);
-      if (!["code", "review"].includes(getRun(ctx.app, a.run_id).kind)) throw new HttpError(400, "请指定编码交办或评审的运行 ID");
+      const target = supervisedRound(ctx, a.run_id, a.basis);
+      // Once stop_code_run has released the checkout, an immediate correction starts work there again.
+      if (target.output.stoppedBySupervisor && !["running", "queued"].includes(target.status) && a.when === "now") a = { ...a, when: "next" };
+      a = { ...a, run_id: target.id };
       if (a.apply_first) throw new HttpError(403, "应用交办涉及推送，请在报告中交给本人确认");
       if (a.task) a = { ...a, task: a.task + "\n\n跟进依据：" + a.basis };
     }
@@ -5910,17 +5924,15 @@ def({
     const task = a.task?.trim() || (a.onto_latest_target ? "把改动移到目标分支的最新提交上（只处理冲突，不改别的）" : "按 sync 同步工作分支（只处理冲突，不改别的）");
     const { codeChainFor, codeChainRounds, queueNextCodeRound } = await import("./code-chain.ts");
     const seed = getRun(ctx.app, a.run_id);
-    let askId = a.run_id;
-    if (seed.kind === "code") askId = seed.parentId ?? a.run_id;
-    if (seed.kind === "code" && seed.input.longTaskId) askId = String(seed.input.continueFrom ?? seed.id);
-    const rounds = codeChainRounds(ctx.app, askId).filter((r) => r.kind === "code");
+    const rounds = ctx.role === "supervisor" ? [seed] : seed.kind === "code" ? (await import("./review-fix.ts")).workRuns(ctx.app, seed.id).map(id => getRun(ctx.app, id))
+      : codeChainRounds(ctx.app, seed.id).filter((r) => r.kind === "code");
     const last = rounds.at(-1);
     if (!last) throw new HttpError(400, "这不是一次交办编码任务");
     if ((last.input as { branches?: unknown }).branches) throw new HttpError(400, "这是对已有分支的评审，本身不能续轮编码：要按评审意见修改就带 fix（问题编号）或 task，会基于该分支交办");
     const chain = codeChainFor(ctx.app, last) ?? (last.output as { codeChain?: import("./code-chain.ts").CodeChain }).codeChain ?? null;
-    if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
+
     for (const id of [last.spaceId!, ...((last.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
-    if (findThread(ctx.app, chain.conversationId)?.userId !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
+    if ((chain ? findThread(ctx.app, chain.conversationId)?.userId : runUser(ctx.app, last.id)) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能继续本人发起的编码交办");
     // Waiting for its design to be confirmed: going on means coding without waiting (designs/work.ts).
     if (last.output.verdict === "awaiting-design") {
       if (ctx.role === "supervisor") throw new HttpError(403, "方案在等本人确认，请在报告中说明");
@@ -5941,6 +5953,7 @@ def({
       const made = loop.ownerNote(ctx.app, last.id, task, by, { asTask: true })!;
       return `${revisionHandoff(made, taskLabel(made.task.seq))}${switched}`;
     }
+    if (!chain) throw new HttpError(400, "找不到这次交办的会话链");
     const sessionId = rounds.map((r) => (r.output as { coderSessionId?: string }).coderSessionId).filter(Boolean).at(-1);
     const extraInput = a.onto_latest_target ? { moveToTarget: true, moveToTargetMode: a.onto_latest_target_mode ?? "merge" } : a.sync ? { sync: { ...a.sync, ...normalizeBranchSync(a.sync) }, ...(gitOnly ? { syncOnly: true } : {}) } : undefined;
     const roundReview = await roundReviewOf(ctx, a);
@@ -5974,6 +5987,15 @@ function steerable(ctx: ToolContext, runId: string) {
   for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
   if (runUser(ctx.app, r.id) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能调整本人发起的编码交办");
   return r;
+}
+
+function supervisedRound(ctx: ToolContext, id: string, basis?: string) {
+  const requested = getRun(ctx.app, id);
+  if (!["code", "review"].includes(requested.kind)) throw new HttpError(400, "请指定编码交办或评审的运行 ID");
+  checkSupervisorBasis(ctx.app, ctx.runId, id, basis);
+  const target = latestRound(ctx.app, id);
+  if (target.id !== id) checkSupervisorBasis(ctx.app, ctx.runId, target.id, basis);
+  return steerable(ctx, target.id);
 }
 
 function followingRound(round: ReturnType<typeof getRun>) {
@@ -6070,11 +6092,17 @@ def({
   name: "stop_code_run",
   description: "停下一次编码交办正在进行的一轮（编码或评审）和排队中的评审，不再自动续轮；工作区和已经改的代码保留，之后可以 continue_code_run 接着做、apply_code_run 应用或丢弃。本人说“先停 / 别做了 / 这轮不要了”时用。",
   write: true,
-  schema: z.object({ run_id: z.string().describe("交办的任一运行 id"), reason: z.string().max(1000).optional().describe("本人为什么停") }),
+  schema: z.object({ run_id: z.string().describe("交办的任一运行 id"), reason: z.string().max(1000).optional().describe("为什么停下"),
+    basis: z.string().trim().min(1).max(3000).optional().describe("跟进纠偏时必填：任务书条目、本人补充原文或本长任务运行 ID") }),
   handler: async (ctx, a) => {
-    steerable(ctx, a.run_id);
+    const supervisor = ctx.role === "supervisor";
+    const target = supervisor ? supervisedRound(ctx, a.run_id, a.basis) : steerable(ctx, a.run_id);
     const { stopCodeWork } = await import("./code-steer.ts");
-    const r = stopCodeWork(ctx.app, a.run_id, a.reason ?? "");
+    const r = stopCodeWork(ctx.app, target.id, supervisor ? [a.reason, "跟进依据：" + a.basis].filter(Boolean).join("\n") : a.reason ?? "", supervisor ? "supervisor" : "owner");
+    if (supervisor && r.stopped.length) {
+      const { waitForRun } = await import("./runs.ts");
+      await Promise.all(r.stopped.map(id => waitForRun(ctx.app, id)));
+    }
     return r.stopped.length ? `已停下 ${r.stopped.join("、")}；工作区保留，不会自动续轮。` : `${r.runId} 没有在进行或排队的编码和评审，不用停。`;
   },
 });
@@ -7078,13 +7106,17 @@ def({
       const bad = [...new Set(named.map((x) => x.decision!).filter((id) => !d.body.decisions.some((y) => y.id === id)))];
       if (bad.length) throw new HttpError(400, `方案 ${d.id} 没有决定 ${bad.join("、")}；有的是 ${d.body.decisions.map((y) => y.id).join("、")}`);
     }
-    const supervised = longTaskForRun(ctx.app, rootId);
-    const inheritedGoal = getRun(ctx.app, rootId).input.goal as string | undefined;
-    if (supervised && a.tasks.some(x => x.goal && x.goal !== supervised.goal && !supervised.brief.doneWhen.includes(x.goal)))
-      throw new HttpError(400, "修改项的 goal 要对应任务书的目标或完成条件原文");
-    const made = a.tasks.map((x) => t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", origin: { ...(supervised ? { goal: x.goal ?? inheritedGoal ?? supervised.goal, deadline: x.deadline } : {}), ...(x.files?.length ? { files: x.files } : {}), ...(x.decision ? { decision: x.decision } : {}) } }, "coder"));
-    const taken = made.map(task => t.updateTask(ctx.app, rootId, task.seq, { state: "coding", coderRun: r.id }));
-    const w = a.rounds ? t.estimateBudget(ctx.app, rootId, a.rounds) : t.workState(ctx.app, rootId);
+    const { followCodePlan } = await import("./code-auto-follow.ts");
+    const { made, taken, w } = tx(ctx.app.db, () => {
+      const supervised = followCodePlan(ctx.app, rootId, a.tasks.length, a.rounds) ?? longTaskForRun(ctx.app, rootId);
+      const inheritedGoal = getRun(ctx.app, rootId).input.goal as string | undefined;
+      if (supervised && a.tasks.some(x => x.goal && x.goal !== supervised.goal && !supervised.brief.doneWhen.includes(x.goal)))
+        throw new HttpError(400, "修改项的 goal 要对应任务书的目标或完成条件原文");
+      const made = a.tasks.map((x) => t.addTask(ctx.app, rootId, { title: x.title, doneWhen: x.done_when ?? "", kind: "build", origin: { ...(supervised ? { goal: x.goal ?? inheritedGoal ?? supervised.goal, deadline: x.deadline } : {}), ...(x.files?.length ? { files: x.files } : {}), ...(x.decision ? { decision: x.decision } : {}) } }, "coder"));
+      const taken = made.map(task => t.updateTask(ctx.app, rootId, task.seq, { state: "coding", coderRun: r.id }));
+      const w = a.rounds ? t.estimateBudget(ctx.app, rootId, a.rounds) : t.workState(ctx.app, rootId);
+      return { made, taken, w };
+    });
     const groups = (await import("./code-helpers.ts")).parallelTaskHint(ctx.app, r.id, taken);
     return `已建 ${made.map((x) => `${t.taskLabel(x.seq)} ${x.title}`).join("；")}。预算：最多连续自动推进 ${w.budget} 个回合${w.budgetBy === "owner" ? "（本人给的）" : ""}。每项单独提交带 Omem-Task 行，做完用 finish_task。${groups ? `\n\n${groups}` : ""}`;
   },

@@ -60,6 +60,8 @@ export type CredentialCommand = {
   install?: string[];
   /** State directories it writes, relative to HOME. */
   state?: string[];
+  /** Command login variable names (e.g. ACME_TOKEN) to restore for this invocation in the executor. */
+  loginEnv?: string[];
   readOnly?: CommandMatch[];
   resource?: { match: CommandMatch; key: string }[];
   outcomes?: { unauthenticated?: CredentialOutcome[]; expired?: CredentialOutcome[]; denied?: CredentialOutcome[]; applyUrl?: string };

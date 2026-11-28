@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { changeLongTask, getLongTask, longTaskCommandSchema, startLongTask, startLongTaskSchema } from "../agents/long-tasks.ts";
 import { supervisorFacts, supervisorUsage } from "../agents/supervisor.ts";
+import { supervisorProgressText } from "../agents/supervisor-report.ts";
+import type { SupervisorReport } from "../agents/supervisor-schema.ts";
 import type { App } from "../core/app.ts";
 import { all, one } from "../core/db.ts";
 import { personalSpaceId } from "../core/users.ts";
@@ -31,7 +33,7 @@ export function registerLongTaskRoutes(server: FastifyInstance, app: App, who: (
       where.push("(user_id=? or space_id in (select value from json_each(?)))");
       params.push(scope.userId, JSON.stringify(scope.sharedSpaces ?? []));
     }
-    const tasks = all(app.db, `select id,space_id spaceId,user_id userId,thread_id threadId,item_id itemId,goal,status,
+    const tasks = all(app.db, `select id,space_id spaceId,user_id userId,thread_id threadId,item_id itemId,source_kind sourceKind,source_id sourceId,goal,status,
       created_at createdAt,updated_at updatedAt from long_tasks ${where.length ? "where " + where.join(" and ") : ""}
       order by updated_at desc,id limit ? offset ?`, ...params, limit, offset);
     return { tasks };
@@ -46,11 +48,12 @@ export function registerLongTaskRoutes(server: FastifyInstance, app: App, who: (
     const task = getLongTask(app, (req.params as { id: string }).id);
     if (!itemAccess(app, who(req), task, "read")) throw new HttpError(404, "没有这个长任务");
     const last = task.notes.at(-1);
-    const report = last && one<{ report: string; progressText: string }>(app.db,
-      "select json_extract(output,'$.supervisorReport') report,json_extract(output,'$.progressText') progressText from runs where id=?", last.runId);
-    return { ...task, report: report?.report ? JSON.parse(report.report) : null, progressText: report?.progressText ?? null,
-      progress: supervisorFacts(app, task),
-      usage: supervisorUsage(app, task), timeline: itemEvents(app, task.itemId) };
+    const row = last && one<{ report: string }>(app.db,
+      "select json_extract(output,'$.supervisorReport') report from runs where id=?", last.runId);
+    const report: SupervisorReport | null = row?.report ? JSON.parse(row.report) : null;
+    const progress = supervisorFacts(app, task), usage = supervisorUsage(app, task);
+    return { ...task, report, progress, usage, timeline: itemEvents(app, task.itemId),
+      progressText: report ? supervisorProgressText(app, task, report, progress, usage) : null };
   });
   server.patch("/api/long-tasks/:id", async req => {
     const task = getLongTask(app, (req.params as { id: string }).id), user = who(req);

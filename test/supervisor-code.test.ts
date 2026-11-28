@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { all, run } from "../src/core/db.ts";
 import { git } from "../src/core/git.ts";
 import { answerAsk, createAsk, describeAnswer, getAsk, listAsks, waitForAnswer } from "../src/agents/asks.ts";
@@ -11,8 +11,10 @@ import { addTask, getTask, recordCheckpoint, toDecide, updateTask } from "../src
 import { changeLongTask, confirmLongTaskBrief, getLongTask, startLongTask } from "../src/agents/long-tasks.ts";
 import { queueSupervisedAgent, onWorkRunSettled } from "../src/agents/agent-work.ts";
 import { checkTaskDuration } from "../src/agents/drift.ts";
-import { createRun, getRun, queuedInLane, setRunOutput } from "../src/agents/runs.ts";
+import { createRun, getRun, queuedInLane, setRunOutput, __testHandlers, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { answerWorkerQuestion, checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "../src/agents/supervisor-code.ts";
+import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { supervisorBranches } from "../src/agents/supervisor-branches.ts";
 import { testApp } from "./helpers.ts";
 import { submitSupervisorReport } from "../src/agents/supervisor-report.ts";
 
@@ -45,6 +47,106 @@ describe("助手的编码交办", () => {
     const unrelated = createRun(app, { kind: "code", title: "另一件事" });
     expect(() => checkSupervisorBasis(app, lead.id, unrelated.id, task.goal)).toThrow(/自己长任务/);
     expect(getRun(app, second.id).output.codeChain).toMatchObject({ lastCodeRunId: second.id });
+  });
+
+  it("跟进助手凭依据停下自己的交办，在原工作区接着纠偏", async () => {
+    const { app, task, lead, delegate } = await setup();
+    const root = delegate();
+    codeChainFor(app, root);
+    addTask(app, root.id, { kind: "build", title: "核对说明" }, "coder");
+    const ctx: ToolContext = { app, actor: "agent", role: "supervisor", userId: "owner", spaceId: "personal",
+      spaces: ["personal"], tools: null, runId: lead.id };
+    const call = (tool: string, args: object) => callTool(ctx, tool, { run_id: root.id, ...args });
+    const other = createRun(app, { kind: "code", title: "其他交办", spaceId: "personal" });
+    expect((await call("stop_code_run", { run_id: other.id, basis: task.goal })).isError).toBe(true);
+    expect((await call("stop_code_run", {})).text).toContain("basis");
+    expect(getRun(app, root.id).status).toBe("queued");
+    const previous = __testHandlers.get("code");
+    const received: string[] = [];
+    const secondRuns: string[] = [];
+    const correction = "只校对说明";
+    __testHandlers.set("code", async worker => {
+      if (worker.run.id === root.id) {
+        await new Promise<void>(resolve => worker.signal.addEventListener("abort", () => resolve(), { once: true }));
+      } else {
+        secondRuns.push(worker.run.id);
+        expect(worker.run.input.continueFrom).toBe(root.id);
+        received.push(...(String(worker.run.input.roundNotes).match(/只校对说明/g) ?? []));
+      }
+    });
+    // Only the two coding rounds run. The caller and the unrelated delegation stay parked.
+    run(app.db, "update runs set not_before='2099-01-01' where id!=?", root.id);
+    try {
+      startWorker(app);
+      await vi.waitFor(() => expect(getRun(app, root.id).status).toBe("running"));
+      expect((await call("stop_code_run", { basis: task.goal, reason: "先核对改动" })).isError).toBe(false);
+      expect(getRun(app, root.id)).toMatchObject({ status: "cancelled", output: { stoppedBySupervisor: expect.stringContaining(task.goal) } });
+      expect((await call("continue_code_run", { task: correction, basis: task.goal, apply_first: true })).isError).toBe(true);
+      const resumed = await call("continue_code_run", { when: "now", task: correction, basis: task.goal });
+      expect(resumed.isError, resumed.text).toBe(false);
+      const rounds = all<{ id: string }>(app.db, "select id from runs where json_extract(input,'$.continueFrom')=?", root.id);
+      expect(rounds).toHaveLength(1);
+      expect((await waitForRun(app, rounds[0].id)).status).toBe("done");
+      expect(secondRuns).toEqual([rounds[0].id]);
+      expect(received).toEqual([correction]);
+      setRunOutput(app, lead.id, { supervisorReport: {} });
+      expect((await call("stop_code_run", { basis: task.goal })).text).toContain("已交本轮报告");
+      expect(getRun(app, other.id).status).toBe("queued");
+    } finally {
+      stopWorker();
+      if (previous) __testHandlers.set("code", previous);
+      else __testHandlers.delete("code");
+    }
+  });
+
+  it("工作分支汇总限制提交、文件和篇幅，只读相关交办的提交", async () => {
+    const { app, task, delegate } = await setup();
+    const root = delegate();
+    const dir = mkdtempSync(join(tmpdir(), "supervisor-branch-"));
+    git(dir, ["init", "-b", "work"]);
+    git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "--allow-empty", "-m", "初始提交"]);
+    const base = git(dir, ["rev-parse", "HEAD"]).stdout.trim();
+    for (let i = 0; i < 7; i++) {
+      for (let j = 0; j < 3; j++) writeFileSync(join(dir, `file-${i}-${j}.md`), "正文不会进入汇总");
+      git(dir, ["add", "."]);
+      git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "change-" + i]);
+    }
+    run(app.db, "update spaces set root_path=? where id='personal'", dir);
+    setRunOutput(app, root.id, { worktrees: [{ space: "personal", branch: "work", path: dir, base, commits: true }] });
+    const first = await supervisorBranches(app, task);
+    const adopted = await supervisorBranches(app, { ...task, id: "adopted", sourceKind: "code", sourceId: root.id });
+    for (const { text } of [first, adopted]) {
+      expect(text).toContain("change-6");
+      expect(text).not.toContain("change-1");
+      expect(text).toContain("【范围外】（根目录） +21 -0");
+      expect(text).not.toContain("正文不会进入汇总");
+    }
+    for (const name of ["docs", "examples"]) {
+      mkdirSync(join(dir, name));
+      writeFileSync(join(dir, name, "guide.md"), "增加一行\n");
+    }
+    git(dir, ["add", "."]);
+    git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "说明和样例"]);
+    const second = await supervisorBranches(app, task, first.heads);
+    expect(second.text).toContain("说明和样例");
+    expect(second.text).not.toContain("change-6");
+    expect(second.text).toContain("【范围外】examples/ +1 -0");
+    expect(second.text).toMatch(/^docs\/ \+1 -0$/m);
+    expect((await supervisorBranches(app, task, second.heads)).text).toContain("没有新提交");
+    for (let i = 0; i < 35; i++) {
+      const folder = join(dir, "outside-" + i);
+      mkdirSync(folder);
+      writeFileSync(join(folder, "a"), "one\n");
+    }
+    git(dir, ["rm", "examples/guide.md"]);
+    git(dir, ["add", "."]);
+    git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "多个目录"]);
+    const third = await supervisorBranches(app, task, second.heads);
+    expect(third.text.split("\n")).toHaveLength(30);
+    expect(third.text).toContain("【范围外】examples/ +0 -1");
+    expect(third.text).toContain("行已省略");
+    expect((await supervisorBranches(app, { ...task, id: "other" })).text).toBe("");
+
   });
 
   it("工作 Agent 和编码共用预算，工作结束仍由助手接手", async () => {

@@ -1,3 +1,6 @@
+import type { LongTask } from "../agents/long-tasks.ts";
+import { autoFollowFor } from "../agents/auto-follow.ts";
+import { askStudyNextRound, checkStudyGate, followStudyRound, studyGate } from "../studies/auto-follow.ts";
 import { groupItems, groupPick, policyScope } from "../agents/ai-policy.ts";
 import { hasHostTools } from "../agents/capabilities.ts";
 import { continuedUpstream, finishStage, overrideStageGate } from "./plugin-gates.ts";
@@ -220,12 +223,12 @@ function leadSentence(note: string) {
 }
 const askNote = (note: string, max = Infinity) => truncate(note.replace(/\s*[（(]?`?\b(?:ask|r|n|i)0m[0-9a-z]{10,}\b`?[）)]?/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(), max);
 
-function question(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: NonNullable<StageRow["control"]["question"]>, parts: AskParts, labels: string[]) {
+function question(app: App, f: ItemFlow, d: FlowStage, s: StageRow, kind: NonNullable<StageRow["control"]["question"]>, parts: AskParts, labels: string[], follow: LongTask | null = null) {
   if (s.askId && getAsk(app, s.askId).status === "pending" && s.control.question === kind) return s.askId;
   withdraw(app, s);
   const card = questionCard(app, f, d, s, kind, parts);
-  return createAsk(app, { runId: null, userId: getItem(app, f.itemId).userId, question: stageCardText(card), options: labels.map((label) => ({ label })), allowText: true,
-    context: { handler: "flow-stage", itemId: f.itemId, stageId: d.id, startedAt: f.startedAt, kind, stageCard: card } }).id;
+  return studyGate(app, follow, { runId: null, userId: getItem(app, f.itemId).userId, question: stageCardText(card), options: labels.map((label) => ({ label })), allowText: true,
+    context: { handler: "flow-stage", itemId: f.itemId, stageId: d.id, startedAt: f.startedAt, round: f.round, kind, stageCard: card } }).id;
 }
 function reviseCompletionAsk(app: App, askId: string, card: StageCard) {
   const old = getAsk(app, askId).question;
@@ -605,6 +608,7 @@ function closeRound(app: App, f: ItemFlow, at: Date) {
   const ended = at.toISOString();
   const idle = idleRounds(app, f.itemId, true, ended);
   const pause = idle >= app.config.flows.idleRounds && f.definition.repeat?.every !== "manual";
+  const follow = f.definition.repeat && (pause || f.definition.repeat.every === "manual") && isStudy(f) && autoFollowFor(app, "study", f.itemId);
   atomic(app, () => {
     run(app.db, `insert into item_flow_rounds(item_id,started_at,round,ended_at,stages,updated_at) values(?,?,?,?,?,?)
       on conflict(item_id,started_at,round) do update set ended_at=excluded.ended_at,stages=excluded.stages,updated_at=excluded.updated_at`, f.itemId, f.startedAt, f.round, ended, JSON.stringify(itemStages(app, f.itemId)), now());
@@ -614,8 +618,9 @@ function closeRound(app: App, f: ItemFlow, at: Date) {
     changeStage(app, f.itemId, last.id, s.state, {}, host, `第 ${f.round} 轮已完成${f.definition.repeat?.every === "manual" ? "，等本人开始下一轮" : ""}`);
     // The line above is for the history and the item's timeline; the stage keeps its own conclusion.
     run(app.db, "update item_stages set note=? where item_id=? and stage_id=?", s.note, f.itemId, last.id);
+    if (follow) askStudyNextRound(app, f, follow, idle);
   });
-  if (pause && f.definition.repeat) notify(app, { userId: getItem(app, f.itemId).userId, title: `连着 ${idle} 轮没有新发现`, body: `「${getItem(app, f.itemId).title}」连着 ${idle} 轮没有新发现，要换方向、暂停还是结束由你定。`, urgency: "later", link: `#/items/${f.itemId}` });
+  if (!follow && pause && f.definition.repeat) notify(app, { userId: getItem(app, f.itemId).userId, title: `连着 ${idle} 轮没有新发现`, body: `「${getItem(app, f.itemId).title}」连着 ${idle} 轮没有新发现，要换方向、暂停还是结束由你定。`, urgency: "later", link: `#/items/${f.itemId}` });
 }
 function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date, note = "") {
   if (!f.definition.repeat) throw new HttpError(409, "这份流程没有设置轮次");
@@ -634,12 +639,24 @@ function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date, note = "") {
     }
     if (by.actor === "host" && noStarts) run(app.db, "update item_flows set auto_streak=auto_streak+1 where item_id=?", f.itemId);
     const next = itemFlow(app, f.itemId)!;
+    followStudyRound(app, next, "start", by.runId, note);
     if (by.actor === "host" && next.autoStreak >= app.config.flows.autoAdvance) {
       const d = f.definition.stages[from];
       gate(app, next, d, getStage(app, f.itemId, d.id), "gate");
     }
   });
 }
+registerAskHandler("study-next-round", async (app, ask, ctx) => {
+  const f = running(app, String(ctx.itemId));
+  const by = { actor: ask.answeredBy === "supervisor" ? "supervisor" : "owner", userId: ask.userId };
+  const s = getStage(app, f.itemId, String(ctx.stageId));
+  run(app.db, "update item_stages set ask_id=null where item_id=? and stage_id=?", f.itemId, s.id);
+  if (ask.choice === 0) roundNow(app, f, by, new Date());
+}, (app, ask, ctx, by, answer) => {
+  const f = checkStudyGate(app, ask, ctx, by, answer.choice, answer.choice === 0);
+  if (answer.choice === null || !f.roundClosedAt || !roundComplete(app, f)) throw new HttpError(409, "请在本轮完成后选择是否开始下一轮");
+}, (app, ctx, answer) => studyOperation(app, String(ctx.itemId), answer));
+
 /** `note`: what the owner wants this round to look at; the stages of the round read it as the owner's words. */
 export function startRound(app: App, itemId: string, by: FlowActor, at = new Date(), note = "") {
   return serial(app, itemId, async () => {
@@ -675,6 +692,7 @@ export async function startFlow(app: App, itemId: string, flowId: string | Inlin
     for (const d of f.stages) changeStage(app, itemId, d.id, "pending", {}, by, "加入流程");
     // The matter gets its 「关注」 (only reading) if it has none: its groups, one context, later replies.
     try { (await import("../channels/listen-items.ts")).flowStarted(app, itemId); } catch (e) { console.warn(`[omem] 没能给事项建关注：${(e as Error).message}`); }
+    followStudyRound(app, itemFlow(app, itemId)!, "start", by.runId);
     initFollow(app, itemId, true);
     await advanceNow(app, item.id, "开始流程");
     return flowView(app, itemId);
@@ -1043,9 +1061,10 @@ export function reportStage(app: App, itemId: string, stageId: string, report: S
       const pending = s.control.question === "done" && s.askId && getAsk(app, s.askId).status === "pending";
       const refs = pending ? [...new Set([...s.evidence, ...evidence])] : evidence;
       const parts = { ask: d.by === "owner" ? "这一段是你来做的，助手说已经做完了。是这样吗？" : "助手说这一段做完了，确认吗？不对就点“还不行”写意见。", result: report.note, evidence: refs, after: true };
-      const askId = question(app, f, d, s, "done", parts, ["确认", "还不行"]);
+      const follow = d.confirm === "supervisor" ? autoFollowFor(app, "study", itemId) : null;
+      const askId = question(app, f, d, s, "done", parts, ["确认", "还不行"], follow);
       if (pending) await reviseCompletionAsk(app, askId, questionCard(app, f, d, s, "done", parts));
-      changeStage(app, itemId, stageId, "doing", { askId, evidence: refs, waitingOn: "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
+      changeStage(app, itemId, stageId, "doing", { askId, evidence: refs, waitingOn: follow ? "跟进助手" : "owner", control: { ...s.control, question: "done", reported: true } }, by, report.note, evidence);
       if (fromReconcile) await enrichReconcileAsk(app, { ...s, askId }, report);
     } else if (report.state === "done" && (typeof d.done === "object" || typeof d.by === "object" && "object" in d.by)) {
       withdraw(app, s);
@@ -1293,6 +1312,9 @@ const answerText = (ask: Ask) => (ask.answer ?? "").replace(new RegExp(`^${ask.o
 registerAskHandler("flow-stage", async (app, ask, ctx) => {
   const itemId = String(ctx.itemId), stageId = String(ctx.stageId);
   const f = running(app, itemId), d = definition(f, stageId), s = getStage(app, itemId, stageId);
+  const supervised = !!ctx.supervisorTaskId && ask.answeredBy === "supervisor" && ask.answeredBy !== ask.userId;
+  const by = { actor: supervised ? "supervisor" : "owner" };
+  const who = supervised ? "跟进助手" : "本人";
   if (ctx.kind === "upstream") return answerUpstream(app, f, d, s, ask.choice === 0);
   if (ctx.kind === "blocked") {
     await answerBlockerNow(app, f, d, s, ask, String(ctx.action || d.note || s.note));
@@ -1301,7 +1323,7 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
   }
   if ((ctx.kind === "gate" || ctx.kind === "when") && ask.options[ask.choice ?? -1]?.label === RECONCILED_DONE)
     return actionNow(app, itemId, stageId, "done", `本人确认已做完：${s.note.replace(/^对账依据：/, "")}`, { actor: "owner", userId: ask.userId });
-  let text = answerText(ask);
+  let text = answerText(ask) || (supervised && ask.choice === 1 ? "请重新核对阶段结果和依据" : "");
   // Words without a button: on "start?" they start the stage with them, on "done?" they send it back
   // with them; the owner's own stage takes only its buttons.
   const free = ask.choice == null && !!text;
@@ -1312,22 +1334,29 @@ registerAskHandler("flow-stage", async (app, ask, ctx) => {
     if (!text) {
       const kind = skip ? "skip" : "refuse";
       const askId = question(app, f, d, { ...s, askId: null }, kind, { ask: skip ? "为什么跳过？请写原因。" : "哪里还不行？请写意见，会带给重做的那一次。" }, []);
-      changeStage(app, itemId, stageId, s.state, { askId, control: { ...s.control, question: kind } }, { actor: "owner" }, "等本人补充原因"); resetStreak(app, itemId); return;
+      changeStage(app, itemId, stageId, s.state, { askId, control: { ...s.control, question: kind } }, by, "等本人补充原因"); resetStreak(app, itemId); return;
     }
-    if (skip) await actionNow(app, itemId, stageId, "skip", text, { actor: "owner" });
+    if (skip) await actionNow(app, itemId, stageId, "skip", text, by);
     else {
       text = ownerFeedback(app, f, s, text);
       if (s.control.grantedGate) revokeGate(app, f.id, stageId, ask.userId, itemId);
       resetStreak(app, itemId);
-      if (s.attempt >= 3) changeStage(app, itemId, stageId, "blocked", { askId: null, waitingOn: "owner", control: { ...s.control, question: undefined, reported: true } }, { actor: "owner" }, `三次仍未确认：${text}`, [], "refuse");
+      if (s.attempt >= 3) changeStage(app, itemId, stageId, "blocked", { askId: null, waitingOn: "owner", control: { ...s.control, question: undefined, reported: true } }, by, `三次仍未确认：${text}`, [], "refuse");
       else {
-        changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, confirmed: !s.control.grantedGate, grantedGate: undefined, feedback: text, objectAfter: now(), reported: false, escalated: undefined } }, { actor: "owner" }, `本人要求重做：${text}`, [], "refuse");
-        await advanceNow(app, itemId, "本人要求重做");
+        changeStage(app, itemId, stageId, "pending", { askId: null, waitingOn: null, control: { ...s.control, question: undefined, confirmed: !s.control.grantedGate, grantedGate: undefined, feedback: text, objectAfter: now(), reported: false, escalated: undefined } }, by, `${who}要求重做：${text}`, [], "refuse");
+        await advanceNow(app, itemId, `${who}要求重做`);
       }
     }
-  } else if (ask.choice === 0 || free && ["gate", "when"].includes(String(ctx.kind))) await actionNow(app, itemId, stageId, ctx.kind === "owner" ? "done" : "confirm", ctx.kind === "gate" ? text : text || "本人确认", { actor: "owner" });
-  else if (ctx.kind === "gate" && ask.choice === 1) await actionNow(app, itemId, stageId, "hold", text, { actor: "owner" });
-}, (app, ask, ctx, by) => {
+  } else if (ask.choice === 0 || free && ["gate", "when"].includes(String(ctx.kind))) await actionNow(app, itemId, stageId, ctx.kind === "owner" ? "done" : "confirm", ctx.kind === "gate" ? text : text || `${who}确认`, by);
+  else if (ctx.kind === "gate" && ask.choice === 1) await actionNow(app, itemId, stageId, "hold", text, by);
+}, (app, ask, ctx, by, answer) => {
+  if (by === "supervisor" && ask.userId !== by) {
+    const f = checkStudyGate(app, ask, ctx, by, answer.choice, true);
+    const stage = String(ctx.stageId);
+    if (ctx.kind !== "done" || definition(f, stage).confirm !== "supervisor" || getStage(app, f.itemId, stage).control.question !== "done")
+      throw new HttpError(403, "这一关需要事项本人确认");
+    return;
+  }
   if (ask.userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");
   const itemId = String(ctx.itemId);
   if (requireItem(app, itemId, by, "flow").userId !== by) throw new HttpError(403, "流程关卡只能由事项本人回答");

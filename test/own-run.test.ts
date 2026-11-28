@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { agentProfileSchema } from "../src/core/config.ts";
 import { ownRun, sandboxStatus } from "../src/agents/own-run.ts";
 import { shortPath } from "../src/agents/own-sandbox.ts";
-import { bwrapArgs, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { prepareRun } from "../src/agents/runner.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { run } from "../src/core/db.ts";
@@ -18,6 +18,21 @@ import { startServer } from "../src/server/http.ts";
 import { testApp } from "./helpers.ts";
 
 afterEach(() => { vi.unstubAllEnvs(); setSandboxSupportForTests(undefined); });
+
+it("仅在本机本人运行按模式处理沙箱不可用", () => {
+  const app = testApp();
+  const profile = agentProfileSchema.parse({ id: "demo", transport: "acp", command: "fixture" });
+  setSandboxSupportForTests({ ok: false, reason: "不可用" });
+  try {
+    app.config.agents.ownSandbox.mode = "prefer";
+    expect(ownRun(app, profile, app.home, true).note).toContain("不可用");
+    app.config.agents.ownSandbox.mode = "require";
+    expect(() => ownRun(app, profile, app.home, true)).toThrow("不可用");
+    expect(ownRun(app, { ...profile, peer: { id: "device", agent: "demo" } }, app.home, true).box).toBeUndefined();
+    const member = { ...profile, ownAccount: { userId: "member" } };
+    expect(ownRun(app, member, app.home, true).box).toBeUndefined();
+  } finally { app.db.close(); rmSync(app.home, { recursive: true, force: true }); }
+});
 
 it("沙箱状态只给本人主目录与完全访问授权清单，规则查询走索引", async () => {
   const app=testApp();
@@ -53,7 +68,7 @@ it.skipIf(process.platform === "win32")("validates and returns the externally ed
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
   const path = join(app.home, "config.json");
   const url = app.baseUrl + "/api/security/sandbox";
-  const patch = { mode: "require", writable: [], hidden: [], fullAccess: "per-role" };
+  const patch = { mode: "require", writable: [], hidden: [], includeKinds: ["archive"], excludeKinds: ["ask"], fullAccess: "per-role" };
   const put = () => fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
   const audits = app.db.prepare("select detail from audit_events where action = 'sandbox.settings'");
   const before = structuredClone(app.config.agents);
@@ -146,6 +161,25 @@ it.skipIf(process.platform === "win32")("checks required state directories and o
   }
 });
 
+it.skipIf(process.platform !== "linux")("只让选中的本人运行进沙箱，排除项优先", () => {
+  const app = testApp();
+  const home = mkdtempSync(join(tmpdir(), "sandbox-kinds-"));
+  vi.stubEnv("HOME", home);
+  setSandboxSupportForTests({ ok: true, bwrap: "/bin/echo" });
+  try {
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/true" });
+    const box = (kind?: string | null) => ownRun(app, profile, join(home, "work"), false, null, { kind }).box;
+    app.config.agents.ownSandbox = { mode: "require", hidden: [], writable: [], includeKinds: ["archive", "ask"], excludeKinds: ["ask"] };
+    expect(box("archive")).toBeDefined();
+    expect(box("ask")).toBeUndefined();
+    expect(box("new-kind")).toBeUndefined();
+    expect(box()).toBeUndefined();
+    expect(box(null)).toBeDefined();
+    app.config.agents.ownSandbox.includeKinds = [];
+    expect(box("new-kind")).toBeDefined();
+  } finally { app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+});
+
 it.skipIf(process.platform !== "linux")("reports exactly the writable plan used to launch multiple worktrees", async () => {
   const app = testApp();
   const home = mkdtempSync(join(tmpdir(), "own-plan-"));
@@ -184,6 +218,36 @@ it.skipIf(process.platform !== "linux")("reports exactly the writable plan used 
   }
 });
 
+const support = sandboxSupport();
+it.skipIf(!support.ok)("获准的 Git 命令能从额外目录启动，也能通过 -C 访问它 " + (support.reason ?? ""), async () => {
+  const app = testApp();
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "command-work-")));
+  const home = join(root, "home"), cwd = join(root, "work"), bin = join(root, "bin");
+  const extra = join(home, "extra"), repo = join(extra, "repo"), hidden = join(extra, "hidden"), state = join(extra, "state");
+  for (const path of [cwd, bin, repo, hidden, state]) mkdirSync(path, { recursive: true });
+  for (const path of [hidden, state]) writeFileSync(join(path, "private"), "fixture");
+  writeFileSync(join(repo, "marker"), "work");
+  writeFileSync(join(bin, "git"), '#!/bin/sh\nif test "$1" = -C; then cd "$2" || exit 2; fi\ntest -f /tmp/shared-marker && test -f marker && test ! -e ../hidden/private && test ! -e ../state/private && echo approved >> result\n', { mode: 0o755 });
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("PATH", bin + ":" + process.env.PATH);
+  vi.stubEnv("CODEX_HOME", state);
+  app.config.agents.ownSandbox = { mode: "require", writable: [extra], hidden: [hidden] };
+  const profile = agentProfileSchema.parse({ id: "codex", command: "/bin/sh", transport: "acp" });
+  const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
+  const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: "personal", runId: null, profile, cwd });
+  try {
+    const child = launch("/bin/sh", ["-ec", 'touch /tmp/shared-marker; (cd "$1" && git fetch); git -C "$1" fetch', "sh", repo],
+      { cwd, ownSandbox: prep.isolation.box, env: prep.mcp.env });
+    let err = "";
+    child.stderr.on("data", chunk => err += chunk);
+    expect((await once(child, "close"))[0], err).toBe(0);
+    expect(readFileSync(join(repo, "result"), "utf8")).toBe("approved\napproved\n");
+  } finally {
+    revokeToolToken(prep.token); await server.close(); app.db.close();
+    rmSync(app.home, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private while mounting an allowed child", async () => {
   const app = testApp();
   const home = mkdtempSync(join(tmpdir(), "tmp-cwd-"));
@@ -199,8 +263,8 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
   try {
     const box = prep.isolation.box!;
     expect(box.readOnly).toBe(true);
-    const args = bwrapArgs({ ...box.plan, cwd: prep.cwd, command: profile.command, args: [] });
-    expect(args.slice(args.indexOf("--tmpfs"), args.indexOf("--tmpfs") + 2)).toEqual(["--tmpfs", "/tmp"]);
+    const privateTmp = box.plan.work.privateTmp!;
+    expect(existsSync(privateTmp)).toBe(true);
     expect([...box.plan.ro, ...box.plan.rw]).not.toContain("/tmp");
     expect(box.plan.rw).toContain(allowed);
     const name = "private-" + app.home.split("/").at(-1);
@@ -209,6 +273,9 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
     expect((await once(child, "close"))[0]).toBe(0);
     expect(existsSync(join("/tmp", name))).toBe(false);
     expect(existsSync(join(allowed, "result"))).toBe(true);
+    expect(readFileSync(join(privateTmp, name), "utf8")).toBe("private\n");
+    revokeToolToken(prep.token);
+    await vi.waitFor(() => expect(existsSync(privateTmp)).toBe(false));
   } finally {
     revokeToolToken(prep.token); app.db.close();
     rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });

@@ -16,6 +16,6 @@ export const reportSchema = z.object({
   answers: z.array(answer).max(20).optional().describe("授权内的问题，按宿主给的 questionId 写回"),
   setAside: lines.optional(), overruled: lines.optional(),
   brief: z.object({ doneWhen: lines, outOfScope: lines, scope: lines, constraints: lines.optional() }).optional()
-    .describe("草案或修改建议。宿主自动发可编辑的确认卡，不要在 askOwner 中再问是否确认。scope 每项填一个仓库名、相对目录或文件路径（如 README.md），不要写说明句。"),
+    .describe("草案或修改建议。自动跟进的首版任务书直接生效，手动创建和后续修改由本人确认，不要在 askOwner 中再问是否确认。scope 每项填一个仓库名、相对目录或文件路径（如 README.md），不要写说明句。"),
 });
 export type SupervisorReport = z.infer<typeof reportSchema>;

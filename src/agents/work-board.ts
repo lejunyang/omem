@@ -1,3 +1,5 @@
+import { autoFollowFor } from "./auto-follow.ts";
+import { wakeSupervisor } from "./supervisor.ts";
 import { workAgentSpec, workCommand, type BoardDevice, type Destination } from "./work-device.ts";
 import type { WorkResult, WorkRequest } from "./peer-work.ts";
 import type { App } from "../core/app.ts";
@@ -112,6 +114,11 @@ function coordinateIfReady(app: App, workId: string) {
   });
   const text = [`任务板 ${workId}。请对标有“本轮验收 ID”的块用 work_review 提交决定。退回重做后结束本轮；其余情况验收完即可向本人汇总，每个论断注明来自哪一块。`, ...reports].join("\n\n");
   const msg = addWorkMessage(app, work, { role: "assistant", text, meta: { command: true, board: workId } });
+  const task = autoFollowFor(app, "agentWork", workId);
+  if (task) {
+    wakeSupervisor(app, task.id, `任务板 ${workId} 的必选块已收齐，请用 work_status 查看结果，按验收条件用 work_review 提交决定。`);
+    return;
+  }
   enqueueCoordination(app, work, msg, tasks.filter(t => t.attempts.at(-1)?.finishedAt).map(t => t.attempts.at(-1)!.runId), `验收：${work.title}`);
 }
 

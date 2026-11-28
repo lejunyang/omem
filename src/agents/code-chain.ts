@@ -94,7 +94,7 @@ export function queueNextCodeRound(
   const expectedLastRunId = chain.lastCodeRunId;
   app.db.exec("BEGIN IMMEDIATE");
   try {
-    chain = (getRun(app, chain.askRunId).output.codeChain as CodeChain | undefined) ?? chain;
+    chain = (getRun(app, chain.rounds[0]).output.codeChain as CodeChain | undefined) ?? chain;
     const current = getRun(app, chain.lastCodeRunId!);
     const root = String(current.input.continueFrom ?? current.id);
     if (one(app.db, "select key from kv where key = ? and cast(value as integer) >= ?", `improve-lock:${root}`, Date.now() - 45 * 60000))
@@ -115,9 +115,9 @@ export function queueNextCodeRound(
     const last = one<{ space_id: string | null; input: string }>(app.db, "select space_id, input from runs where id = ?", chain.lastCodeRunId!);
     if (!last) return null;
     const input = JSON.parse(last.input) as { execution?: Execution; reviewExecution?: Execution; reviewExecutions?: Record<string, Execution>; task: string; checkCommand?: string; repos?: string[]; checks?: Record<string, string>; reviewTier?: string; reviewChecks?: string[]; roundReview?: RoundReview; readSpaces?: string[]; itemId?: string; contextItemId?: string; fromReview?: string; taskMode?: boolean };
-    if (!opts.manual && current.input.longTaskId) {
-      const task = longTaskForRun(app, current.id)!;
-      const stop = workBudgetStop(app, task, root);
+    const supervisor = !opts.manual && longTaskForRun(app, current.id);
+    if (supervisor) {
+      const stop = workBudgetStop(app, supervisor, root);
       if (stop) {
         signalCodeWork(app, root, stop);
         return null;
@@ -176,7 +176,7 @@ export function queueNextCodeRound(
 
 /** No automatic round while waiting for the owner; their answer resumes the chain. */
 export function setChainAwaitingUser(app: App, chain: CodeChain, waiting: boolean) {
-  const fresh = getRun(app, chain.askRunId).output.codeChain as CodeChain | undefined;
+  const fresh = getRun(app, chain.rounds[0]).output.codeChain as CodeChain | undefined;
   const next = { ...(fresh ?? chain), awaitingUser: waiting };
   saveCodeChain(app, next, chain.askRunId, ...chain.rounds);
   return next;
@@ -225,7 +225,7 @@ export function settleCodeChain(app: App, runId: string) {
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     } else {
       const next = setChainAwaitingUser(app, chain, true);
-      next.waitReason = r.output.stoppedByOwner ? "stopped" : r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : (r.output.reviewStop as CodeChain["waitReason"]) ?? (chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review");
+      next.waitReason = r.output.stoppedByOwner || r.output.stoppedBySupervisor ? "stopped" : r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : (r.output.reviewStop as CodeChain["waitReason"]) ?? (chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review");
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     }
     // The originating assistant can consume the result on its next turn. Do not wake a
@@ -366,6 +366,11 @@ function wakeAssistantForCodeResult(app: App, runId: string) {
   const r = getRun(app, runId);
   const chain = r.output.codeChain as CodeChain | undefined;
   const messageId = r.output.codeResultMessageId as string | undefined;
+  if (!chain && !r.output.codeResultHandedOff && ["done", "failed", "cancelled"].includes(r.status)) {
+    if (signalCodeWork(app, runId, `编码轮结束：${r.status}，${r.output.verdict ?? r.error ?? ""}`))
+      setRunOutput(app, runId, { codeResultHandedOff: true });
+    return;
+  }
   if (!chain || !messageId || r.output.codeResultHandedOff || chain.lastCodeRunId !== r.id || r.output.verdict === "awaiting-plan" || r.output.verdict === "awaiting-design") return;
   // Stopped on the owner's word: whoever stopped it already told them.
   if (r.output.stoppedByOwner) return;

@@ -61,6 +61,8 @@ export type Inbound = Partial<ThreadAddress> & {
 
 export type Received = { thread: Thread; messageId: string | null; runId: string | null; merged: boolean; reply: string | null; card?: Record<string, unknown>; started: "new" | "renewed" | null };
 
+export const isFollowOptOut = (text: string) => /^(不用跟进|别跟了)[。！!]?$/u.test(text.trim());
+
 export async function receive(app: App, inb: Inbound, selected?: CommandTask): Promise<Received> {
   const userId = inb.userId ?? OWNER;
   const item = inb.itemId ? requireReadableItem(app, inb.itemId, userId) : undefined;
@@ -154,6 +156,18 @@ export async function receive(app: App, inb: Inbound, selected?: CommandTask): P
   if (!inb.fromAsk && !inb.speaker && !inb.asker && thread.userId === userId) {
     const { longTaskInThread, changeLongTask } = await import("./long-tasks.ts");
     const task = longTaskInThread(app, thread.id);
+    if (isFollowOptOut(text)) {
+      const { autoFollowInOrigin } = await import("./auto-follow.ts");
+      const target = task?.sourceKind && !["ended", "done"].includes(task.status)
+        ? task : autoFollowInOrigin(app, thread.id, userId);
+      if (target) {
+        await changeLongTask(app, target.id, { action: "detach" });
+        const messageId = addMessage(app, thread.id, "user", text, null, { ...ownerOrigin, command: true });
+        const reply = "已退出自动跟进，这件事按原来的方式继续。";
+        addMessage(app, thread.id, "assistant", reply, null, { command: true });
+        return { thread, messageId, runId: null, merged: false, reply, started };
+      }
+    }
     if (task && !["ended", "done"].includes(task.status)) {
       const messageId = addMessage(app, thread.id, "user", inb.text, null,
         { ...ownerOrigin, ...(inb.externalMessageId ? { externalId: inb.externalMessageId } : {}) });

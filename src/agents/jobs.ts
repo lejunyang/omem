@@ -39,7 +39,7 @@ import { readAgentSpec } from "./specs.ts";
 import { describeFlags, guardSource } from "../sources/guard.ts";
 import { learningProgress, studyStats } from "../learn/cards.ts";
 import { getGoal, listGoals, localClock, upsertGoal } from "../learn/goals.ts";
-import { addMessage, getThread, threadMessages, updateThread } from "./threads.ts";
+import { addMessage, getThread, handedReportAgent, threadMessages, updateThread } from "./threads.ts";
 import { createRun, getRun, listRuns, ResumeAfterAiLogin, runUser, registerHandler, updateQueuedRun, type RunContext } from "./runs.ts";
 import { aiLoginWait } from "./credential-wait.ts";
 import { markReviewed, similarMemories, spacesWithUnreviewed, unreviewedMemories } from "../memory/quality.ts";
@@ -171,6 +171,17 @@ async function runAsk(ctx: RunContext) {
   // A coding round's result handed to the assistant, already told by a turn about the same work that
   // ended after it (a wake-up it set for the round): not a second report of the same result.
   const handedOff = (ctx.run.input as { handoff?: { kind: string; runId?: string; workId?: string } }).handoff;
+  // A handoff queued before startup can belong to a work that was adopted during recovery.
+  const queuedWork = coordinate?.workId ?? (handedOff?.kind === "code" || handedOff?.kind === "code-tasks" ? handedOff.workId : undefined);
+  if (queuedWork && msgs.every(m => m.role === "assistant")) {
+    const { autoFollowFor } = await import("./auto-follow.ts");
+    const task = autoFollowFor(ctx.app, coordinate ? "agentWork" : "code", queuedWork);
+    if (task) {
+      const { wakeSupervisor } = await import("./supervisor.ts");
+      wakeSupervisor(ctx.app, task.id, `接手此前排队的协调 ${ctx.run.id}：${ctx.run.title}。相关消息：${ids.join("、")}`);
+      return { answer: "", quiet: true, supervisedBy: task.id };
+    }
+  }
   if (handedOff?.kind === "code") {
     const { reportedSince } = await import("./code-chain.ts");
     const by = reportedSince(ctx.app, input.conversationId, handedOff, ctx.run.id);
@@ -506,7 +517,7 @@ registerHandler("thread-summary", async (ctx) => {
   const fresh = threadMessages(ctx.app, threadId, { after: t.summaryAt, limit: 80 }).filter((m) => !m.meta.command);
   if (!fresh.length) return { quiet: true };
   // Group members in a 关注's conversation speak for themselves: only the owner's own words are “本人”.
-  const who = (m: (typeof fresh)[number]) => (m.role === "user" ? (typeof m.meta.speaker === "string" ? m.meta.speaker : typeof m.meta.asker === "string" ? m.meta.asker : "本人") : "助理");
+  const who = (m: (typeof fresh)[number]) => (m.role === "user" ? (typeof m.meta.speaker === "string" ? m.meta.speaker : typeof m.meta.asker === "string" ? m.meta.asker : "本人") : handedReportAgent(m.meta) ? `${handedReportAgent(m.meta)} 交回的报告` : "助理");
   const transcript = fresh.map((m) => `${who(m)}（${localStamp(m.createdAt, ctx.app.config.timezone)}）：${truncate(m.text, 1200)}`).join("\n\n");
   const listening = t.channel === "listen"
     ? "\n\n这是助手替本人关注的群（一个或几个）的会话：写成三段，“在聊的话题”（谁在推进什么）、“没结的问题”（谁问了什么、还在等什么）、“已有结论”（定了什么、查清了什么，带人名）。只写群里的事，不写助手的处理过程。"

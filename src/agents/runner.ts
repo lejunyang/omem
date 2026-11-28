@@ -9,7 +9,9 @@ export { toolSections } from "./instruction-sections.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import { lentByOthers, localOnly, meshNote } from "../core/mesh.ts";
 import { REVIEW_TOOLS } from "./review.ts";
-import { existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
@@ -36,7 +38,7 @@ import { cloudAccess } from "./cloud-probe.ts";
 import { cloudToolGuide } from "./cloud-tools.ts";
 import { backendCapabilities, hasHostTools, type BackendCapabilities } from "./capabilities.ts";
 import { DOUBAO_CLI_INSTALL, DOUBAO_TOOL_NOTE, doubaoFeatures } from "./doubao-cli.ts";
-import { dropUnavailable, issueToolToken, revokeToolToken, toolList } from "./tools.ts";
+import { dropUnavailable, issueToolToken, onToolTokenRevoked, revokeToolToken, toolList } from "./tools.ts";
 import { agentRunError, aiUsageText, isAgentRunError, type AgentEvent, type AgentResult, type InstructionParts, type McpAccess } from "./types.ts";
 import { OWNER, personalSpaceId, scopeFor, userName } from "../core/users.ts";
 import { pluginSourceSpaces } from "../plugins/registry.ts";
@@ -62,7 +64,7 @@ import { ownRun } from "./own-run.ts";
 import { workspaceMounts } from "./workspaces.ts";
 import type { WorktreeRef } from "./worktree-index.ts";
 import { runAccount } from "./run-account.ts";
-import { accountOf, egressRequested, egressSupport } from "./sandbox.ts";
+import { accountOf, egressRequested, egressSupport, type WorkspaceMounts } from "./sandbox.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -387,7 +389,7 @@ export type Actor = { role: RoleName } | { spec: AgentSpec };
 export type PreparedRun = {
   acpWritable: boolean;
   isolation: ReturnType<typeof ownRun>;
-  workspace?: import("./sandbox.ts").WorkspaceMounts;
+  workspace?: WorkspaceMounts;
   profile: AgentProfile;
   capabilities: BackendCapabilities;
   tools: Set<string>;
@@ -606,7 +608,7 @@ export function prepareRun(
   const account = accountOf(profile);
   const base = new URL(app.baseUrl);
   if (egressRequested(app.config,profile) && egressSupport().ok) base.hostname = "127.0.0.1";
-  const toolBase = base.origin;
+  let toolBase = base.origin;
   const reconciling = roleName === "flow-reconcile";
   const browserProfilesRoot = !reconciling && (spec || !GUEST_ROLES.includes(roleName)) && !input.boardAccess && !input.investigationTools && !input.itemTakeoverRead && !input.replay && !input.shadow && !input.reviewCheck && !input.reviewLead && !profile.peer && capabilities.localTools
     ? account ? join(account.home, ".omem", "remote", "profiles") : join(app.home, "remote", "profiles", ...(userId === OWNER ? [] : [`@${userId}`]))
@@ -626,7 +628,8 @@ export function prepareRun(
       input.worktreeAccess === "read" || readOnly ? "read" : "write") : undefined;
   };
   const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId,
-    { workspace: mounts, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
+    { workspace: mounts, kind: userId === OWNER && !guestTurn && !input.shadow ? input.scene?.kind : null, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
+  if (isolation.box?.isolatedNetwork) { base.hostname = "127.0.0.1"; toolBase = base.origin; }
   const workspace = isolation.box?.plan ?? (account ? mounts(false) : undefined);
   // An overlapping check can write its host-created detached snapshot, alongside the read-only originals.
   if (account && workspace && input.worktreeAccess === "read" && input.runId) {
@@ -680,10 +683,28 @@ export function prepareRun(
   const textOnly = !!inputs && !inputs.includes("image") ? "\n- 这次用的模型只读文字、看不了图片：遇到图片（飞书消息里的、附件里的）不要用图片工具打开，直接说明这个模型看不了图，需要的话请对方用文字描述，或换一个能看图的模型再问" : "";
   const environment = `# 环境\n\n${userId !== OWNER ? `- 这次是在为 ${userName(app, userId)} 工作（不是 omem 的主人），只能使用其有权访问的空间；对话里的“本人”指 ${userName(app, userId)}\n` : ""}${capabilities.localTools ? commandLoginNote(app, userId) : ""}- 当前空间：${space.id}（${space.name}，${kindLabel(space.kind)}）${textOnly}${!capabilities.localTools ? "" : space.rootPath ? `\n- 工作目录是该空间关联的目录：${space.rootPath}` : `\n- 工作目录是该空间的知识库目录（wiki/ 下是页面 Markdown）`}${guide ? `\n\n## 空间说明（SPACE.md）\n\n${guide}` : ""}${repoGuides ? `\n\n${repoGuides}` : ""}${related.length ? `\n\n## 相关空间\n\n${relatedGuide(related, !!scoped, searchTools)}` : ""}${mesh ? `\n\n## 网络里的其他 omem\n\n${mesh}` : ""}${lessons ? `\n\n## 本人的偏好与以往经验（记忆中保存，按需遵循；与本次要求冲突时以本次为准）\n\n${lessons}` : ""}${mounted.text ? `\n\n## 这个空间和仓库的技能（这里的做法，做对应的事之前先读全文并照做）\n\n${mounted.text}` : ""}${skills ? `\n\n## 可用技能（做对应的事之前先读全文并照做）\n\n${skills}` : ""}${agents ? `\n\n## 已有的 Agent 档案（${agentUse}）\n\n${agents}` : ""}${routing ? `\n\n## 任务选型（交办时用 execution 选择）\n\n${routing}` : ""}`;
   const system = [common, body, environment].join("\n\n---\n\n");
-  const token = issueToolToken({ commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, sourceSpaces, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  const commandWork = (): WorkspaceMounts => {
+    if (isolation.box) return isolation.box.plan.work;
+    const dir = canonical(cwd);
+    const shareCwd = ![canonical(app.home), canonical(account!.home), "/tmp", "/"].some(root => under(root, dir));
+    const read = guestTurn || !allowWrites || !!input.shadow;
+    const work = workspace ?? { ro: read && shareCwd ? [dir] : [], rw: !read && shareCwd ? [dir] : [] };
+    return { ...work, rw: [...new Set([...work.rw, ...(input.inbox ? [canonical(input.inbox)] : [])])] };
+  };
+  const commandSandbox = isolation.box || account ? { profile, own: isolation.box, workspace: commandWork() } : undefined;
+  // Both processes see this turn's /tmp; the executor keeps its own scratch below it.
+  const privateTmp = commandSandbox && canonical(mkdtempSync(join(tmpdir(), "omem-command-")));
+  if (commandSandbox) commandSandbox.workspace.privateTmp = privateTmp;
+  const token = issueToolToken({ commandSandbox, commandHomeUser: guestTurn ? null : account?.userId ?? OWNER, browserProfilesRoot, incomingWork: input.scene?.kind === "peer-work" ? { chatPages: new Map() } : undefined, boardAccess: input.boardAccess, profileSkills, runId: input.runId, spaceId: space.id, spaces: readable, writable, sourceSpaces, itemDiscoverySpaces: !spec && roleName === "ingest" ? (input.spaces === undefined ? allowed : scoped) : undefined, tools, actor: "agent", userId, larkChats: lark.chats, larkDraft: !!lark.draft, larkPowers: larkPowers(lark, userId), larkBot: lark.bot, agentProfile: profile.id, model: profile.model, effort: profile.effort, role: spec ? undefined : roleName, spec: spec?.name, ...(input.checkName ? { check: input.checkName } : {}), plugin: spec?.plugin, shadow: input.shadow, view: input.replay?.view });
+  if (privateTmp) {
+    const off = onToolTokenRevoked(token, () => {
+      off();
+      void rm(privateTmp, { recursive: true, force: true }).catch(() => {});
+    });
+  }
   return {
     isolation,
-    workspace,
+    workspace: account ? { ...(workspace ?? { ro: [], rw: [canonical(cwd)] }), privateTmp } : workspace,
     ...accessMode,
     profile,
     capabilities,
@@ -695,7 +716,8 @@ export function prepareRun(
     parts: { common: common.length, role: body.length, environment: environment.length - lessons.length - skills.length - mounted.text.length, lessons: lessons.length, lessonCount: lessons ? lessons.split("\n").length : 0, skills: skills.length + mounted.text.length },
     token,
     mcp: { url: `${toolBase}/mcp`, baseUrl: toolBase, token, stdio: mcpBridge(), env: {
-      ...agentToolEnv(app.home, toolBase, token, commandGateDir(app)),
+      ...agentToolEnv(app.home, toolBase, token, commandGateDir(app, !!commandSandbox)),
+      ...(commandSandbox ? { GIT_ASKPASS: join(app.home, "bin", "sandbox", "bin", "git-askpass"), GIT_TERMINAL_PROMPT: "0" } : {}),
       ...(input.inbox ? { OMEM_ARTIFACTS: input.inbox } : {}),
       ...(browserProfilesRoot ? { OMEM_BROWSER_PROFILES: browserProfilesRoot } : {}),
       // Someone else's run: the browsers it opens go through the guard that keeps them off this machine (remote/browser-guard.ts).
@@ -991,7 +1013,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
   const borrowed = input.borrow;
   const raw = member ? resolveRunProfile(app, { ...input, actor }) : undefined;
   const supervising = input.role === "supervisor";
-  const memberOptions = { userId: input.userId!, runId: input.runId, threadId: runInput.conversationId ?? runInput.threadId, pinned: specified || execution?.source === "user" || supervising, ownOnly: runInput.ownAccountOnly, signal: input.signal };
+  const memberOptions = { userId: input.userId!, runId: input.runId, threadId: runInput.conversationId ?? runInput.threadId, pinned: specified || execution?.source === "user" || supervising, ownOnly: runInput.ownAccountOnly, waitForLogin: supervising, signal: input.signal };
   const primary = borrowed ? peerProfile({
     id: `peer:${borrowed.device}:${borrowed.backend}`, peer: { id: borrowed.device, agent: borrowed.backend },
     transport: "acp", command: "omem", args: [], env: { OMEM_HOME: app.home }, idleTimeoutMs: 600000,
@@ -1199,7 +1221,7 @@ export async function runRole(app: App, input: RoleRunInput & { spec?: AgentSpec
           runId: input.runId,
           selection: pinned && i === 0 ? execution : undefined,
           codeReview,
-          strictSelection: pinned && profile.id === primary.id ? { model: !!(execution?.model ?? personal.model), effort: !!(execution?.effort ?? personal.effort) } : undefined,
+          strictSelection: pinned && profile.id === primary.id ? { model: !!(login?.pick.model ?? execution?.model ?? personal.model), effort: !!(login?.pick.effort ?? execution?.effort ?? personal.effort) } : undefined,
           cwd: prep.cwd,
           workspace,
           ownSandbox: prep.isolation.box,

@@ -9,6 +9,7 @@ import { createSpace } from "../src/core/spaces.ts";
 import { dispatchRuleEvent } from "../src/rules/engine.ts";
 import { listRules, saveRule } from "../src/rules/store.ts";
 import type { RuleEvent } from "../src/rules/types.ts";
+import { renderMessages } from "../src/agents/sessions.ts";
 import { testApp } from "./helpers.ts";
 
 /** A conversation with a run of the assistant (or of a profile) in it. */
@@ -46,10 +47,19 @@ describe("wake-ups", () => {
     run(app.db, "update runs set status='done', finished_at=? where id=?", new Date().toISOString(), runId);
     const fired = await fire(back.id);
     expect(inputOf(app, String(fired.runId))).toMatchObject({ conversationId: thread.id, wake: true });
+    // The conversation keeps only the report (folded on the page); the assistant's turn sees the instructions too.
     const note = threadMessages(app, thread.id).at(-1)!;
-    expect(note.text).toContain("导出用了旧模板。");
-    expect(note.text).toContain("stay_quiet");
-    expect(note.text).not.toContain("设的唤醒");
+    expect(note.text).toBe("导出用了旧模板。");
+    expect(note.meta.wake).toMatchObject({ report: { agent: "investigator", runId: child.id } });
+    const seen = renderMessages([note], app);
+    expect(seen).toContain("investigator 交回的报告（宿主转交，不是本人说的）");
+    expect(seen).toContain("stay_quiet");
+    expect(seen).toContain("导出用了旧模板。");
+    expect(seen).not.toContain("设的唤醒");
+    // Older notes kept everything in the text and render as before.
+    const old = { ...note, text: "旧说明 stay_quiet。\n\n旧报告", meta: { wake: { note: "旧说明" } } };
+    expect(renderMessages([old], app)).toContain("唤醒（之前设的，不是本人说的）");
+    expect(renderMessages([old], app)).toContain("旧说明 stay_quiet。\n\n旧报告");
 
     // The handing turn read the finished report itself: no extra turn.
     const second = createRun(app, { kind: "agent", title: "调查二", spaceId: "personal", parentId: runId, input: { spec: "investigator", task: "再查", threadId: thread.id } });

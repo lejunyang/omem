@@ -95,18 +95,23 @@ export function nextBatch(app: App, rows: Pending[], batch: number): Pending[] {
   return out;
 }
 
+/** A job that still has answers to read in its range, under its limit. */
+function jobGoing(app: App, at: number) {
+  const w = windowOf(app, at);
+  if (!w.job || jobDone(app, w.job, w.until) >= w.job.limit) return false;
+  return !!one(app.db, "select 1 from reply_outcomes indexed by reply_outcomes_unswept where swept_at is null and sweep_tries < ? and at >= ? and at <= ? limit 1", MAX_TRIES, w.job.since, w.job.until && w.job.until < w.until ? w.job.until : w.until);
+}
+
 /**
- * Queue the next stretch when nothing of the sweep is waiting or running and the day's share is not used
- * up. Called on the patrol's tick and by the nightly schedule; one run at a time.
+ * Queue the next stretch when nothing of the sweep is waiting or running (`finishing`: the run that is
+ * ending and asks for the next) and the day's share is not used up. Called on the patrol's tick, by the
+ * nightly schedule, and while a job lasts by each stretch as it ends; one run at a time.
  */
-export function scheduleOutcomeReview(app: App, at = Date.now()) {
+export function scheduleOutcomeReview(app: App, at = Date.now(), finishing = "") {
   const cfg = app.config.replies.outcome;
   if (!cfg.enabled || !cfg.review.enabled) return [];
-  if (one(app.db, "select 1 from runs where kind = 'outcome-review' and status in ('queued','running') limit 1")) return [];
-  const w = windowOf(app, at);
-  if (w.job && (jobDone(app, w.job, w.until) >= w.job.limit || !one(app.db, "select 1 from reply_outcomes indexed by reply_outcomes_unswept where swept_at is null and sweep_tries < ? and at >= ? and at <= ? limit 1", MAX_TRIES, w.job.since, w.job.until && w.job.until < w.until ? w.job.until : w.until))) {
-    run(app.db, "delete from kv where key = ?", JOB_KEY);
-  }
+  if (one(app.db, "select 1 from runs where kind = 'outcome-review' and status in ('queued','running') and id != ? limit 1", finishing)) return [];
+  if (sweepJob(app) && !jobGoing(app, at)) run(app.db, "delete from kv where key = ?", JOB_KEY);
   const job = sweepJob(app);
   const today = one<{ n: number }>(app.db, "select count(*) n from reply_outcomes where swept_at >= ?", dayStart(app, at))?.n ?? 0;
   if (today >= Math.max(cfg.review.max, job?.perDay ?? 0)) return [];
@@ -389,6 +394,8 @@ registerHandler("outcome-review", async (ctx: RunContext) => {
   run(app.db, "update reply_outcomes set swept_at = ? where run_id in (select value from json_each(?)) and sweep_tries >= ?", now(), JSON.stringify(left), MAX_TRIES);
   const tasks = one<{ n: number }>(app.db, "select count(distinct task_id) n from reply_outcomes where run_id in (select value from json_each(?)) and task_id is not null", JSON.stringify(live.map((p) => p.runId)))?.n ?? 0;
   const done = live.length - left.length;
+  // Going further back, the next stretch starts right away instead of at the patrol's next tick.
+  if (done > 0 && jobGoing(app, Date.now())) scheduleOutcomeReview(app, Date.now(), ctx.run.id);
   return {
     quiet: true, swept: done, tasks, left: left.length,
     summary: [`回扫了 ${done} 次回答，分成 ${tasks} 件${left.length ? `；${left.length} 次没交结论${left.some((id) => (one<{ sweep_tries: number }>(app.db, "select sweep_tries from reply_outcomes where run_id = ?", id)?.sweep_tries ?? 0) >= MAX_TRIES) ? "，其中交了两回都没交的按第一遍留着" : "，下一段再看"}` : ""}。`, truncate(r.text.trim(), 1500)].filter(Boolean).join("\n"),

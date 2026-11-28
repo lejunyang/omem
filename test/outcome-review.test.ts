@@ -216,6 +216,27 @@ describe("回扫回答", () => {
     expect(one(app.db, "select count(*) n from reply_tasks")).toMatchObject({ n: 0 });
   });
 
+  it("回补时一段交完马上排下一段，不等巡检；什么都没交的不接着排", async () => {
+    const app = fresh();
+    const c = conversation(app);
+    const d1 = c.ask(24 * 40, "第一天的问题", "第一天的回答");
+    const d2 = c.ask(24 * 39, "第二天的问题", "第二天的回答");
+    startSweepJob(app, { since: ago(24 * 45) });
+    const [first] = all<{ id: string }>(app.db, "select id from runs where kind = 'outcome-review'");
+    expect(batchOf(getRun(app, first.id).input).map((p) => p.runId)).toEqual([d1]);
+    run(app.db, "update runs set status = 'running' where id = ?", first.id);
+    hand = () => [{ title: "第一天的事", answers: [answer(d1, "resolved")], outcome: "done", type: "咨询答疑", new_type: { description: "问在哪、是什么" } }];
+    await handle(app, first.id);
+    const queued = all<{ id: string }>(app.db, "select id from runs where kind = 'outcome-review' and status = 'queued'");
+    expect(queued).toHaveLength(1);
+    expect(batchOf(getRun(app, queued[0].id).input).map((p) => p.runId)).toEqual([d2]);
+    // Nothing handed in: the patrol picks it up again, not the run itself.
+    run(app.db, "update runs set status = 'running' where id = ?", queued[0].id);
+    hand = () => [];
+    await handle(app, queued[0].id);
+    expect(all(app.db, "select id from runs where kind = 'outcome-review' and status = 'queued'")).toHaveLength(0);
+  });
+
   it("数据页按回扫后的结果算：接着往下算有用、要补充单列，给出回扫同意第一遍的占比", async () => {
     const app = fresh();
     const c = conversation(app);

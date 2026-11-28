@@ -52,6 +52,7 @@ api.credential({
       name: "acme",                 // 可执行文件名
       install: ["~/.local/share/acme"],        // 只读挂进成员沙箱的安装目录
       state: [".local/share/acme/data"],       // 它要写的状态目录（相对 HOME）
+      loginEnv: ["ACME_TOKEN"],                // 同身份执行器可用的命令登录变量名，按命中的子命令声明取值
       readOnly: [{ subcommand: ["db", "query"] }, { subcommand: ["log"] }],   // 算只读的调用（每条命令最多 256 条）：子命令按前缀匹配（["log"] 覆盖 log 下的全部子命令），前面的全局选项和它的值（--site cn）跳过
       resource: [{ match: { subcommand: ["db", "query"] }, key: "db:{option.instance}" }], // 这次调用碰的是哪个资源
       outcomes: {                   // 失败时怎么认原因；按顺序匹配，都不中算普通失败
@@ -67,7 +68,7 @@ api.credential({
 ```
 
 - `ctx` 同插件登录方式的上下文：`userId`、`home`、展开后的 `env`、按人保存的 `secret`、`signal`。回调在 omem 进程里执行，只读写这个人的账号目录和 `secret`。
-- 清单声明 `permissions.credential: true`，本人信任插件并选“在 omem 里运行”才生效。声明里的 `install`、`state`、匹配规则都进信任指纹。
+- 清单声明 `permissions.credential: true`，本人信任插件并选“在 omem 里运行”才生效。声明里的 `install`、`state`、`loginEnv`、匹配规则都进信任指纹。
 - 已有的 `api.agentLogin` 继续可用；新的插件用 `api.credential`，一种凭据供给多个对象。
 - 宿主按 `expiresAt` 在到期前续签（沿用现有的十分钟提前量），续签后调 `provide`；每天对每份持有调一次 `check`。
 

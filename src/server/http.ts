@@ -76,6 +76,7 @@ import { all, one, run } from "../core/db.ts";
 import { forgetRelayErrors, keyPaused, relayRequest, relayStats } from "../core/ai-relay.ts";
 import { useRelayBase } from "../core/ai-relay-addr.ts";
 import { allProfiles, keyBackendsOf, keyedProfiles, providerFormats, providerModels, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
+import { executionPermit, pendingExecution } from "../agents/command-executor.ts";
 import { credentialExecution, memberExecution, ownerFallback } from "../agents/credential-execution.ts";
 import { credentialCommand, credentialOutcome, outcomeSchema, reportable } from "../agents/credential-outcome.ts";
 import { approverChoices, commandGate, commandGateDir, gateBurst } from "../agents/command-gate.ts";
@@ -104,7 +105,8 @@ import { runWrites, visibleRunEvent, writeVisible } from "../agents/run-writes.t
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { refExcerpt } from "../items/evidence.ts";
 import { getItem, ITEM_KINDS, itemEvents, listItems, upsertItem } from "../items/store.ts";
-import { addMaterials, itemsOfRun, linkRunToItem, materialViews, removeMaterials, workItem, type MaterialView } from "../items/materials.ts";
+import { queueCodeWork } from "../agents/code-delegate.ts";
+import { addMaterials, itemsOfRun, materialViews, removeMaterials, workItem, type MaterialView } from "../items/materials.ts";
 import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
@@ -351,13 +353,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (viaProxy(req.raw) || !(loopbackIp(req.ip ?? "") || (!!s.remoteAddress && s.remoteAddress === s.localAddress))) throw new HttpError(403, "命令拦截只接受本机的请求");
     const ctx = toolContextForToken(app, bearer(req));
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
-    const b = q(z.object({ credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
+    const b = q(z.object({ stream: z.boolean().optional(), credentialExecution: z.boolean().optional(), command: z.string().min(1).max(200), args: z.array(z.string().max(100_000)).max(10_000).default([]), cwd: z.string().max(4000).default(""), approver: z.string().max(200).optional(), reason: z.string().max(2000).optional() }), req.body);
     const burst = gateBurst([ctx.runId ?? digest(bearer(req)), b.command, digest(b.args)].join("\n"));
     if (burst) {
       if (ctx.runId && burst === "first") addRunEvent(app, ctx.runId, "status", { text: `命令 ${b.command} 一分钟内以同样的参数请求了 60 次以上，疑似进程在循环启动自己，已拒绝。` });
       return { decision: "deny", message: "同一条命令一分钟内重复了 60 次以上，疑似在循环启动自己，omem 拒绝执行。" };
     }
     const decision = await commandGate(app, ctx, b, ctx.runId ? undefined : digest(bearer(req)));
+    const allowed = () => decision.decision === "allow" && b.stream ? executionPermit(ctx, bearer(req), b) : undefined;
     // A rule's run switched to a member who agreed (rules/run-as.ts): declared commands run on their login.
     const runAs = ctx.runId && b.credentialExecution && decision.decision === "allow" ? await import("../rules/run-as.ts") : null;
     const member = runAs?.actingAs(ctx.runId);
@@ -393,13 +396,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
         try {
           const loan = await credentialExecution(ctx, entry, b.args, live, controller.signal);
           if (!live()) return { decision: "deny", message: "运行或操作规则已变化，请重新执行" };
+          if (loan && "decision" in loan && loan.decision === "deny") return loan;
           // Outcomes are reported only for the requester's own environment (the owner's HOME is not theirs).
-          return { ...decision, report: reports, ...loan };
+          return { ...decision, report: reports, ...loan, permit: loan?.execution ? undefined : allowed() };
         } finally { s.off("close", cancel); unsubscribe(); }
       }
-      if (entry) return { ...decision, report: reports };
+      if (entry) return { ...decision, report: reports, permit: allowed() };
     }
-    return decision;
+    return { ...decision, permit: allowed() };
   });
   // A request a page is about to send in a browser an agent drives (agents/http-gate.ts): the same
   // callers as the command gate — this machine, a run's token. GET says which requests to ask about.
@@ -410,6 +414,18 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (!ctx) throw new HttpError(401, "无效的运行令牌（服务重启后，重启前开的 Agent 会话要重新开始）");
     return ctx;
   };
+  server.addContentTypeParser("application/x-omem-stdin", (_req, payload, done) => done(null, payload));
+  server.post("/api/command-gate/stream/:permit", async (req, reply) => {
+    gateCaller(req);
+    const execute = pendingExecution(bearer(req), (req.params as { permit: string }).permit);
+    if (!execute || req.headers["content-type"] !== "application/x-omem-stdin") throw new HttpError(403, "需要本轮未使用的命令授权");
+    reply.hijack();
+    try { await execute(req.raw, reply.raw); }
+    catch (e) {
+      if (!reply.raw.headersSent) reply.raw.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+      reply.raw.end((e as Error).message);
+    }
+  });
   server.post("/api/credentials/outcome", async req => {
     const ctx = gateCaller(req);
     if (!ctx.runId || !reportable(ctx)) throw new HttpError(403, "需要发起人自己账号的本机运行");
@@ -455,8 +471,8 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     let ownSandbox;
     try {
       // The mode can still be saved on a machine without the sandbox (it travels with the config); its directories cannot be checked there.
-      if (sep !== "/" && (settings.writable.length || settings.hidden.length)) throw new Error("沙箱只在 Linux 上有，这台机器上配不了目录");
-      ownSandbox = normalizeSandbox(settings, homedir(), app.home);
+      if (sep !== "/" && (settings.writable.length || settings.hidden.length || settings.loginPaths?.length)) throw new Error("沙箱只在 Linux 上有，这台机器上配不了目录");
+      ownSandbox = normalizeSandbox({ ...app.config.agents.ownSandbox, ...settings }, homedir(), app.home);
     } catch (e) { throw new HttpError(400, (e as Error).message); }
     const next = { ...app.config, agents: { ...app.config.agents, ownSandbox, fullAccess } };
     const status = saveConfig(next, app.home, candidate => {
@@ -530,7 +546,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
       if (e.type === "notification") return can(app, userId, "notifications.view") && one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
       if (e.type === "ask") return one<{ user_id: string }>(app.db, "select user_id from asks where id = ?", e.id)?.user_id === userId;
-      if (e.type === "plugin") return one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", e.conversationId)?.user_id === userId;
+      if (e.type === "plugin" || e.type === "conversation") return one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", e.conversationId)?.user_id === userId;
       if (e.type === "changed") {
         const space = e.spaceId ?? (e.entity === "space" ? e.id : null);
         return !space || (accessibleSpaces(app, userId) ?? []).includes(space);
@@ -2342,8 +2358,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
     // Another repository than the item's code: the item is background only.
     const scoped = workItem(app, b.itemId, repos);
-    const r = createRun(app, { kind: "code", spaceId: businessOf(app, s.id), title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, ...scoped, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(!b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(b.maxRounds ? { maxRounds: b.maxRounds } : {}) } : {}) }, userId });
-    if (scoped.itemId) linkRunToItem(app, r, scoped.itemId, userId);
+    const r = queueCodeWork(app, { spaceId: businessOf(app, s.id), title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, ...scoped, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(b.maxRounds && !b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { maxRounds: b.maxRounds } : {}) }, userId });
     return r;
   });
 

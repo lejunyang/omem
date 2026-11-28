@@ -39,7 +39,7 @@ function headers(input: http.IncomingHttpHeaders) {
   for (const key of ["connection", "keep-alive", "proxy-connection", "proxy-authorization", "proxy-authenticate", "transfer-encoding", "upgrade", "trailer", "te", ...(input.connection ?? "").toLowerCase().split(",").map(k => k.trim())]) delete copy[key];
   return copy;
 }
-const callbackPath = /^\/(?:mcp|api\/(?:tools(?:\/[a-zA-Z0-9_-]+)?|command-gate|credentials\/outcome|operation-gate\/http|remote\/agent-browser))$/;
+const callbackPath = /^\/(?:mcp|api\/(?:tools(?:\/[a-zA-Z0-9_-]+)?|command-gate(?:\/stream\/[a-f0-9-]{36})?|credentials\/outcome|operation-gate\/http|remote\/agent-browser))$/;
 /** The API-key relay (core/ai-relay.ts): a backend's own token, checked by the route, not the run's. */
 const relayPath = /^\/api\/ai\/relay\/[^/]+\/[^/]+\/(?:openai|anthropic)\//;
 const hostName = (url: URL) => url.hostname.replace(/^\[|\]$/g, "");
@@ -168,6 +168,7 @@ export async function startProxy(listen: string | { host: string; port: number }
     if (callback && url.pathname === "/api/command-gate") upstream.on("information", info => {
       if (info.statusCode === 102 && !res.destroyed) res.writeProcessing();
     });
+    if (callback && url.pathname.startsWith("/api/command-gate/stream/")) upstream.flushHeaders();
     res.once("close", () => upstream.destroy());
     upstream.on("error", () => { if (!res.headersSent) res.writeHead(502).end("上游连接或证书验证失败"); else res.destroy(); });
     if (body) { r!.bytes += body.length; upstream.end(body); }

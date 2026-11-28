@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api, authUrl, del, get, onServerEvent, onServerResync, post, type Ask as AskItem, type UiViewItem } from "../api";
+import { api, authUrl, del, get, onServerEvent, onServerResync, patch, post, type Ask as AskItem, type UiViewItem } from "../api";
 import AskCard from "../components/AskCard.vue";
 import UiView from "../components/UiView.vue";
 import Icon from "../components/Icon.vue";
@@ -15,10 +15,38 @@ import VoiceChat from "../components/VoiceChat.vue";
 import { recordSpeech, voiceStatus } from "../lib/voice";
 import { currentSpace, relTime, state, toast } from "../store";
 
-type Conversation = { id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
+type Conversation = { user_id: string; id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
 /** A file pasted, dropped or picked into the box (src/agents/attachments.ts); the text refers to it as [label]. */
 type Attachment = { name: string; filename: string; kind: "image" | "file"; label: string; size: number };
-type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; meta?: { attachments?: Attachment[]; runId?: unknown } };
+type Message = {
+  id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string;
+  meta?: {
+    autoFollowId?: string; attachments?: Attachment[]; runId?: unknown;
+    /** Host notes for the assistant: a wake-up it set, or a run_agent report handed back (src/agents/wakes.ts). */
+    wake?: { note?: string; report?: { agent?: string; runId?: string } };
+    /** A specialist round's report in a multi-Agent work conversation (src/agents/agent-work.ts). */
+    agentReport?: { agent: string; status: string; round: number };
+  };
+};
+
+/**
+ * Material for the assistant, not a reply: folded, with the report itself as the body. Older
+ * handed-back reports stored the assistant's instructions above the report; those are cut off.
+ */
+function folded(m: Message): { title: string; body: string; hint?: string } | null {
+  const meta = m.meta;
+  if (!meta) return null;
+  if (meta.agentReport) return { title: `${meta.agentReport.agent} 交回的报告 · 第 ${meta.agentReport.round} 轮${meta.agentReport.status === "done" ? "" : "（失败）"}`, body: m.text };
+  if (!meta.wake) return null;
+  if (meta.wake.report) return { title: `${meta.wake.report.agent ?? "Agent"} 交回的报告`, body: m.text };
+  const old = /^(.+?) 交回了「/.exec(m.text);
+  if (old) {
+    const cut = m.text.indexOf("\n\n");
+    return { title: `${old[1]} 交回的报告`, body: cut >= 0 ? m.text.slice(cut + 2) : m.text };
+  }
+  const note = (meta.wake.note ?? "").replace(/\s+/g, " ");
+  return { title: `唤醒：${note.length > 40 ? note.slice(0, 40) + "…" : note}`, body: m.text, hint: "助手设的唤醒" };
+}
 
 const route = useRoute();
 const router = useRouter();
@@ -26,6 +54,20 @@ const conversations = ref<Conversation[]>([]);
 const messages = ref<Message[]>([]);
 const conversationSpace = ref<string | null>(null);
 const asks = ref<AskItem[]>([]);
+const stoppingFollow = ref<string | null>(null);
+const conversationOwner = ref<string | null>(null);
+async function detachFollow(taskId: string) {
+  stoppingFollow.value = taskId;
+  try {
+    await patch(`/api/long-tasks/${encodeURIComponent(taskId)}`, { action: "detach" });
+    await loadConversation();
+    toast("已退出自动跟进", "ok");
+  } catch (error) {
+    toast((error as Error).message, "error");
+  } finally {
+    stoppingFollow.value = null;
+  }
+}
 let asksSeq = 0, listSeq = 0, convSeq = 0;
 async function loadAsks() {
   const seq = ++asksSeq, target = id.value;
@@ -77,6 +119,7 @@ async function loadConversation() {
     // A reply posted later (after an authorization or a delegated result) carries its run only in meta:
     // without it that run would look unanswered and its output would show a second time below.
     messages.value = r.messages.map((m) => (m.runId || typeof m.meta?.runId !== "string" ? m : { ...m, runId: m.meta.runId }));
+    conversationOwner.value = "conversation" in r ? r.conversation?.user_id ?? null : null;
     conversationSpace.value = "conversation" in r ? r.conversation?.space_id ?? null : null;
   } finally {
     if (seq === convSeq) convLoading.value = false;
@@ -147,6 +190,7 @@ watch(id, () => {
   showList.value = false;
 });
 const off = onServerEvent((e) => {
+  if (e.type === "conversation" && e.conversationId === id.value) void loadConversation();
   if (e.type === "ask" && e.conversationId === id.value) void loadAsks();
   if (e.type === "ui" && e.conversationId === id.value) void loadViews();
   if (e.type === "run" && (e.status === "done" || e.status === "failed") && messages.value.some((m) => m.runId === e.runId)) {
@@ -336,9 +380,20 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
                 </div>
               </div>
             </div>
+            <div v-else-if="folded(m)" class="msg bot">
+              <details class="handback">
+                <summary>
+                  <Icon name="right" :size="14" class="caret" />
+                  <span class="handback-title">{{ folded(m)!.title }}</span>
+                  <span class="muted small">{{ folded(m)!.hint ?? "交给助手的材料" }}</span>
+                </summary>
+                <Markdown :source="folded(m)!.body" />
+              </details>
+            </div>
             <div v-else class="msg bot">
               <RunActivity v-if="m.runId" :run-id="m.runId" :show-text="false" />
               <Markdown :source="m.text" />
+              <button v-if="conversationOwner === state.me?.id && m.meta?.autoFollowId" class="btn ghost sm" :disabled="!!stoppingFollow" @click="detachFollow(m.meta.autoFollowId)">不用跟进</button>
               <UiView v-for="v in viewsFor(m.runId)" :key="v.id" :components="v.components" :title="v.title" :space="conversationSpace ?? undefined" />
               <AskCard v-for="a in formsFor(m.runId)" :key="a.id" :ask="a" @answered="loadAsks" />
               <AskCard v-for="a in suggestionsFor(m.runId)" :key="a.id" :ask="a" compact @answered="loadAsks" />
@@ -480,6 +535,52 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
 .msg.bot {
   display: grid;
   gap: 10px;
+}
+/* Material handed to the assistant (a report, a wake-up): one quiet line, opened on demand. */
+.handback {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  min-width: 0;
+}
+.handback summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.handback summary::-webkit-details-marker {
+  display: none;
+}
+.handback summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
+.handback .caret {
+  align-self: flex-start;
+  margin-top: 3px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.handback[open] .caret {
+  transform: rotate(90deg);
+}
+.handback-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.handback summary .muted {
+  flex: none;
+}
+.handback > :not(summary) {
+  padding: 0 14px 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
 }
 .composer {
   display: flex;

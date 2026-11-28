@@ -285,6 +285,20 @@ addMessage(app, t.id, "assistant", [
   "代码里对应 `refundLineAmounts`（[refund.js 第 10–21 行](src:" + code + "#L10-L21)）。另外小李提过满减分摊出过负数（[群聊](src:" + chat + "#L6-L6)），这次的评审也把它列为要改的问题。",
 ].join("\n"));
 
+// ---- an investigation handed back to the assistant (folded on the page) ------------------------
+const probe = createThread(app, { channel: "web", spaceId: "shop", title: "退款接口昨晚变慢的原因", userId: "owner" });
+addMessage(app, probe.id, "user", "退款接口昨晚 21 点前后变慢了，帮我查一下原因。");
+addMessage(app, probe.id, "assistant", "交给调查助手去查慢日志和发布记录了，有结果我再告诉你。");
+addMessage(app, probe.id, "assistant", [
+  "**21:04–21:07 的变慢来自退款列表的一条计数查询。**",
+  "",
+  "- 慢日志里 4 条 1.4–1.9 秒的查询都是 `count(distinct order_id)`，执行计划用了临时表。",
+  "- 同一时段没有发布，写接口的流量也没有上涨。",
+  "- 前一天同一时段没有这条查询的慢日志。",
+].join("\n"), null, { wake: { note: "调查助手 交回了「查退款接口变慢」的报告。按报告给本会话写回复。", setAt: new Date().toISOString(), trigger: null, report: { agent: "调查助手", runId: "r_probe_demo" } }, record: true });
+addMessage(app, probe.id, "assistant", "查清了：变慢来自退款列表的一条计数查询（`count(distinct order_id)` 用了临时表），同一时段没有发布，写接口流量也没涨。要的话我可以起一份索引方案。");
+run(app.db, "update conversations set updated_at = ? where id = ?", "2026-10-20T08:00:00.000Z", probe.id);
+
 // ---- a delegation with a multi-check review ---------------------------------------------------
 const r = createRun(app, { kind: "code", spaceId: "shop", title: "退款按已发货行分摊订单优惠", input: { task: "按《退款改造需求》实现：只退已发货的行，订单优惠按实付比例分摊，尾差归最后一行，金额超两位小数报错；补测试。", repos: ["shop"], itemId: item.id } });
 const wtPath = join(app.runsDir, r.id, "work", "shop");

@@ -13,7 +13,8 @@ import { testApp } from "./helpers.ts";
 // longer than MCP's. Allow each measurement up to 64 extra characters across all five blocks.
 // Re-measured affected roles after integrating quiet outcomes, change receipts and the new role sections.
 const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground: number, noneChat: number, noneBackground: number]> = {
-  supervisor: ["supervise", 5044, 5044, 2001, 2001],
+  // 实测 2026-11-28：加了“确认跑偏后先停下这一轮再发话”之后。
+  supervisor: ["supervise", 5220, 5220, 2177, 2177],
   "commit-claim": ["commit-claim", 4630, 4735, 2206, 2206],
   // The item-follow role now classifies actual next steps and records their completion conditions.
   "item-follow": ["item-follow", 6004, 6109, 3602, 3602],
@@ -26,7 +27,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "assistant": ["agent", 21526, 20653, 1679, 1581],
   "ingest": ["ingest", 10342, 10251, 4763, 4763],
   "archivist": ["archive", 4743, 4743, 2570, 2570],
-  "ai-policy-writer": ["ai-policy-draft", 2763, 2763, 1748, 1748],
+  // 实测 2026-11-28：加了“优先是倾向、只用别用才写规则”之后。
+  "ai-policy-writer": ["ai-policy-draft", 2973, 2973, 1958, 1958],
   "archive-rule-writer": ["archive-rule-draft", 3091, 3091, 2091, 2091],
   "wiki-planner": ["wiki-plan", 5896, 5896, 3723, 3723],
   "wiki-writer": ["wiki-write", 6090, 6090, 3722, 3722],
@@ -67,8 +69,8 @@ const measured: Record<RoleName, [kind: RunKind, mcpChat: number, mcpBackground:
   "mention-triage": ["mention", 3242, 3242, 2242, 2242],
   "work-state": ["work-state", 6510, 6510, 3951, 3951],
   "listen-coach": ["listen-coach", 6049, 6154, 3044, 3044],
-  // 实测 2026-11-28：夜里复查改成回扫（分件、两种新标注、类型、查数记录）之后。
-  "outcome-reviewer": ["outcome-review", 5800, 5800, 3612, 3612],
+  // 实测 2026-11-28：夜里复查改成回扫（分件、两种新标注、类型、查数记录），再加分几次做完的事怎么判之后。
+  "outcome-reviewer": ["outcome-review", 5946, 5946, 3758, 3758],
   // 实测：首句、短要点和改写对照，加上 text 原样发出、evidence 分条之后，MCP 为 4871 字符，无工具为 2297。
   "first-look": ["first-look", 4871, 4871, 2297, 2297],
 };

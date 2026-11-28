@@ -9,7 +9,7 @@ import { agentProfileSchema, keyedProfiles } from "../src/core/config.ts";
 import { prepareRun, mcpBridge } from "../src/agents/runner.ts";
 import { revokeToolToken } from "../src/agents/tools.ts";
 import { openAcp } from "../src/agents/acp.ts";
-import { sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
+import { bwrapArgs, sandboxSupport, setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { ownRun, sandboxStatus } from "../src/agents/own-run.ts";
 import { launch } from "../src/agents/spawn.ts";
 import { ownMounts } from "../src/agents/own-sandbox.ts";
@@ -130,3 +130,130 @@ it.skipIf(!support.ok)("本人沙箱中的工作区、快照、命令垫片和 M
     finally { child.stdin.end(); await closed; }
   } finally { revokeToolToken(prep.token); await server.close(); app.db.close(); rmSync(root, { recursive: true, force: true }); rmSync(app.home, { recursive: true, force: true }); }
 }, 30000);
+
+it.skipIf(!support.ok)("默认登录文件和插件状态不会随工作区挂回 " + (support.reason ?? ""), async () => {
+  const home = mkdtempSync(join(tmpdir(), "fixture-home-"));
+  vi.stubEnv("HOME", home);
+  const app = testApp();
+  const { registerCredential } = await import("../src/agents/credential-registry.ts");
+  const unregister = registerCredential("fixture", { id: "login", name: "示例", login: async () => ({ user: "example" }),
+    provides: { commands: [{ name: "sample", state: [".cache/sample"] }] } });
+  try {
+    const cwd = join(home, "project");
+    mkdirSync(cwd);
+    mkdirSync(join(home, ".ssh"));
+    mkdirSync(join(home, ".cache/sample"), { recursive: true });
+    writeFileSync(join(home, ".ssh/example"), "fixture");
+    writeFileSync(join(home, ".git-credentials"), "fixture");
+    writeFileSync(join(home, ".cache/sample/login"), "fixture");
+    app.config.agents.ownSandbox = { mode: "prefer", writable: [], hidden: [], excludeKinds: ["fixture"] };
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+    expect(ownRun(app, profile, cwd, false, null, { kind: "fixture" }).box).toBeUndefined();
+    const box = ownRun(app, profile, cwd, false).box!;
+    box.plan.ro.push(home);
+    const child = launch("/bin/sh", ["-ec", 'test ! -e "$HOME/.ssh/example"; test ! -s "$HOME/.git-credentials"; test ! -e "$HOME/.cache/sample/login"; test -d "$HOME/project"'],
+      { cwd, ownSandbox: box });
+    let errors = "";
+    child.stderr.on("data", chunk => errors += chunk);
+    expect((await once(child, "close"))[0], errors).toBe(0);
+  } finally {
+    unregister(); vi.unstubAllEnvs(); app.db.close();
+    rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(!support.ok)("浏览器登录与其他运行材料隐藏，本轮目录和技能按用途挂载 " + (support.reason ?? ""), async () => {
+  const home = mkdtempSync(join(tmpdir(), "sandbox-home-"));
+  vi.stubEnv("HOME", home);
+  const app = testApp();
+  const work = join(home, "project");
+  const skill = join(app.home, "library", "_skills", "fixture");
+  const hub = join(app.home, "agent-skills", "hubs", "group");
+  const inbox = join(app.home, "artifacts", "inbox", "sample");
+  const other = join(app.runsDir, "other", "scratch");
+  const profiles = [".config/google-chrome", ".config/chromium", ".config/microsoft-edge", ".mozilla/firefox", ".config/mozilla/firefox"];
+  try {
+    for (const dir of [work, skill, hub, inbox, other, ...profiles.map(p => join(home, p))]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "fixture"), "example");
+    }
+    app.config.agents.ownSandbox.mode = "require";
+    const profile = agentProfileSchema.parse({ id: "example", transport: "acp", command: "/bin/sh" });
+    const box = ownRun(app, profile, work, false, "sample", { inbox }).box!;
+    box.plan.ro.push(home); // The fake HOME lives under the private /tmp.
+    const child = launch("/bin/sh", ["-ec", `
+      test -r "$1/fixture"; test ! -w "$1/fixture"
+      test -w "$OMEM_RUN_DIR"; test -w "$OMEM_ARTIFACTS"
+      test ! -e "$2/fixture"; test ! -e "$3/omem.db"
+      test -r "$4/fixture"; test ! -w "$4/fixture"
+      shift 4
+      for dir do test ! -e "$HOME/$dir/fixture" || exit 1; done
+    `, "sh", skill, other, app.home, hub, ...profiles], { cwd: work, ownSandbox: box, env: { OMEM_ARTIFACTS: inbox } });
+    let error = "";
+    child.stderr.on("data", data => error += data);
+    expect((await once(child, "close"))[0], error).toBe(0);
+  } finally { vi.unstubAllEnvs(); app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+});
+
+it.skipIf(!support.ok)("运行开始后新建的登录文件在只读 HOME 里仍不可用 " + (support.reason ?? ""), async () => {
+  const home = mkdtempSync(join(tmpdir(), "future-login-"));
+  vi.stubEnv("HOME", home);
+  const app = testApp();
+  try {
+    const cwd = join(home, "project");
+    mkdirSync(cwd);
+    app.config.agents.ownSandbox = { mode: "require", loginPaths: ["~/.netrc"], hidden: [], writable: [] };
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+    const box = ownRun(app, profile, cwd, false).box!;
+    box.plan.ro.push(home);
+    const child = launch("/bin/sh", ["-ec", 'echo ready; read line; test ! -s "$HOME/.netrc"'], { cwd, ownSandbox: box });
+    let errors = "";
+    child.stderr.on("data", chunk => errors += chunk);
+    const closed = once(child, "close");
+    expect(await Promise.race([once(child.stdout, "data").then(([b]) => String(b).trim()), closed.then(() => errors)])).toBe("ready");
+    expect(existsSync(join(home, ".netrc"))).toBe(false);
+    writeFileSync(join(home, ".netrc"), "fixture");
+    child.stdin.end("check\n");
+    expect((await closed)[0], errors).toBe(0);
+  } finally {
+    vi.unstubAllEnvs(); app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(!support.ok)("npm 配置保留源和代理，登录行在沙箱内不可见 " + (support.reason ?? ""), async () => {
+  const app = testApp();
+  const home = mkdtempSync(join(tmpdir(), "npm-config-"));
+  const cwd = join(home, "project");
+  mkdirSync(cwd);
+  vi.stubEnv("HOME", home);
+  try {
+    const registry = "@example:registry=https://registry.example.org/\r\nproxy=http://proxy.example.org/\r\ncafile=/etc/ssl/example.pem\r\n";
+    const auth = ["//registry.example.org/:_authToken=fixture", "_auth=fixture", "_password=fixture",
+      "username=fixture", "certfile=/private/client", "keyfile=/private/key"].join("\n");
+    app.config.agents.ownSandbox.mode = "require";
+    const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh" });
+    const neighbor = join(home, "neighbor");
+    writeFileSync(neighbor, "fixture");
+    for (const contents of [registry, registry + auth]) {
+      writeFileSync(join(home, ".npmrc"), contents);
+      const box = ownRun(app, profile, cwd, false).box!;
+      box.plan.ro.push(home);
+      const npmrc = join(home, ".npmrc");
+      const { args, pinned } = bwrapArgs({ ...box.plan, cwd, command: "/bin/sh", args: [] }, npmrc);
+      expect(pinned.has(neighbor)).toBe(true);
+      const index = args.indexOf("--ro-bind-data");
+      expect(args.slice(index, index + 3)).toEqual(["--ro-bind-data", "3", npmrc]);
+      expect(index).toBeLessThan(args.indexOf("--remount-ro"));
+      const child = launch("/bin/sh", ["-ec", 'test ! -w "$HOME/.npmrc"; grep -qx fixture "$HOME/neighbor"; cat "$HOME/.npmrc"'],
+        { cwd, ownSandbox: box, env: { OMEM_DESKTOP_TOOLS: "off" } });
+      let output = "", errors = "";
+      child.stdout.on("data", b => output += b);
+      child.stderr.on("data", b => errors += b);
+      expect((await once(child, "close"))[0], errors).toBe(0);
+      expect(output).toBe(registry);
+      expect(readFileSync(join(home, ".npmrc"), "utf8")).toBe(contents);
+    }
+  } finally {
+    vi.unstubAllEnvs(); app.db.close(); rmSync(app.home, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true });
+  }
+});

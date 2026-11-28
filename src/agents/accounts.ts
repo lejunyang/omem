@@ -1,6 +1,6 @@
 import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, normalize, sep } from "node:path";
+import { isAbsolute, join, normalize, sep } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { App } from "../core/app.ts";
 import { allProfiles, type AgentProfile } from "../core/config.ts";
@@ -15,7 +15,7 @@ import { backendAvailable } from "./availability.ts";
 import { outOfQuotaUntil, sourceOf } from "./capacity.ts";
 import { accountCatalog, type AccountSpec, type CatalogEntry } from "./catalog.ts";
 import { forgetQuota, quotaKind, quotaPressure, quotaView, refreshQuota } from "./quota.ts";
-import { canonical } from "./own-sandbox.ts";
+import { canonical, defaultLoginPaths } from "./own-sandbox.ts";
 import { accountOf, omemInstallDir, sandboxSupport, type SandboxAccount } from "./sandbox.ts";
 import { launch, stop } from "./spawn.ts";
 import { credentialMethod, credentialKindsForBackend } from "./credential-registry.ts";
@@ -168,7 +168,10 @@ export function accountEnv(app: App, userId: string, entry: AccountEntry): Recor
 }
 
 export function localAccount(app: App, userId: string, backend: string): SandboxAccount {
-  return { userId, backend, home: accountHome(app, userId), env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
+  const home = accountHome(app, userId);
+  const masked = [...credentialStateRels(app).map(rel => join(home, rel)), ...defaultLoginPaths.map(path => path.startsWith("~/") ? join(home, path.slice(2)) : path),
+    ...(process.env.SSH_AUTH_SOCK ? [process.env.SSH_AUTH_SOCK] : [])];
+  return { userId, backend, home, masked, env: {}, hide: [app.home], ro: [join(app.home, "bin"), omemInstallDir(), ...credentialInstallDirs(app)] };
 }
 
 /** What a run (or a login) with this user's account of this backend carries (agents/sandbox.ts). */
@@ -178,8 +181,13 @@ export function accountRun(app: App, userId: string, entry: AccountEntry, native
   const token = nativeToken && spec.tokenEnv ? accountToken(app, userId, entry.id) : null;
   const env = accountEnv(app, userId, entry);
   if (spec.tokenEnv && token) env[spec.tokenEnv] = token;
+  const home = canonical(base.home);
+  const kubeconfig = (env.KUBECONFIG ?? "").split(":").filter(isAbsolute)
+    .map(canonical).filter(path => path.startsWith(home + sep));
   return {
     ...base,
+    backendState: spec.owns,
+    masked: [...base.masked!, ...kubeconfig],
     env,
     ro: [...base.ro, ...(spec.mounts ?? []).map((m) => expandPath(m))],
   };
@@ -303,10 +311,7 @@ export function accountFor<P extends AgentProfile>(app: App, userId: string | un
       if (use.holder === OWNER) return { ...p, [credentialUse]: use };
       ensureAccountHome(app, use.holder, entry);
       const account = accountRun(app, use.holder, entry, false);
-      if (use.holder !== userId) {
-        const state = credentialMethod(use.kind)!.provides.commands.flatMap(c => c.state ?? []);
-        account.borrowed = { state: [...new Set([...entry.account.owns, ...state])], dirs: entry.account.dirs ?? [] };
-      }
+      if (use.holder !== userId) account.borrowed = { state: entry.account.owns, dirs: entry.account.dirs ?? [] };
       return { ...p, [credentialUse]: use, ownAccount: account };
     }
     if (own) return { ...p, ownAccount: accountRun(app, userId, entry) };
@@ -340,7 +345,7 @@ type AccountPlan<P> = { kind: "ready"; profile: P; reason?: string } | { kind: "
   { kind: "login"; entry: AccountEntry; reason: string };
 
 /** Resolve before checking capacity. The owner's spent marks must not hide a member's own account. */
-export function memberAccountPlan<P extends AgentProfile>(app: App, userId: string, p: P, ownOnly = false): AccountPlan<P> {
+export function memberAccountPlan<P extends AgentProfile>(app: App, userId: string, p: P, ownOnly = false, waitForLogin = false): AccountPlan<P> {
   if (!isAiMember(app, userId)) return { kind: "ready", profile: p };
   const entry = accountEntryFor(app, p);
   const backend = sourceOf(p);
@@ -366,7 +371,10 @@ export function memberAccountPlan<P extends AgentProfile>(app: App, userId: stri
       return selected(p, OWNER, "本人额度充足，借用本人登录");
   }
   const blocked = accountBlocked(app, userId, p);
-  if (blocked) return { kind: "blocked", reason: blocked };
+  if (blocked) {
+    if (waitForLogin && entry && supported && !own) return { kind: "login", entry, reason: blocked };
+    return { kind: "blocked", reason: blocked };
+  }
   const profile = accountFor(app, userId, p);
   const holder = selectedCredential(profile)?.holder ?? (entry ? accountOf(profile)?.userId : undefined) ?? OWNER;
   const why = policy === "owner" && !pressure.known ? "本人额度未知，按后端设置" : "按后端账号设置";

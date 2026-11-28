@@ -377,13 +377,14 @@ export function replyLine(app: App, chatId: string, days = 30): string {
 }
 
 /** Who asked, as the data page and the sweep count people: a stable key, a name, and which kind of asker. */
-export type Asker = { key: string; name: string; kind: "owner" | "member" | "colleague" | "bot" };
-export const ASKER_KINDS: Record<Asker["kind"], string> = { owner: "本人", member: "成员", colleague: "没登记的同事", bot: "别的机器人" };
+export type Asker = { key: string; name: string; kind: "owner" | "member" | "colleague" | "bot" | "system" };
+export const ASKER_KINDS: Record<Asker["kind"], string> = { owner: "本人", member: "成员", colleague: "没登记的同事", bot: "别的机器人", system: "系统或机器人消息" };
 
 /**
  * The person behind a run's `trigger_by`: the owner, a member by name, someone in Feishu by the name and
  * email `lark_people` keeps (the bot and lark-cli see different open_ids; the email makes them one person,
- * and a member's email makes them that member), another bot.
+ * and a member's email makes them that member), another bot. A speaker in a watched chat known by name only
+ * that is nobody seen in Feishu (an oncall system's card, a note the host left there) is a system message.
  */
 export function askerOf(app: App, triggerBy: string | null | undefined): Asker {
   const owner: Asker = { key: "user:owner", name: OWNER_BY, kind: "owner" };
@@ -394,7 +395,8 @@ export function askerOf(app: App, triggerBy: string | null | undefined): Asker {
   if (kind === "name") {
     if (rest === OWNER_BY) return owner;
     const p = one<{ email: string | null; name: string }>(app.db, "select email, name from lark_people indexed by lark_people_name where name = ? limit 1", rest);
-    return person(app, p ?? null, `name:${rest}`, rest);
+    if (!p) { const u = one<{ id: string }>(app.db, "select id from users where name = ? and disabled_at is null limit 1", rest); return u ? (u.id === OWNER ? owner : { key: `user:${u.id}`, name: rest, kind: "member" }) : { key: `name:${rest}`, name: rest, kind: "system" }; }
+    return person(app, p, `name:${rest}`, rest);
   }
   if (kind === "lark" || kind === "bot") {
     const p = one<{ email: string | null; name: string }>(app.db, "select email, name from lark_people where bot_open_id = ? or cli_open_id = ? limit 1", rest, rest);

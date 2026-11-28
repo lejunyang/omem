@@ -97,19 +97,21 @@ it("同一主机并发审批共用一张卡，拒绝及超时都返回 403", asy
   const { app, policy } = fixture();
   const port = await listen(http.createServer((_req, res) => res.end("ok")));
   const path = socketPath();
-  const proxy = await startProxy(path, policy);
+  const check = vi.fn(policy.check);
+  const proxy = await startProxy(path, { ...policy, check });
   cleanup.push(() => proxy.close());
-  app.config.security.egress.waitSeconds = 1;
   app.config.security.operationRules = [{ id: "ask", enabled: true, revision: 1, action: "approve", match: { kind: "http", host: "127.0.0.1" } }];
   const url = "http://127.0.0.1:" + port + "/";
   async function answer(approved: boolean) {
-    await vi.waitFor(() => expect(listAsks(app, { status: "pending" })).toHaveLength(1));
+    await vi.waitFor(() => expect(listAsks(app, { status: "pending" })).toHaveLength(1), { timeout: 5000 });
     await answerAsk(app, listAsks(app, { status: "pending" })[0].id, { by: "owner", approved, choice: 0 });
   }
   const pair = Promise.all([request(path, url), request(path, url)]);
+  await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(2), { timeout: 10000 });
   await answer(true); expect((await pair).map(r => r.code)).toEqual([200, 200]);
   const denied = request(path, url); await answer(false);
   expect((await denied).code).toBe(403);
+  app.config.security.egress.waitSeconds = 1;
   expect(await request(path, url)).toMatchObject({ code: 403, text: expect.stringContaining("超时") });
 });
 it("隧道上看不见的条件按配置处理", async () => {

@@ -47,7 +47,7 @@ export async function supervisorCommand(app: App, thread: Thread, args: string, 
         break;
       }
       case "换": {
-        const spec = parseAiSpec(app, value, { userId });
+        const spec = parseAiSpec(app, value, { userId, waitForLogin: true });
         const problem = selectionProblem(spec);
         if (problem) return problem;
         if (!spec.ai || spec.rest) return "用法：/跟进 换 后端或组名 [模型] [强度]";
@@ -64,7 +64,7 @@ export async function supervisorCommand(app: App, thread: Thread, args: string, 
   }
   if (args === "接管") return "请用 /跟进 加上要推进的目标，另开长任务。";
   if (current) return "在这个话题直接说要补充的内容，或发 /跟进 查看状态。";
-  const spec = parseAiSpec(app, args, { userId });
+  const spec = parseAiSpec(app, args, { userId, waitForLogin: true });
   const problem = selectionProblem(spec);
   if (problem) return problem;
   const { rest: goal, ai } = spec;

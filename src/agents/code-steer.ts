@@ -42,8 +42,7 @@ export function latestRound(app: App, runId: string): Run {
   const r = getRun(app, runId);
   if (r.kind === "review" && typeof r.input.codeRunId === "string") return latestRound(app, r.input.codeRunId);
   const chain = (r.output.codeChain ?? null) as { askRunId: string; lastCodeRunId: string | null } | null;
-  const fresh = chain ? ((getRun(app, chain.askRunId).output.codeChain ?? chain) as { lastCodeRunId: string | null }) : null;
-  if (fresh?.lastCodeRunId) return getRun(app, fresh.lastCodeRunId);
+  if (chain?.lastCodeRunId) return getRun(app, chain.lastCodeRunId);
   if (r.kind === "code") {
     const root = String(r.input.continueFrom ?? r.id);
     const last = one<{ id: string }>(app.db, "select id from runs where kind = 'code' and (id = ? or json_extract(input, '$.continueFrom') = ?) order by created_at desc, rowid desc limit 1", root, root);
@@ -121,7 +120,7 @@ export function setRoundReview(app: App, runId: string, review: RoundReview) {
 }
 
 /** Stop the delegation's running round (coding or review) and anything queued for it; no automatic round follows. */
-export function stopCodeWork(app: App, runId: string, reason: string) {
+export function stopCodeWork(app: App, runId: string, reason: string, by: "owner" | "supervisor" = "owner") {
   const r = latestRound(app, runId);
   const reviews = all<{ id: string }>(app.db, "select id from runs where kind = 'review' and status in ('queued', 'running') and json_extract(input, '$.codeRunId') = ?", r.id).map((x) => x.id);
   // A second look at the last stage (code-overlap.ts) goes on beside the round; it stops with it.
@@ -129,7 +128,7 @@ export function stopCodeWork(app: App, runId: string, reason: string) {
   reviews.push(...all<{ id: string }>(app.db, "select id from runs where kind = 'agent' and status = 'running' and json_extract(input, '$.workId') = ? and json_extract(input, '$.secondLookOf') is not null", root).map((x) => x.id));
   const live = [r.id, ...reviews].filter((id) => ["queued", "running"].includes(getRun(app, id).status));
   if (!live.length) return { runId: r.id, stopped: [] as string[] };
-  setRunOutput(app, r.id, { stoppedByOwner: reason.trim() || "本人要求停下" });
+  setRunOutput(app, r.id, { [by === "supervisor" ? "stoppedBySupervisor" : "stoppedByOwner"]: reason.trim() || "本人要求停下" });
   for (const id of live) cancelRun(app, id);
   return { runId: r.id, stopped: live };
 }

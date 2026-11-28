@@ -365,6 +365,12 @@ export function ensureConversation(app: App, input: { id?: string; spaceId: stri
   return id;
 }
 
+/** A run_agent report handed back to the conversation (wakes.ts returnChildReport): the Agent that wrote it. */
+export function handedReportAgent(meta: Record<string, unknown>): string | null {
+  const report = (meta.wake as { report?: { agent?: string } } | undefined)?.report;
+  return report ? report.agent ?? "Agent" : null;
+}
+
 export function addMessage(app: App, conversationId: string, role: "user" | "assistant", text: string, runId?: string | null, meta: Record<string, unknown> = {}) {
   const id = newId("msg");
   run(app.db, "insert into messages(id,conversation_id,role,text,run_id,meta,created_at) values(?,?,?,?,?,?,?)", id, conversationId, role, text, runId ?? null, JSON.stringify(meta), now());

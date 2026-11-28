@@ -1,4 +1,6 @@
-import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { git } from "../src/core/git.ts";
+import { mkdir, writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import * as runs from "../src/agents/runs.ts";
 import { addRunEvent, createRun, getRun, setRunOutput } from "../src/agents/runs.ts";
@@ -58,6 +60,40 @@ describe("长任务跟进", () => {
     expect(getRun(app, queued!).input.events).toEqual(expect.arrayContaining([expect.objectContaining({ note: "修改项完成" })]));
     expect(all(app.db, "select id from runs where kind='supervise'")).toHaveLength(1);
     expect(all(app.db, "select id from runs where kind='ask'")).toHaveLength(0);
+  });
+
+  it("两次实际叫醒按上次分支位置把新增提交和范围外行数交给跟进 AI", async () => {
+    const { app, task } = await setup();
+    confirmLongTaskBrief(app, task.id, { doneWhen: ["核对说明"], scope: ["docs"] });
+    const dir = join(app.home, "example-repo");
+    await mkdir(dir);
+    git(dir, ["init", "-b", "work"]);
+    const commit = (title: string) => git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "--allow-empty", "-m", title]);
+    expect(commit("起点").ok).toBe(true);
+    const base = git(dir, ["rev-parse", "HEAD"]).stdout.trim();
+    run(app.db, "update spaces set root_path=? where id=?", dir, task.spaceId);
+    const code = createRun(app, { kind: "code", spaceId: task.spaceId, title: "校对说明", input: { longTaskId: task.id } });
+    setRunOutput(app, code.id, { worktrees: [{ space: task.spaceId, path: dir, branch: "work", base, commits: true }] });
+    const stub = vi.spyOn(runner, "runRole").mockImplementation(async (_app, input) => {
+      setRunOutput(app, input.runId!, { supervisorReport: { stage: "核对" } });
+      return { profileId: "stub", ai: task.ai, agent: "stub", text: "", stopReason: "end_turn" };
+    });
+    try {
+      for (const [folder, title] of [["docs", "添加说明"], ["examples", "添加示例"]]) {
+        await mkdir(join(dir, folder));
+        await writeFile(join(dir, folder, "readme"), title + "\n");
+        git(dir, ["add", folder]);
+        expect(commit(title).ok).toBe(true);
+        const ctx = turn(app, task);
+        await runSupervisor(ctx);
+        run(app.db, "update runs set status='done' where id=?", ctx.run.id);
+      }
+      const [first, second] = stub.mock.calls.map(([, input]) => input.task);
+      expect(first).toContain("添加说明");
+      expect(second).not.toContain("添加说明");
+      expect(second).toContain("添加示例");
+      expect(second).toContain("【范围外】examples/ +1 -0");
+    } finally { stub.mockRestore(); }
   });
 
   it("指定后端暂时不可用时原轮排队，超时在话题留记录", async () => {

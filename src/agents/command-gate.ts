@@ -3,11 +3,12 @@
  * wrapper of the same name in front of its PATH asks omem (`POST /api/command-gate`), which lets
  * it through, refuses it, or holds it for someone's approval on a card or the web page.
  *
- * What it covers: anything that finds the command through PATH (a shell, a shell script, Python's
- * subprocess, Node's spawn / execFile). What it does not: an absolute path, an agent that changes
- * PATH or deletes the wrappers, or calling the service behind the command directly. It keeps
- * agents off the default path to a dangerous command; it is not a sandbox against a hostile agent.
+ * Outside the Linux sandbox, interception relies on PATH. Sandboxed runs also cover installed
+ * entry points with read-only mounts and use an authorized executor for credentialed commands.
  */
+import { pathToFileURL } from "node:url";
+import { standardCommandLogins } from "./own-sandbox.ts";
+import { remoteGit } from "./git-command.ts";
 import { credentialMethods } from "./credential-registry.ts";
 import { auditOperation, commandArgsMatch, currentRules, decide, digest, fingerprint, operationWho, saveOperationRules, type Operation } from "./operation-policy.ts";
 import { randomUUID } from "node:crypto";
@@ -58,26 +59,57 @@ const norm = (name: string) => (win ? name.toLowerCase() : name);
  * The wrappers for the current rules and credential declarations under <home>/bin/guarded (stale ones removed); returns that
  * directory, or null when neither supplies a command.
  */
-export function syncCommandGate(home: string, rules: ({ command: string; args?: string } & Parameters<typeof commandArgsMatch>[0])[]): string | null {
+export function syncCommandGate(home: string, rules: ({ command: string; args?: string } & Parameters<typeof commandArgsMatch>[0])[], sandbox = false): string | null {
   const { guarded, script } = gatePaths(home);
   const declared = [...new Set(credentialMethods().flatMap(m => m.provides.commands.map(c => norm(c.name))))];
-  const names = [...new Set([...declared, ...rules.map(r => norm(r.command.trim())).filter(Boolean)])];
+  const names = [...new Set([...(sandbox ? ["git", ...standardCommandLogins.keys()] : []), ...declared, ...rules.map(r => norm(r.command.trim())).filter(Boolean)])];
   if (!names.length) {
     if (existsSync(guarded)) rmSync(guarded, { recursive: true, force: true });
     return null;
   }
   try {
     mkdirSync(guarded, { recursive: true });
-    const offline = declared.map(name => [name, rules.filter(r => norm(r.command) === name).map(r => ({
+    const offline = [...new Set([...declared, ...(sandbox ? ["git"] : [])])].map(name => [name, rules.filter(r => norm(r.command) === name).map(r => ({
       subcommand: r.subcommand, argv: r.argv, argsRegex: r.argsRegex ?? r.args,
     }))]);
-    writeIfChanged(script, GATE_SCRIPT.replace("/*credential rules*/[]", () => JSON.stringify(offline)));
+    writeIfChanged(script, GATE_SCRIPT.replace("/*sandbox*/false", String(sandbox)).replace("/*local git*/false", String(sandbox && !declared.includes("git"))).replace("/*credential rules*/[]", () => JSON.stringify(offline)));
     const node = process.execPath;
+    if (sandbox && !win) {
+      const dispatch = join(guarded, "..", "dispatch.mjs");
+      writeIfChanged(dispatch, `#!/tmp/.omem-programs/node
+(async () => {
+  const { existsSync, realpathSync } = await import("node:fs");
+  const { basename, join } = await import("node:path");
+  const invoked = process.argv[1], name = basename(invoked);
+  if (existsSync(join(${JSON.stringify(guarded)}, name))) {
+    process.argv.splice(1, 1, ${JSON.stringify(script)}, name);
+    await import(${JSON.stringify(pathToFileURL(script).href)});
+  } else {
+    const { createHash } = await import("node:crypto");
+    const actual = realpathSync(invoked);
+    if (name === basename(actual)) throw new Error("请使用 PATH 中声明的命令名调用受保护的程序");
+    const key = createHash("sha256").update(actual).digest("hex");
+    process.execve("/tmp/.omem-programs/native/" + key, [invoked, ...process.argv.slice(2)], process.env);
+  }
+})().catch(error => { process.stderr.write("[omem] " + error.message + "\\n"); process.exitCode = 126; });
+`);
+      chmodSync(dispatch, 0o755);
+      const hint = join(guarded, "..", "git-askpass");
+      writeIfChanged(hint, "#!/bin/sh\necho '远端登录由 omem 执行器使用，请通过 PATH 中的 git push、git fetch 等命令运行。' >&2\nexit 1\n");
+      chmodSync(hint, 0o755);
+    }
     const want = new Map<string, string>();
     for (const name of names) {
       // Git Bash runs the extensionless script; cmd.exe and PowerShell the .cmd.
       const sh = `#!/bin/sh\nexec "${node.replace(/\\/g, "/")}" "${script.replace(/\\/g, "/")}" "${name}" "$@"\n`;
-      want.set(name, sh);
+      if (sandbox) {
+        const entry = JSON.stringify(script);
+        const cli = JSON.stringify(name);
+        want.set(name, `#!/tmp/.omem-programs/node\nprocess.argv.splice(1,1,${entry},${cli}); import(${JSON.stringify(pathToFileURL(script).href)});\n`);
+        const python = join(guarded, "..", name + ".py");
+        writeIfChanged(python, `#!/usr/bin/env python3\nimport os,sys\nos.execv("/tmp/.omem-programs/node", ["node", ${entry}, ${cli}] + sys.argv[1:])\n`);
+        chmodSync(python, 0o755);
+      } else want.set(name, sh);
       if (win) want.set(`${name}.cmd`, `@"${node}" "${script}" "${name}" %*\r\n@exit /b %ERRORLEVEL%\r\n`);
     }
     for (const f of readdirSync(guarded)) if (!want.has(f)) rmSync(join(guarded, f), { force: true });
@@ -110,6 +142,9 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { StringDecoder } from "node:string_decoder";
 
+const isolated = /*sandbox*/false;
+const localGit = /*local git*/false;
+const remoteGit = ${remoteGit.toString()};
 const DENIED = 126;
 const name = process.argv[2] || "";
 const args = process.argv.slice(3);
@@ -168,6 +203,7 @@ function realCommand() {
 const credentialRules = new Map(/*credential rules*/[]);
 const argsMatch = ${commandArgsMatch.toString()};
 function offline(message) {
+  if (isolated) fail(message);
   const rules = credentialRules.get(win ? name.toLowerCase() : name);
   try {
     if (rules && !rules.some(rule => argsMatch(rule, args, (pattern, input) => {
@@ -205,18 +241,33 @@ async function request(path, data, timeout) {
   });
 }
 
+async function reportOutcome(code, output) {
+  try {
+    const res = await request("/api/credentials/outcome", { command: name, args, code, output: code === 0 ? "" : output }, 5000);
+    const reason = { denied: "没有这个资源的权限", expired: "登录已过期", unauthenticated: "需要重新登录" }[res.value?.reason];
+    if (res.status === 200 && reason) process.stderr.write("[omem] " + reason + (res.value.applyUrl ? "，可前往 " + res.value.applyUrl : "") + "。" + (res.value.notice ? res.value.notice : "") + "\n");
+  } catch {}
+}
+
 async function ask() {
   if (!process.env.OMEM_URL || !process.env.OMEM_TOKEN) return offline("命令 " + name + " 受命令规则保护，这个环境里没有 omem 运行的令牌（OMEM_URL / OMEM_TOKEN），不执行。");
   let res;
   try {
-    res = await request("/api/command-gate", { command: name, args, cwd: process.cwd(), credentialExecution: true,
+    res = await request("/api/command-gate", { command: name, args, cwd: process.cwd(), credentialExecution: true, stream: isolated,
       approver: process.env.OMEM_APPROVER, reason: process.env.OMEM_REASON }, credentialRules.get(win ? name.toLowerCase() : name)?.length === 0 ? 5000 : 310_000);
   } catch (e) { return offline("连不上 omem：" + e.message + "。命令 " + name + " 受命令规则保护，连不上时不执行。"); }
   if (res.status !== 200 || typeof res.value?.decision !== "string") fail("omem 没有放行命令 " + name + "：" + (res.value?.error || "HTTP " + res.status));
   return res.value;
 }
 
-const v = await ask();
+let local = false;
+if (localGit && name === "git" && !remoteGit(args)) {
+  try {
+    local = !(credentialRules.get("git") || []).some(r => argsMatch(r, args, (pattern, input) =>
+      input.length > 8192 || runInNewContext("new RegExp(pattern).test(input)", { pattern, input }, { timeout: 25 })));
+  } catch { /* Ask the host if the local check cannot decide. */ }
+}
+const v = local ? { decision: "allow" } : await ask();
 if (v.decision !== "allow") fail(v.message || "omem 的命令规则不允许执行 " + name + "。");
 if (v.notice) process.stderr.write("[omem] " + v.notice + "\n");
 if (v.execution) {
@@ -225,7 +276,38 @@ if (v.execution) {
   process.exit(v.execution.code);
 }
 const stdio = v.report ? ["inherit", "pipe", "pipe"] : "inherit";
-const file = realCommand();
+if (v.permit) {
+  const url = new URL("/api/command-gate/stream/" + encodeURIComponent(v.permit), process.env.OMEM_URL);
+  const http = await import(url.protocol === "https:" ? "node:https" : "node:http");
+  const { once } = await import("node:events");
+  const { createInterface } = await import("node:readline");
+  const req = http.request(url, { method: "POST", headers: { "content-type": "application/x-omem-stdin", authorization: "Bearer " + process.env.OMEM_TOKEN } });
+  let code, tail = "";
+  try {
+    const response = once(req, "response");
+    req.flushHeaders();
+    process.stdin.pipe(req);
+    const [res] = await response;
+    if (res.statusCode !== 200) {
+      let error = "";
+      for await (const part of res) error = (error + part).slice(-1000);
+      throw new Error(error || "HTTP " + res.statusCode);
+    }
+    for await (const line of createInterface({ input: res })) {
+      const [fd, data] = JSON.parse(line);
+      if (fd === 0) { code = data; break; }
+      const stream = fd === 1 ? process.stdout : process.stderr;
+      const bytes = Buffer.from(data, "base64");
+      if (v.report) tail = (tail + bytes.toString()).slice(-${COMMAND_OUTPUT_LIMIT});
+      if (!stream.write(bytes)) await once(stream, "drain");
+    }
+    if (!Number.isInteger(code)) throw new Error("执行器连接中断");
+  } catch (e) { fail("执行器：" + e.message); }
+  finally { process.stdin.unpipe(req); process.stdin.pause(); req.destroy(); }
+  if (v.report) await reportOutcome(code, tail);
+  process.exitCode = code;
+} else {
+const file = isolated ? (name === "git" && !remoteGit(args) ? "/tmp/.omem-programs/git" : null) : realCommand();
 if (!file) fail("omem 放行了 " + name + "，但 PATH 里（除拦截目录外）找不到这个命令。");
 let child;
 const env = { ...process.env, OMEM_GATE_DEPTH: String(depth + 1), OMEM_GATE_SPAWN: name + ":" + process.pid };
@@ -258,20 +340,24 @@ child.on("close", async (code, signal) => {
     process.kill(process.pid, signal);
   } else {
     if (v.report) {
-      try {
-        const res = await request("/api/credentials/outcome", { command: name, args, code: code ?? 1, output: code === 0 ? "" : output }, 5000);
-        const reason = { denied: "没有这个资源的权限", expired: "登录已过期", unauthenticated: "需要重新登录" }[res.value?.reason];
-        if (res.status === 200 && reason) process.stderr.write("[omem] " + reason + (res.value.applyUrl ? "，可前往 " + res.value.applyUrl : "") + "。" + (res.value.notice ? res.value.notice : "") + "\n");
-      } catch {}
+      await reportOutcome(code ?? 1, output);
     }
     process.exitCode = code ?? 1;
   }
 });
+}
 `;
 
 /** The guarded directory for an agent process of this app (written now), or null. */
-export function commandGateDir(app: App) {
-  return syncCommandGate(app.home, currentRules(app).flatMap(r => r.enabled && r.match.kind === "command" ? [{ ...r.match, command: r.match.executable }] : []));
+export function commandGateDir(app: App, sandbox = false) {
+  const rules = currentRules(app).flatMap(r => r.enabled && r.match.kind === "command" ? [{ ...r.match, command: r.match.executable }] : []);
+  const sandboxHome = join(app.home, "bin", "sandbox");
+  if (sandbox || existsSync(sandboxHome)) {
+    const dir = syncCommandGate(sandboxHome, rules, true);
+    if (!dir) throw new Error("无法准备沙箱命令垫片");
+    if (sandbox) return dir;
+  }
+  return syncCommandGate(app.home, rules);
 }
 
 /** `env` with the guarded directory first in PATH (whatever the key is spelled). */
