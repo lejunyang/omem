@@ -215,6 +215,7 @@ registerAskHandler("supervisor-brief", async (app, ask, context) => {
     confirmLongTaskBrief(app, task.id, changes, budget);
     patchSupervisorState(app, task.id, { briefAsk: null });
   });
+  await refreshSupervisorCard(app, task.id);
 });
 
 
