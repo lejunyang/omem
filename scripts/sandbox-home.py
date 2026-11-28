@@ -86,10 +86,15 @@ def main():
     if action == "list":
         result = []
         for folder in root.iterdir():
-            if (folder / "identity").is_file():
+            if not (folder / "identity").is_file():
+                continue
+            with (folder / "lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_SH)
                 head = folder / "head"
-                size = subprocess.check_output(["/usr/bin/du", "-s", "-B1", "--", folder / head.read_text()]).split()[0] if head.exists() else 0
-                result.append(dict(identity=(folder / "identity").read_text(), bytes=int(size)))
+                size = 0
+                if head.exists():
+                    size = int(subprocess.check_output(["/usr/bin/du", "-s", "-B1", "--", folder / head.read_text()]).split()[0])
+                result.append(dict(identity=(folder / "identity").read_text(), bytes=size))
         return result
     folder = root / hashlib.sha256(req["identity"].encode()).hexdigest()
     private(folder)
