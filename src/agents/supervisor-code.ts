@@ -102,8 +102,19 @@ export function createWorkerAsk(app: App, input: Parameters<typeof createAsk>[1]
   });
 }
 
-/** Only the question routed by the host (never approvals or another task's asks) may be answered here. */
-export async function answerWorkerQuestion(app: App, taskId: string, questionId: string, answer: string, ownerId?: string) {
+/** A follow-up's answer that names a way to settle the task rather than what to redo. */
+const SETTLE_WORDS: Record<string, "later" | "skip"> = {
+  later: "later", defer: "later", "以后再做": "later", "留到以后": "later", "稍后再做": "later",
+  skip: "skip", wontdo: "skip", "不做": "skip", "跳过": "skip",
+};
+const settleWord = (answer: string) => SETTLE_WORDS[answer.trim().replace(/[。.!！]+$/u, "").toLowerCase()];
+
+/**
+ * Only the question routed by the host (never approvals or another task's asks) may be answered here. A follow-up's
+ * answer to a task question is what to redo, unless it is “later” / “skip”: then the task is set aside or dropped,
+ * with `basis` as the reason (it used to become “redo, with the instruction ‘later’”).
+ */
+export async function answerWorkerQuestion(app: App, taskId: string, questionId: string, answer: string, ownerId?: string, basis?: string) {
   const taskQuestion = /^task:(\d+):(.+)$/.exec(questionId);
   if (taskQuestion) {
     const { answerTask, settleTask } = await import("./code-loop.ts");
@@ -112,13 +123,16 @@ export async function answerWorkerQuestion(app: App, taskId: string, questionId:
     if (!row || longTaskForRun(app, row.work_id)?.id !== taskId) throw new HttpError(404, "这个长任务没有该修改项");
     const task = getTask(app, row.work_id, row.seq);
     if (task.origin.questionId !== taskQuestion[2]) throw new HttpError(409, "修改项或问题已经变化，请重新核对");
+    const action = ownerId ? undefined : settleWord(answer);
+    const text = action ? (basis?.trim() || answer.trim()) : answer.trim();
     if (task.state !== "assistant") {
-      if (!ownerId && task.notes.some(n => n.by === "supervisor" && n.text === "重做：" + answer.trim())) return;
+      const verb = { later: "以后再做", skip: "不做", retry: "重做" }[action ?? "retry"];
+      if (!ownerId && task.notes.some(n => n.by === "supervisor" && n.text === `${verb}：${text}`)) return;
       throw new HttpError(409, "修改项已经处理");
     }
     if (!answer.trim()) throw new HttpError(400, "回答不能为空");
     if (ownerId) answerTask(app, row.work_id, row.seq, { choice: answer.trim() }, ownerId);
-    else settleTask(app, row.work_id, row.seq, { action: "retry", text: answer.trim(), ownerWords: false }, "supervisor");
+    else settleTask(app, row.work_id, row.seq, { action: action ?? "retry", text, ownerWords: false }, "supervisor");
     return;
   }
   const routed = one(app.db, `select 1 from asks where id=? and kind='question' and json_extract(context,'$.supervisorTaskId')=?`, questionId, taskId);

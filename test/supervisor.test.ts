@@ -28,6 +28,7 @@ import { testApp } from "./helpers.ts";
 import { policySchema } from "../src/core/ai-policy-schema.ts";
 import * as dispatch from "../src/agents/dispatch.ts";
 import * as runner from "../src/agents/runner.ts";
+import { agentRunError } from "../src/agents/types.ts";
 import type { App } from "../src/core/app.ts";
 
 const draftReport = reportSchema.parse({
@@ -127,11 +128,28 @@ describe("长任务跟进", () => {
       const output = getRun(app, ctx.run.id).output;
       expect(output.queueSince).toEqual(expect.any(Number));
       expect(output.aiPolicyWaitUntil).toBeUndefined();
+      // A busy provider is a wait for a slot: the round goes back to the queue with its events, past the limit too, and says nothing.
       setRunOutput(app, ctx.run.id, { queueSince: Date.now() - (app.config.agents.queueTimeoutMinutes + 1) * 60_000 });
-      await expect(runSupervisor(context(app, ctx.run.id))).rejects.toThrow(/本轮停止/);
-      expect(all(app.db, "select text from messages where conversation_id=?", task.threadId))
-        .toContainEqual({ text: expect.stringContaining("本轮停止") });
+      await expect(runSupervisor(context(app, ctx.run.id))).rejects.toMatchObject({ at: expect.any(String) });
+      expect(all(app.db, "select text from messages where conversation_id=? and text like '%本轮停止%'", task.threadId)).toEqual([]);
     } finally { backend.mockRestore(); app.db.close(); }
+  });
+
+  it("这一轮中途断了：悄悄重试三次，之后才在话题里说", async () => {
+    const { app, task } = await setup();
+    const call = vi.spyOn(runner, "runRole").mockRejectedValue(agentRunError("Agent 超过 600 秒没有任何活动，已停止", "idle"));
+    try {
+      const ctx = turn(app, task);
+      const said = () => all(app.db, "select text from messages where conversation_id=? and text like '%本轮停止%'", task.threadId);
+      for (const n of [1, 2, 3]) {
+        await expect(runSupervisor(context(app, ctx.run.id))).rejects.toMatchObject({ at: expect.any(String) });
+        expect(getRun(app, ctx.run.id).output.silentRetries).toBe(n);
+        expect(said()).toEqual([]);
+      }
+      await expect(runSupervisor(context(app, ctx.run.id))).rejects.toThrow(/本轮停止/);
+      expect(said()).toHaveLength(1);
+      expect(call).toHaveBeenCalledTimes(4);
+    } finally { call.mockRestore(); }
   });
 
   it("报告保存决定和进度，任务书由本人确认后生效", async () => {
