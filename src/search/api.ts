@@ -1,6 +1,7 @@
 import { keyOf } from "../core/ai-keys.ts";
 import type { App } from "../core/app.ts";
 import type { Config } from "../core/config.ts";
+import { estimatedAiTokens, MINUTE_LIMIT_EXHAUSTED, requestWithAiLimit, settleAiUsage } from "../core/ai-request.ts";
 
 type Connection = { url?: string; keyRef?: string; apiKeyEnv: string };
 export function searchBase(config: Config, cfg: Connection) {
@@ -23,22 +24,29 @@ function isTransportTimeout(error: unknown) {
     || e?.code === "UND_ERR_HEADERS_TIMEOUT" || e?.code === "UND_ERR_BODY_TIMEOUT";
 }
 
-export async function searchPost(app: App, cfg: Connection, path: string, body: object, signal: AbortSignal): Promise<unknown> {
+export async function searchPost(app: App, cfg: Connection, path: string, body: Record<string, unknown> & { model: string }, signal: AbortSignal): Promise<unknown> {
   const key = cfg.keyRef ? keyOf(cfg.keyRef, app.home) : process.env[cfg.apiKeyEnv];
-  if (cfg.keyRef && (!key || !app.config.ai.providers.some(p => p.id === cfg.keyRef))) throw new Error("AI 服务商或密钥不存在");
+  const provider = cfg.keyRef && app.config.ai.providers.find(p => p.id === cfg.keyRef);
+  if (cfg.keyRef && (!key || !provider)) throw new Error("AI 服务商或密钥不存在");
   try {
-    const response = await fetch(searchBase(app.config, cfg) + path, {
+    const encoded = JSON.stringify(body);
+    const send = () => fetch(searchBase(app.config, cfg) + path, {
       method: "POST", redirect: "error", signal,
       headers: { "content-type": "application/json", ...(key && { authorization: "Bearer " + key }) },
-      body: JSON.stringify(body),
+      body: encoded,
     });
+    const { response, errorText, settle, minuteRetriesExhausted } = provider
+      ? await requestWithAiLimit(app, provider, body.model, () => estimatedAiTokens(encoded, body, 0), { signal }, send)
+      : { response: await send() };
     if (!response.ok) {
       // The status determines retries even if the optional error detail cannot be read.
-      const detail = await response.text().catch(() => "");
+      const detail = errorText ?? await response.text().catch(() => "");
       const safe = key ? detail.replaceAll(key, "[已隐藏]") : detail;
-      throw new SearchApiError(`HTTP ${response.status} ${safe.slice(0, 240)}`.trim(), response.status === 429 || response.status >= 500);
+      throw new SearchApiError(`HTTP ${response.status} ${safe.slice(0, 240)}${minuteRetriesExhausted ? ` ${MINUTE_LIMIT_EXHAUSTED}` : ""}`.trim(), response.status === 429 || response.status >= 500);
     }
-    return await response.json();
+    const payload = await response.json();
+    settleAiUsage(settle, payload);
+    return payload;
   } catch (err) {
     const error = err as Error;
     const message = key ? error.message.replaceAll(key, "[已隐藏]") : error.message;

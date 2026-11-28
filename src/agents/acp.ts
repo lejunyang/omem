@@ -14,6 +14,7 @@ import { isQuotaMessage } from "./capacity.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
 import { agentRunError, replyFromSegments, sessionPrompt, type AgentEvent, type AgentProbe, type AgentRequest, type AgentResult, type SessionCleanup } from "./types.ts";
 import { keyEnv } from "../core/ai-keys.ts";
+import { registerRelayClient } from "../core/ai-relay-addr.ts";
 import { NetworkUnavailableError } from "./network-policy.ts";
 
 // Provider queue text shown as a normal message by some CLIs (traex included).
@@ -202,13 +203,25 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
   const levelKnown = !profile.effort || !probes || !known || !!known.error || probes.effortsFor(known, profile.model).includes(profile.effort);
   // A key's model settings (Codex's context window in its CODEX_CONFIG) are the base the launch config adds to.
   const atLaunch = opts.probe ? {} : launchConfigEnv({ ...profile, env: { ...profile.env, ...keyedModelEnv(profile) } }, { model: profile.model, effort: levelKnown ? profile.effort : null });
-  const env = { ...profile.env, ...keyEnv(profile), ...atLaunch, ...opts.mcp?.env, ...opts.env };
+  let emit = emitSetup;
+  let touch = () => {};
+  const relay = profile.keyRelay && !opts.probe ? registerRelayClient(profile.id, (text) => {
+    touch();
+    emit({ type: "status", text });
+  }) : undefined;
+  const overrides = { ...atLaunch, ...opts.mcp?.env, ...opts.env };
+  const env = { ...profile.env, ...overrides };
   const child = await (await import("./egress-run.ts")).launchRun(profile, opts, (sandbox, ownSandbox) => {
     requirePluginBackend(profile);
-    return launch(profile.command, profile.args, { cwd: opts.cwd, env: codexAcpEnv(profile, env), workspace: opts.workspace, ownSandbox, sandbox });
+    const launchEnv = { ...profile.env, ...keyEnv(profile, relay?.token), ...overrides };
+    return launch(profile.command, profile.args, { cwd: opts.cwd, env: codexAcpEnv(profile, launchEnv), workspace: opts.workspace, ownSandbox, sandbox });
+  }).catch((error) => {
+    relay?.close();
+    throw error;
   });
   const guardedToken = env.OMEM_COMMAND_GATE && env.OMEM_TOKEN === opts.mcp?.token ? opts.mcp?.token : undefined;
   const stopped = new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.once("error", () => resolve()); });
+  void stopped.then(() => relay?.close());
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => {
     stderr = (stderr + d.toString()).slice(-4000);
@@ -227,8 +240,6 @@ async function openAcpOnce(profile: AgentProfile, opts: AcpOpenOptions & { toler
     fail(exitError(code));
   });
   // Everything the agent says goes to the emitter of the turn in progress.
-  let emit = emitSetup;
-  let touch = () => {};
   let replaying = false;
   /** The newest option list the agent sent on its own (`config_option_update`), until setup reads it. */
   let announced: SessionConfigOption[] | null = null;

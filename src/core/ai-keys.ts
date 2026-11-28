@@ -4,6 +4,8 @@ import type { AgentProfile, Config } from "./config.ts";
 import { keyedModelEnv, omemHome, useListedModels } from "./config.ts";
 import { relayToken } from "./ai-relay-addr.ts";
 import { classifyError, type ErrorKind } from "./ai-errors.ts";
+import type { App } from "./app.ts";
+import { estimatedAiTokens, MINUTE_LIMIT_EXHAUSTED, requestWithAiLimit, settleAiUsage } from "./ai-request.ts";
 
 /**
  * API keys of the AI providers (`ai.providers`), in secrets/ai-keys.json beside the other secrets:
@@ -61,12 +63,12 @@ export function keyVars(kind: string, key: string, baseUrl?: string): Record<str
  * and models are not secret and are already in the profile's env: config.ts `keyedProfiles`, which
  * also names the variables the key goes in.)
  */
-export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> & Partial<Pick<AgentProfile, "model" | "env" | "keyModels">> & { keyVars?: string[]; keyRelay?: boolean }): Record<string, string> {
+export function keyEnv(profile: Pick<AgentProfile, "keyRef" | "id" | "command"> & Partial<Pick<AgentProfile, "model" | "env" | "keyModels">> & { keyVars?: string[]; keyRelay?: boolean }, clientToken?: string): Record<string, string> {
   if (!profile.keyRef) return {};
   const key = keyOf(profile.keyRef);
   if (!key) throw new Error(`后端 ${profile.id} 用的 API key（${profile.keyRef}）还没有填写：设置 → 后端与模型 → API key`);
   // Through the relay the agent holds the relay's token; omem adds the key on the way out.
-  const value = profile.keyRelay ? relayToken(profile.id) : key;
+  const value = profile.keyRelay ? clientToken ?? relayToken(profile.id) : key;
   // A third party's key: the model this run is on goes in at launch too (config.ts keyedModelEnv), and Codex /
   // Claude Code get a config directory of their own (thirdPartyHome) so nothing they do reaches their vendor.
   if (profile.keyVars?.length) return { ...keyedModelEnv(profile), ...thirdPartyHome(profile), ...Object.fromEntries(profile.keyVars.map((v) => [v, value])) };
@@ -180,20 +182,31 @@ export async function findAnthropicUrl(baseUrl: string, key: string, fetcher: ty
  * reply of at most one token. Services often list models the account cannot call by that name (Ark
  * accounts that must use an endpoint ID): this is where that shows.
  */
-export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUrl" | "model">, key: string, fetcher: typeof fetch = fetch, kind = "openai-compatible"): Promise<{ ok: boolean; detail: string; endpointOnly?: boolean; served?: string }> {
+export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUrl" | "model">, key: string, fetcher: typeof fetch = fetch, kind = "openai-compatible", rate?: { app: App; provider: Provider }): Promise<{ ok: boolean; detail: string; endpointOnly?: boolean; served?: string }> {
   if (!p.model) return { ok: false, detail: "还没有填写后端用的模型" };
-  const calls: [string, string, Record<string, string>, unknown][] = [];
+  const calls: [string, string, Record<string, string>, Record<string, unknown>][] = [];
   if (p.baseUrl) calls.push(["OpenAI 格式", `${p.baseUrl.replace(/\/+$/, "")}/chat/completions`, { authorization: `Bearer ${key}` }, { model: p.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }]);
   if (p.anthropicUrl) calls.push(["Anthropic 格式", `${p.anthropicUrl.replace(/\/+$/, "")}/v1/messages`, { authorization: `Bearer ${key}`, "x-api-key": key, "anthropic-version": "2023-06-01" }, { model: p.model, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }]);
   const bad: string[] = [];
   let endpointOnly: boolean | undefined, served: string | undefined;
   for (const [label, url, headers, body] of calls) {
     try {
-      const r = await fetcher(url, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) });
-      const text = await r.text().catch(() => "");
+      const encoded = JSON.stringify(body);
+      const send = () => fetcher(url, {
+        method: "POST", headers: { ...headers, "content-type": "application/json" },
+        body: encoded, signal: AbortSignal.timeout(30_000),
+      });
+      const { response: r, errorText, settle, minuteRetriesExhausted } = rate
+        ? await requestWithAiLimit(rate.app, rate.provider, p.model, () => estimatedAiTokens(encoded, body), {}, send)
+        : { response: await send() };
+      const text = errorText ?? await r.text().catch(() => "");
       if (r.ok) {
         // The name it answered as: for an endpoint ID, the model behind it.
-        try { served ??= String((JSON.parse(text) as { model?: unknown }).model ?? "") || undefined; } catch {}
+        try {
+          const payload = JSON.parse(text);
+          settleAiUsage(settle, payload);
+          served ??= String(payload.model ?? "") || undefined;
+        } catch {}
         continue;
       }
       const c = classifyError(kind, r.status, text);
@@ -204,7 +217,7 @@ export async function tryBackendModel(p: Pick<Provider, "baseUrl" | "anthropicUr
         continue;
       }
       const msg = `${c.code ? `${c.code}：` : ""}${c.message}`;
-      bad.push(`${label} ${r.status}${msg ? `：${msg}` : ""}（${ERROR_WORD[c.kind]}）`);
+      bad.push(`${label} ${r.status}${msg ? `：${msg}` : ""}（${ERROR_WORD[c.kind]}）${minuteRetriesExhausted ? MINUTE_LIMIT_EXHAUSTED : ""}`);
     } catch (e) {
       bad.push(`${label}连不上：${(e as Error).message}`);
     }

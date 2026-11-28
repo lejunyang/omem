@@ -10,7 +10,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 | 类型 | 默认地址 | 能用于 |
 | --- | --- | --- |
-| `openai` | `https://api.openai.com/v1` | Codex、OpenCode 后端，语音、决策、图片（向量模型仍按 `embeddings.apiKeyEnv` 读环境变量） |
+| `openai` | `https://api.openai.com/v1` | Codex、OpenCode 后端，语音、决策、图片。云端向量和重排可用提供方编号 `keyRef` 引用同一个 key |
 | `anthropic` | `https://api.anthropic.com` | Claude Code、OpenCode 后端 |
 | `typesafe` | `https://api.typesafe.ai` | 决策（Jev） |
 | `openrouter` | `https://openrouter.ai/api` | 决策（Jev 等） |
@@ -20,7 +20,7 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 
 以前按“OpenAI 兼容”添加的方舟 key，这一行有“改成火山方舟”按钮。
 
-“检查”只发不花钱的请求：OpenAI、方舟和兼容接口用 `GET /models`，Anthropic 用 `GET /v1/models`，OpenRouter 用 `GET /v1/key`，Cloudflare 用 `GET …/ai/models/search`（同时确认 token 和账号）。TypeSafe 没有已知的免费检查接口，只看 key 是否填写。
+“检查”先发无需推理的请求。OpenAI、方舟和兼容接口用 `GET /models`，Anthropic 用 `GET /v1/models`，OpenRouter 用 `GET /v1/key`，Cloudflare 用 `GET …/ai/models/search`（同时确认 token 和账号）。TypeSafe 没有已知的免费检查接口，只看 key 是否填写。
 
 第三方（方舟和 OpenAI 兼容）的 key 检查通过后再做两件事（`/api/ai/providers/:id/test`）：
 
@@ -49,13 +49,50 @@ Agent 仍是理解、调查、写作和编码的主体。语音、决策、图�
 - 来源是 `key:<编号>`：额度、并发和“额度用完”跟本机登录的那个分开算；它没有套餐额度，设置 → 后端与模型 → 并行 的“账号额度”只列本机登录的 Codex、Claude Code。
 - key 被删掉时这个后端算“未安装”，选了它的运行直接报错，不会悄悄改用本机登录。
 
+### 每分钟请求与 token 限额
+
+在 `config.json` 的 `ai.providers[]` 给对应的 key 加 `limits`。RPM 和 TPM 分别填写正整数，也可以只设其中一个。默认值应用于该 key 上每个模型。按模型名或接入点 ID 配置 `limits.models` 时，只覆盖该模型填了的字段。
+
+```json
+{
+  "id": "example",
+  "kind": "ark",
+  "backends": ["codex", "claude"],
+  "models": ["ep-example"],
+  "limits": {
+    "rpm": 60,
+    "tpm": 120000,
+    "models": { "ep-example": { "rpm": 30 } }
+  }
+}
+```
+
+同一个提供方编号和请求里的模型 ID，在当前 omem 进程内共用滚动 60 秒窗口。接入点调用用请求里的 `ep-…` 配置；页面显示的底层模型名用于辨认。请求排在队尾，到 RPM 和 TPM 都有位置才发。窗口里的容量随较早的请求到期而释放。有多批排队时，队尾可能跨多个 60 秒。单个请求预估超过整个 TPM 时按 RPM 和在先顺序照发，由上游判定。
+
+方舟的 [突发流量处理最佳实践](https://docs.volcengine.com/docs/ark/traffic-burst-handling-best-practices?lang=zh) 说明普通 TPM 计入输入和输出，按主账号下的模型或推理接入点算。[常见问题](https://docs.volcengine.com/docs/ark/modelark-faq?lang=zh) 说明在收到请求时按输入和预估输出预扣。公开资料未说明输出预扣是否严格取请求上限、服务端窗口如何对齐，也未列出可依赖的剩余额度或重置时间响应头。omem 用滚动 60 秒做本地预算，输入按请求体 UTF-8 字节数除以 4 估算，输出取 `max_completion_tokens`、`max_output_tokens`、`max_tokens` 之一。未填时普通生成预留 4096、决策 256，向量、重排和图片只预估输入。音频转写按 RPM 准入，有 token 用量才计入 TPM。多模态请求的估算与提供方分词、媒体折算可能不同，同账号其他 key 和进程的用量由方舟统一计算。
+
+收到 JSON 或流式 `usage` 后按实际 token 修正，包含 Anthropic 的 `message_start` 输入和 `message_delta` 累计输出。配置限额时，方舟和 OpenAI 的流式 Chat 请求会让上游附带 `usage`。上游省略用量、流被中断或用量所在单个响应帧超过读取上限时，当前窗口沿用已有的计数。
+
+生成的 Agent 后端经中转共用队列。决策、图片生成、HTTP 音频转写、引用 `keyRef` 的向量和重排、API key 检查里的单 token 试调用，也走这个队列。查询模型、验证 key、发现格式地址和创建语音连接凭证无需推理。WebRTC 语音会话建立后的推理由浏览器和提供方直接交换，omem 不在数据路径中。环境变量直连、自定义后端、没有启动中转的一次性命令以及其他 omem 进程各走自己的连接。
+
+API key 检查逐一试调用已配置的格式。同一模型的两种格式共用额度，各次请求发往上游时才开始计 30 秒超时。
+
+单模型的决策调用默认 30 秒，有备用模型时每家最多 15 秒。等待会用完本次时限时跳过该提供方，下次仍按原顺序尝试。全部因等待时限跳过时，是否判断按失败处理，`fallback: general` 转通用模型，`fallback: none` 按否处理。直连服务各自沿用原有调用时限。Agent 等待时中转保持同一 HTTP 请求，保留最终状态码。运行事件会写“按 API key 的限额等了 N 秒”。Codex 源码的流空闲默认值是 [300 秒](https://github.com/openai/codex/blob/main/codex-rs/model-provider-info/src/lib.rs)。Claude Code 的 [API 请求默认 600 秒](https://code.claude.com/docs/en/env-vars#look-up-the-variables-claude-code-reads)，[首字节和非流式时限](https://code.claude.com/docs/en/errors#no-response-from-api)还随版本和连接方式变化。默认时限给单次分钟等待留有余量。连续多批等待、上游生成时间和自行调短的客户端时限都会影响一次 HTTP 请求能等多久。
+
+本人的 `GET /api/ai` 在每个 `providers[]` 返回 `limits` 和 `rateLimit`。后者是 `null`（未配置时），或包含以下字段：
+
+- `waits.count`、`waits.ms` 是最近一小时结束的等待次数和累计毫秒数。
+- `windows[]` 按近期发过或排队的模型列出 `model`、生效的 `rpm` / `tpm`、此刻窗口里的 `requests` / `tokens`、排队数 `queued`，以及 `nextReleaseAt` 和 `blockedUntil`（Unix 毫秒或 `null`）。`nextReleaseAt` 是当前最早一笔用量释放的时间，实际放行还取决于队列和剩余容量。
+
+保存仍用 `PUT /api/settings` 的 `ai.providers`。设置对象随提供方保存，旧客户端没有传 `limits` 时保留原值，清空时传 `limits: null`。直接编辑配置文件时可删除 `limits`。现有 `relay` 继续提供近一小时的错误统计。
+
 ### 提供方的错误
 
-Agent 拿到提供方的报错后，往往不带原来的错误码，只用自己的话说：Codex 把每个 429 变成回复里的一句“exceeded retry limit, last status: 429”，把 403 写成“unexpected status 403 …”，都算正常结束；Claude Code 对 429、5xx 要重试几分钟。所以 API key 生成的后端都经 omem 转发（`src/core/ai-relay.ts`，路由 `/api/ai/relay/…`，不经登录检查，只认这个后端的令牌；出网隔离的运行也放行这个路径）。omem 换上真正的 key，请求原样发出，回答以流的方式原样传回。遇到错误时，按提供方自己的错误码分类（`src/core/ai-errors.ts` 的 `classifyError`）：方舟、OpenAI、Anthropic、Cloudflare 各有一张码表，其他提供方按状态码和常见字眼判断。
+Agent 拿到提供方的报错后，往往不带原来的错误码，只用自己的话说：Codex 把每个 429 变成回复里的一句“exceeded retry limit, last status: 429”，把 403 写成“unexpected status 403 …”，都算正常结束；Claude Code 对 429、5xx 要重试几分钟。所以 API key 生成的后端都经 omem 转发（`src/core/ai-relay.ts`，路由 `/api/ai/relay/…`，不经登录检查，只认这个后端的令牌；出网隔离的运行也放行这个路径）。omem 换上真正的 key，并将上游响应按原字节传回。遇到错误时，按提供方自己的错误码分类（`src/core/ai-errors.ts` 的 `classifyError`）：方舟、OpenAI、Anthropic、Cloudflare 各有一张码表，其他提供方按状态码和常见字眼判断。
 
 | 类别 | 例子 | omem 怎么做 |
 | --- | --- | --- |
-| `rate` 限流 | 方舟 `RateLimitExceeded.EndpointRPMExceeded`、`ModelAccountTpmRateLimitExceeded`、`ServerOverloaded`；OpenAI `rate_limit_exceeded`；Anthropic `overloaded_error`；Cloudflare 3040 | 在 omem 这里等 2、5、10 秒各重试一次（提供方给了不超过 15 秒的 `Retry-After` 就按它）；仍然限流就把 429 交给 Agent，这个 key 的后端放到最后 1 分钟，运行算“限流”，换下一个后端 |
+| `rate` 限流 | 方舟 `RateLimitExceeded.EndpointRPMExceeded`、`ModelAccountTpmRateLimitExceeded`、`ServerOverloaded`；OpenAI `rate_limit_exceeded`；Anthropic `overloaded_error`；Cloudflare 3040 | 有配置限额且上游明确报每分钟限额时，同模型的队列等 60 秒，再用同一 key 和模型发，最多重试三轮。一直被拒才把 429 交给 Agent 并按原逻辑避让 1 分钟，同时记下核对限额的提示。其他临时限流或未配置限额时，沿用 2、5、10 秒重试（提供方给了不超过 15 秒的 `Retry-After` 就按它）及原有的避让 |
 | `daily` 每日用量 | 方舟 `ModelAccountTpdRateLimitExceeded`；OpenAI 写明 per day 的限流；Cloudflare 3036 | 改成 400 交给 Agent（没有 Agent 会重试 400，几秒内结束），这个 key 的后端停到本人时区的午夜 |
 | `quota` 额度或欠费 | 方舟 `SetLimitExceeded`、`AccountQuotaExceeded`、`QuotaExceeded.*`、`AccountOverdueError`；OpenAI `insufficient_quota`；Anthropic `billing_error` | 改成 400；停到点“检查”通过为止（最多一天）；通知本人一次（同一个 key 6 小时内不重复） |
 | `auth` key 被拒 | 方舟 `AuthenticationError`；OpenAI `invalid_api_key` | 同上，状态码不改 |
@@ -63,7 +100,7 @@ Agent 拿到提供方的报错后，往往不带原来的错误码，只用自�
 
 运行失败时，dispatch 用转发在本次运行期间看到的错误改写失败原因（`relayFailure`）：限流算 `rate-limit`，每日用量、额度、key 被拒算 `quota` 并带恢复时间，额度和续跑沿用原有的“额度用完”处理。Codex 把 400 的报错原文当回复交回时，同样按这次运行转发看到的错误判为失败。另外，ACP 回合结束时，回复以 Codex 的那几句报错开头的，也算失败（`acp.ts` 的 `codexErrorReply`：429、5xx 和“high demand”算限流，其余算其他错误）。
 
-API key 页每个 key 那一行写最近一小时各类错误的次数和最近一条，暂停时写“已暂停到 …”。点“检查”通过后，暂停和记录一起清掉（决策模型的暂停也清掉）。没有 RPM / TPM 设置：限多少由提供方说了算，omem 只看它返回什么。
+API key 页每个 key 那一行写最近一小时各类错误的次数和最近一条，暂停时写“已暂停到 …”。点“检查”通过后，错误记录和额度暂停一起清掉（决策模型的暂停也清掉）。分钟计数继续随请求到期。
 
 决策模型（`src/core/decision.ts`）出错时用同一套分类：以前统一排到后面 5 分钟，现在限流 1 分钟、每日用量到午夜、额度和 key 被拒一天（检查通过即恢复）、提供方出错 5 分钟；错误也记进 API key 页的那一行。
 

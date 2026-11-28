@@ -63,6 +63,19 @@ updated: 2026-11-28
 
 从 `src/agents/own-run.ts` 读起。挂载工作区后再遮住登录文件、SSH agent 套接字和插件状态，设置可替换内置路径或排除指定类型的本人运行。`src/agents/egress-run.ts` 将本人沙箱接入已有的 all-sandboxed 出网模式。命令启动从 `src/agents/command-executor.ts` 读起，同身份的命令使用独立沙箱和流式管道，原有借用流程保留。
 
+## API key 检查等待分钟额度（2026-11-28）
+
+- 从 `src/core/ai-keys.ts` 读起。对同一个接入点试调用 OpenAI 和 Anthropic 两种格式时，共用分钟额度。轮到请求发往上游时才开始计 30 秒超时，`rpm: 1` 时第二种格式可以等到窗口释放后完成检查。
+
+## 决策等不到 API key 分钟额度时的处理（2026-11-28）
+
+- 从 `src/core/decision.ts` 读起。所有决策模型都来不及等额度时，按决策失败处理。配置 `fallback: general` 时改问通用模型，配置 `fallback: none` 时按否处理。等待超时仍不计入提供方故障，设置页试用会显示等待超过时限。
+
+## API key 的分钟限额（2026-11-28）
+
+- 在 `ai.providers[].limits` 设置 RPM / TPM，可按模型名或接入点 ID 覆盖。同一 key 和请求模型共用滚动 60 秒窗口，按到达顺序排队，收到用量后修正预占。实现从 `src/core/ai-rate-limit.ts`、`ai-request.ts` 读起。
+- 中转收到明确的分钟限额时保留连接，按原 key 和模型最多等三轮。决策时限不够就跳过。运行记等待秒数，设置接口给出最近一小时的等待和各模型窗口用量。入口见 `src/core/ai-relay.ts`、`decision.ts` 和 `src/server/http.ts`。
+
 ## 用 /跟进 开启和管理长任务（2026-11-28）
 
 从 `src/agents/supervisor-command.ts` 读起。在工作话题发 `/跟进` 看进展，进度卡显示由哪个 AI 跟进。跟进消息沿用主助手署名，设置项名为“长任务跟进用的 AI”。

@@ -3,6 +3,7 @@ import { baseOf, categoryStatus, defaultFor, keyOf } from "./ai-keys.ts";
 import { all, one, run } from "./db.ts";
 import { accessibleSpaces } from "./users.ts";
 import { HttpError, json, newId, now } from "./util.ts";
+import { requestWithAiLimit, settleAiUsage } from "./ai-request.ts";
 
 /**
  * Voice (settings → AI → 语音, docs/v2/ai-models.md): the browser talks to OpenAI over WebRTC;
@@ -38,7 +39,7 @@ function provider(app: App) {
   const st = categoryStatus(app.config, "voice", app.home);
   if (!st.ready) throw new HttpError(409, `语音模型不可用：${st.detail}（设置 → 后端与模型 → 语音）`);
   const p = app.config.ai.providers.find((x) => x.id === st.provider)!;
-  return { base: baseOf(p), key: keyOf(p.id, app.home), model: st.model!, api: app.config.ai.voice.api, voice: app.config.ai.voice.voice || "marin" };
+  return { provider: p, base: baseOf(p), key: keyOf(p.id, app.home), model: st.model!, api: app.config.ai.voice.api, voice: app.config.ai.voice.voice || "marin" };
 }
 
 export function voiceStatus(app: App) {
@@ -116,12 +117,19 @@ export async function transcribe(app: App, audio: Buffer, mime: string) {
   const ext = /webm/.test(mime) ? "webm" : /ogg/.test(mime) ? "ogg" : /mp4|m4a|aac/.test(mime) ? "m4a" : /wav/.test(mime) ? "wav" : /mpeg|mp3/.test(mime) ? "mp3" : "webm";
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(audio)], { type: mime || "audio/webm" }), `speech.${ext}`);
-  form.append("model", app.config.ai.voice.transcribeModel || defaultFor(app.config, app.home, "voice.transcribe"));
-  const r = await fetcher(`${p.base}/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${p.key}` }, body: form, signal: AbortSignal.timeout(60_000) });
-  const text = await r.text();
+  const model = app.config.ai.voice.transcribeModel || defaultFor(app.config, app.home, "voice.transcribe");
+  form.append("model", model);
+  const deadline = Date.now() + 60_000;
+  const signal = AbortSignal.timeout(60_000);
+  // Audio duration and encoding do not give a portable token estimate. Apply RPM and read usage when the API supplies it.
+  const { response: r, errorText, settle } = await requestWithAiLimit(app, p.provider, model, () => 0, { signal, deadline },
+    () => fetcher(`${p.base}/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${p.key}` }, body: form, signal }));
+  const text = errorText ?? await r.text();
   if (!r.ok) throw new HttpError(502, `语音转文字失败：${r.status} ${text.slice(0, 300)}`);
   try {
-    return String(JSON.parse(text).text ?? "").trim();
+    const payload = JSON.parse(text);
+    settleAiUsage(settle, payload);
+    return String(payload.text ?? "").trim();
   } catch {
     return text.trim();
   }

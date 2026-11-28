@@ -74,6 +74,7 @@ import { callTool, contextToolNames, mcpTools, onToolTokenRevoked, toolContextFo
 import type { App, AppEvent } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
 import { forgetRelayErrors, keyPaused, relayRequest, relayStats } from "../core/ai-relay.ts";
+import { aiRateLimitStats } from "../core/ai-rate-limit.ts";
 import { useRelayBase } from "../core/ai-relay-addr.ts";
 import { allProfiles, keyBackendsOf, keyedProfiles, providerFormats, providerModels, legacyCommand, migrateCommands, operationRulesSchema, operationScopeSchema, commandRuleSchema, configSchema, egressSchema, ownSandboxSchema, fullAccessMode, networkPolicySchema, outletSettings, prepareConfigSave, saveConfig } from "../core/config.ts";
 import { executionPermit, pendingExecution } from "../agents/command-executor.ts";
@@ -3876,7 +3877,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return {
       providers: app.config.ai.providers.map((p) => ({
         ...p, keyHint: keyHint(keys[p.id] ?? ""), hasKey: !!keys[p.id], offers: keyBackendsOf(p),
-        relay: relayStats(app, p.id), paused: keyPaused(app, p.id),
+        relay: relayStats(app, p.id), rateLimit: aiRateLimitStats(app, p), paused: keyPaused(app, p.id),
         listed: cache[p.id] ? { at: cache[p.id].at, count: cache[p.id].models.length, models: cache[p.id].models, info: cache[p.id].info ?? {}, error: cache[p.id].error, endpointOnly: cache[p.id].endpointOnly, endpoints: cache[p.id].endpoints ?? {} } : null,
       })),
       decisionModels: decisionStatuses(app.config, app.home),
@@ -4019,7 +4020,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     const probeName = listedName && !models.some((m) => cache?.models.includes(m)) ? listedName : undefined;
     if (!models.length && !probeName) return r;
     const at = providerFormats(p);
-    const call = (model: string) => tryBackendModel({ model, baseUrl: at.openai?.url, anthropicUrl: at.anthropic?.url ?? r.anthropicUrl }, key, fetch, p.kind);
+    const call = (model: string) => tryBackendModel({ model, baseUrl: at.openai?.url, anthropicUrl: at.anthropic?.url ?? r.anthropicUrl }, key, fetch, p.kind, { app, provider: p });
     const [tried, nameCheck] = await Promise.all([Promise.all(models.map(call)), probeName ? call(probeName) : Promise.resolve(null)]);
     const names = [...models, ...(probeName ? [probeName] : [])];
     const all = [...tried, ...(nameCheck ? [nameCheck] : [])];

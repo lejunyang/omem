@@ -1,12 +1,13 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/main.ts";
 import { classifyError } from "../src/core/ai-errors.ts";
-import { keyEnv, setKey, useKeyHome } from "../src/core/ai-keys.ts";
-import { relayToken, useRelayBase } from "../src/core/ai-relay-addr.ts";
-import { onKeyModels, relayFailure, setRelayFetchForTests, setRelayWaitForTests } from "../src/core/ai-relay.ts";
+import { keyEnv, setKey, setModelListFetchForTests, useKeyHome } from "../src/core/ai-keys.ts";
+import { registerRelayClient, relayToken, useRelayBase } from "../src/core/ai-relay-addr.ts";
+import { aiRateLimitStats, AI_MINUTE } from "../src/core/ai-rate-limit.ts";
+import { onKeyModels, relayFailure, relayStats, setRelayFetchForTests, setRelayWaitForTests } from "../src/core/ai-relay.ts";
 import { configSchema, keyedProfiles } from "../src/core/config.ts";
 import { downReason, outOfQuotaUntil } from "../src/agents/capacity.ts";
 import { codexErrorReply } from "../src/agents/acp.ts";
@@ -22,8 +23,10 @@ afterAll(async () => {
 afterEach(() => {
   setRelayFetchForTests(null);
   setRelayWaitForTests(null);
+  setModelListFetchForTests(null);
   setDecisionFetchForTests(null);
   resetDecisionCooldownForTests();
+  vi.useRealTimers();
 });
 
 const body = (o: unknown) => JSON.stringify(o);
@@ -107,6 +110,7 @@ describe("the API-key relay", () => {
     const app = b.app;
     app.config.ai.providers = [{ id: "ark", name: "方舟", kind: "ark", baseUrl: "https://ark.example.com/api/v3", model: "ep-1", backends: ["codex", "claude"] }] as never;
     setKey(app.home, "ark", "real-ark-key");
+    setModelListFetchForTests(async () => new Response(body({ data: [] })));
     const codex = keyedProfiles(app.config).find((p) => p.id === "codex@ark")!;
     const relay = `${app.baseUrl}/api/ai/relay/ark/${encodeURIComponent("codex@ark")}/openai`;
     const call = (token = relayToken("codex@ark"), path = "/responses") =>
@@ -157,7 +161,127 @@ describe("the API-key relay", () => {
     const view = await (await fetch(`${app.baseUrl}/api/ai`)).json();
     expect(view.providers[0].paused.message).toMatch(/SetLimitExceeded/);
     expect(view.providers[0].relay.counts).toEqual({ rate: 1, quota: 1 });
+    expect(view.providers[0].rateLimit).toBeNull();
     setRelayFetchForTests(null);
+  });
+
+  async function setupLimited(limits: { rpm?: number; tpm?: number }) {
+    const b = await boot(mkdtempSync(join(tmpdir(), "omem-relay-limits-")), { port: 0, quiet: true, background: false });
+    servers.push(b.server);
+    const providers = configSchema.parse({
+      ai: { providers: [{ id: "ark", kind: "ark", baseUrl: "https://ark.example.com/api/v3", models: ["ep-example"], backends: ["codex", "claude"], limits }] },
+    }).ai.providers;
+    b.app.config.ai.providers = providers;
+    setKey(b.app.home, "ark", "example-key");
+    setModelListFetchForTests(async () => new Response(body({ data: [] })));
+    const stats = () => aiRateLimitStats(b.app, providers[0])!;
+    const call = (path: string, fields: Record<string, unknown> = {}, backend = "codex", token = relayToken(`${backend}@ark`)) =>
+      b.server.inject({ method: "POST", url: `/api/ai/relay/ark/${backend}%40ark/${backend === "claude" ? "anthropic" : "openai"}/${path}`,
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        payload: body({ model: "ep-example", input: "hi", max_tokens: 1, ...fields }) });
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    return { ...b, stats, call };
+  }
+
+  it("waits a minute on an upstream RPM error without pausing the key or returning 429", async () => {
+    const { app, server, call, stats } = await setupLimited({ rpm: 10 });
+    const profile = keyedProfiles(app.config).find((p) => p.id === "codex@ark")!;
+    const running = vi.fn(), unrelated = vi.fn();
+    const client = registerRelayClient(profile.id, running);
+    const otherClient = registerRelayClient(profile.id, unrelated);
+    try {
+      let attempts = 0;
+      const oldWait = vi.fn(async () => {});
+      setRelayWaitForTests(oldWait);
+      setRelayFetchForTests(async () => ++attempts === 1
+        ? new Response(body({ error: { code: "ModelAccountRpmRateLimitExceeded" } }), { status: 429 })
+        : Response.json({ usage: { input_tokens: 3, output_tokens: 1 } }));
+      const start = Date.now();
+      const pending = call("responses", {}, "codex", client.token);
+      await vi.waitFor(() => expect(stats().windows[0]).toMatchObject({ queued: 1, blockedUntil: expect.any(Number) }));
+      expect(attempts).toBe(1);
+      expect(downReason(app, profile)).toBeNull();
+      expect(relayFailure(app, profile, start)).toBeNull();
+      await vi.advanceTimersByTimeAsync(AI_MINUTE);
+      expect((await pending).statusCode).toBe(200);
+      expect(attempts).toBe(2);
+      expect(oldWait).not.toHaveBeenCalled();
+      expect(running).toHaveBeenCalledExactlyOnceWith("按 API key 的限额等了 60 秒");
+      expect(unrelated).not.toHaveBeenCalled();
+      expect(downReason(app, profile)).toBeNull();
+      const view = (await server.inject({ method: "GET", url: "/api/ai" })).json();
+      expect(view.providers[0]).toMatchObject({ limits: { rpm: 10 }, relay: null, rateLimit: {
+        waits: { count: 1, ms: AI_MINUTE }, windows: [{ model: "ep-example", requests: 1, tokens: 4, queued: 0 }],
+      } });
+    } finally {
+      client.close();
+      otherClient.close();
+    }
+  });
+
+  it("shares TPM across relay formats and reconciles Chat and Anthropic streaming usage", async () => {
+    const { call, stats } = await setupLimited({ tpm: 150 });
+    const frames = [
+      'event: message_start\r\ndata: {"type":"message_start","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":4,"output_tokens":1}}}\r\n\r\n',
+      'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":5}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ];
+    let endMessage!: () => void;
+    const upstream = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith("/messages")) {
+        return new Response(new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode(frames[0]));
+            endMessage = () => {
+              controller.enqueue(encoder.encode(frames[1] + frames[2]));
+              controller.close();
+            };
+          },
+        }), { headers: { "content-type": "text/event-stream" } });
+      }
+      if (String(url).endsWith("/responses")) {
+        return new Response('event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":2}}}\n\n',
+          { headers: { "content-type": "text/event-stream" } });
+      }
+      const request = JSON.parse(Buffer.from(init!.body as Uint8Array).toString());
+      expect(request.stream_options.include_usage).toBe(true);
+      return new Response('data: {"choices":[],"usage":{"total_tokens":8}}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } });
+    });
+    setRelayFetchForTests(upstream);
+    const first = call("v1/messages", { model: "another-model", max_tokens: 89 }, "claude");
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(1));
+    const second = call("chat/completions", { max_tokens: 89, stream: true });
+    await vi.waitFor(() => expect(stats().windows[0].queued).toBe(1));
+    expect(upstream).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(100);
+    endMessage();
+    expect((await first).body).toBe(frames.join(""));
+    expect((await second).statusCode).toBe(200);
+    expect((await call("responses", { max_output_tokens: 10, stream: true })).statusCode).toBe(200);
+    expect(stats().windows[0]).toMatchObject({ requests: 3, tokens: 26, queued: 0 });
+    expect(stats().waits.count).toBe(1);
+  });
+
+  it("uses the previous fallback after three refused minute retries and never waits on a daily error", async () => {
+    const { app, call, stats } = await setupLimited({ rpm: 10 });
+    const profile = keyedProfiles(app.config).find((p) => p.id === "codex@ark")!;
+    let code = "RateLimitExceeded.EndpointTPMExceeded";
+    const fetchUpstream = vi.fn(async () => Response.json({ error: { code } }, { status: 429 }));
+    setRelayFetchForTests(fetchUpstream);
+    const pending = call("responses");
+    for (let i = 1; i <= 3; i++) {
+      await vi.waitFor(() => expect(stats().windows[0]).toMatchObject({ queued: 1, blockedUntil: expect.any(Number) }));
+      expect(fetchUpstream).toHaveBeenCalledTimes(i);
+      await vi.advanceTimersByTimeAsync(AI_MINUTE);
+    }
+    expect((await pending).statusCode).toBe(429);
+    expect(fetchUpstream).toHaveBeenCalledTimes(4);
+    expect(relayStats(app, "ark")?.last.message).toContain("等了 3 轮");
+    expect(downReason(app, profile)).toMatch(/限流/);
+    code = "ModelAccountTpdRateLimitExceeded";
+    expect((await call("responses")).statusCode).toBe(400);
+    expect(fetchUpstream).toHaveBeenCalledTimes(5);
   });
 });
 

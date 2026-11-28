@@ -73,6 +73,10 @@ const networkPoliciesSchema = z.array(networkPolicySchema).max(50).default([]).s
 /** Agents that can run with an API key (`ai.providers`) instead of the login on this machine. */
 export const AI_KEY_BACKENDS = ["claude", "claude-cli", "codex", "codex-cli", "opencode"] as const;
 export type KeyBackend = (typeof AI_KEY_BACKENDS)[number];
+const aiMinuteLimits = {
+  rpm: z.number().int().positive().optional().describe("每分钟最多发出的请求数"),
+  tpm: z.number().int().positive().optional().describe("每分钟输入和输出的 token 总数"),
+};
 type ApiFormat = "openai" | "anthropic";
 /** The API format each of them speaks: OpenCode either (OpenAI's first). */
 const BACKEND_FORMATS: Record<KeyBackend, ApiFormat[]> = { claude: ["anthropic"], "claude-cli": ["anthropic"], codex: ["openai"], "codex-cli": ["openai"], opencode: ["openai", "anthropic"] };
@@ -890,6 +894,11 @@ export const configSchema = z.object({
          */
         models: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
         model: z.string().trim().max(200).optional(),
+        limits: z.object({
+          ...aiMinuteLimits,
+          models: z.record(z.string().min(1).max(200), z.object(aiMinuteLimits).strict()).optional()
+            .describe("按请求中的模型名或接入点 ID 覆盖 RPM / TPM，未填的字段继承上面的值"),
+        }).strict().optional(),
         /** cloudflare: the account whose Workers AI is called (not secret; the API token is the key). */
         accountId: z.string().trim().regex(/^[0-9a-f]{32}$/i, "Cloudflare 账号 ID 是 32 位十六进制").optional(),
         backends: z.array(z.enum(AI_KEY_BACKENDS)).default([]),
