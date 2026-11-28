@@ -159,6 +159,10 @@ program
       if (stopping) return;
       stopping = true;
       (await import("./agents/runs.ts")).stopWorker();
+      // Turns running under agent hosts are held for the omem that comes back (agents/hosted.ts); their
+      // tool calls wait from now on, and the calls omem is answering get a few seconds to finish.
+      const held = (await import("./agents/hosted.ts")).detachHostsForShutdown();
+      if (held) await (await import("./server/http.ts")).drainToolCalls(5_000);
       const { releaseBackgroundSessions } = await import("./agents/background-sessions.ts");
       await releaseBackgroundSessions();
       process.exit(0);

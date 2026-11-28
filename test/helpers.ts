@@ -12,6 +12,8 @@ export function testApp(at?: string) {
   app.config.notify.firstNudgeDelayMinutes = 0;
   // Delegations in tests start coding at once; test/pre-check.test.ts turns the check before coding on.
   app.config.agents.autoAdvance.preCheck = false;
+  // Turns start their agent directly; test/agent-host.test.ts turns hosts on (OMEM_TEST_HOSTED=1 runs any suite through them).
+  app.config.agents.restartHold.enabled = process.env.OMEM_TEST_HOSTED === "1";
   return app;
 }
 

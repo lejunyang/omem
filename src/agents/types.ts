@@ -96,6 +96,11 @@ export type AgentRequest = {
   callerRebuildsOnResumeFailure?: boolean;
   /** Provider queue budget (ms); 0/undefined = unlimited while queued. */
   queueTimeoutMs?: number;
+  /**
+   * Which of the run's roles or checks this turn is, so an ACP turn may live on through a restart of
+   * omem under an agent host and be taken back by the re-run (agents/hosted.ts). Set by the runner.
+   */
+  hostSlot?: string;
 };
 
 export function aiUsageText(profile: AgentProfile, access?: string, selection?: Execution) {

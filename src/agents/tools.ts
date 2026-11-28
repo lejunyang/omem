@@ -8239,9 +8239,32 @@ export function onToolTokenRevoked(token: string, close: () => void) {
   set.add(close);
   return () => { set.delete(close); if (!set.size) tokenCleanups.delete(token); };
 }
+/** Older tokens that stand for a token of this process (an agent that lived through a restart, agents/hosted.ts). */
+const aliases = new Map<string, Set<string>>();
+/**
+ * Let `alias` (the token an agent process was launched with before omem restarted) act as `token`
+ * (the one this process prepared for the same turn): the same context, revoked together.
+ */
+export function aliasToolToken(alias: string, token: string) {
+  const ctx = tokens.get(token);
+  if (!ctx || alias === token) return false;
+  tokens.set(alias, ctx);
+  const set = aliases.get(token) ?? new Set<string>();
+  aliases.set(token, set);
+  set.add(alias);
+  return true;
+}
 export function revokeToolToken(token: string) {
   tokens.delete(token);
   for (const close of tokenCleanups.get(token) ?? []) close();
+  const older = aliases.get(token);
+  aliases.delete(token);
+  for (const alias of older ?? []) revokeToolToken(alias);
+}
+/** Tests: a second App in the same process starts without the first one's tokens, as a restarted omem would. */
+export function forgetToolTokensForTests() {
+  tokens.clear();
+  aliases.clear();
 }
 export function toolContextForToken(app: App, token: string): ToolContext | null {
   const ctx = tokens.get(token);
