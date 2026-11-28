@@ -15,13 +15,16 @@ export function followCodePlan(app: App, rootId: string, additionalTasks = 0, es
   if (!root.spaceId || root.input.branches || root.input.syncOnly || root.output.appliedAt || root.output.discardedAt || root.output.supersededBy) return null;
   const inherited = longTaskForRun(app, rootId);
   if (inherited) return inherited;
+  // Coding on a study's item (its fixes) is followed by the study's own follow-up (found above) or, when the owner turned
+  // that off, not at all: the study's flow link must not give every fix a follow-up of its own.
+  const item = root.input.itemId;
+  if (typeof item === "string" && one(app.db, "select 1 from study_directions where item_id=? limit 1", item)) return null;
   const planned = one<{ n: number }>(app.db, "select count(*) n from code_tasks where work_id=?", rootId)!.n;
   const work = root.output.work as { budgetBy?: string; budget: number } | undefined;
   const rounds = Math.max(estimate, Number(root.input.maxRounds ?? 0), work?.budgetBy ? work.budget : 0);
   const parent = root.parentId ? one<{ kind: string; threadId: string | null }>(app.db, `select kind,
     coalesce(json_extract(input,'$.conversationId'),json_extract(input,'$.threadId')) threadId from runs where id=?`, root.parentId) : null;
   if (planned + additionalTasks < auto.minTasks && rounds < auto.minRounds) {
-    const item = root.input.itemId;
     const linked = typeof item === "string" && one(app.db, `select 1 from item_materials where item_id=? and kind='req'
       union all select 1 from item_flows where item_id=? and ended_at is null limit 1`, item, item);
     const fromStage = !root.input.contextItemId && (parent?.kind === "flow-stage" || parent?.kind === "flow-runner");

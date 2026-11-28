@@ -129,7 +129,7 @@ askOwner:              # 只放必须问本人的；每条带选项和助手自�
 | 工作 | 何时开始 | 关闭此类自动跟进 |
 | --- | --- | --- |
 | 研究 | 开始研究轮次时接入，跟进中沿用当前任务书。正常完成后再开一轮，按新目标另起任务书和预算 | `longTasks.auto.studies = false` |
-| 编码交办 | 拆分后修改项达到 `minTasks`（默认 6），或预计轮数、交办指定轮数达到 `minRounds`（默认 3）。来自需求或流程的交办也接入 | `longTasks.auto.code = false` |
+| 编码交办 | 拆分后修改项达到 `minTasks`（默认 6），或预计轮数、交办指定轮数达到 `minRounds`（默认 3）。来自需求或流程的交办也接入。研究里改缺陷的交办（交办的事项是研究）归研究自己的跟进，不另起一件；本人让研究不跟进时也不另起 | `longTasks.auto.code = false` |
 | 多 Agent 工作 | `run_agent` 创建工作会话时接入，之后由跟进 AI 做协调轮 | `longTasks.auto.agentWork = false` |
 
 三类默认开启。两项数值门槛也在 `longTasks.auto` 下。设置接口使用助手分区，读取 `GET /api/settings?section=assistant`，保存用 `PUT /api/settings`。例如传 `{"longTasks":{"auto":{"studies":false}}}` 只改研究开关。自动跟进沿用 `longTasks.supervisor` 和强模型设置，选型受 AI 规则的 `supervise` 类别约束。

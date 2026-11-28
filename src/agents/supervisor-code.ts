@@ -21,6 +21,9 @@ export function longTaskForRun(app: App, runId: string | null): LongTask | null 
     const adopted = row.kind === "code" ? autoFollowFor(app, "code", input.continueFrom ?? runId)
       : input.agentWorkId ? autoFollowFor(app, "agentWork", input.agentWorkId) : null;
     if (adopted) return adopted;
+    // A study's fix delegations carry the study's item: they belong to the study's follow-up, not one each.
+    const study = row.kind === "code" && typeof input.itemId === "string" ? autoFollowFor(app, "study", input.itemId) : null;
+    if (study) return study;
     const thread = input.threadId ?? input.conversationId;
     const task = thread && longTaskInThread(app, thread);
     if (task) return task;
