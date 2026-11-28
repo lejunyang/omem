@@ -17,7 +17,7 @@ export type LearnedExpression = Expression & { material: Material };
 export type MaterialUse = Material & { sourceId: string; lastUsedAt: string };
 export const recentMaterials = (store: PluginStore) => store.get<MaterialUse[]>("history", "materials") ?? [];
 
-const citation = /^src:([\w-]+)#L([1-9]\d*)-L([1-9]\d*)$/;
+const citation = /^src:([\w-]+)#L([1-9]\d*)(?:-L([1-9]\d*))?$/;
 export function useMaterials(ctx: PluginContext, entries: { material?: Material }[], warnings: string[], at: string) {
   const cited = entries.flatMap(entry => entry.material ? [{ entry, match: citation.exec(entry.material.ref) }] : []);
   if (!cited.length) return;
@@ -26,10 +26,10 @@ export function useMaterials(ctx: PluginContext, entries: { material?: Material 
   const used = new Map<string, MaterialUse>();
   let dropped = 0;
   for (const { entry, match } of cited) {
-    const source = match && sources.get(match[1]);
-    if (match && source && Number(match[2]) <= Number(match[3]) && Number(match[3]) <= source.lines) {
-      entry.material = { ...entry.material!, title: source.title };
-      const sourceId = match[1];
+    const [, sourceId, start, end = start] = match ?? [];
+    const source = sources.get(sourceId);
+    if (source && Number(start) <= Number(end) && Number(end) <= source.lines) {
+      entry.material = { ...entry.material!, ref: `src:${sourceId}#L${start}-L${end}`, title: source.title };
       used.set(sourceId, { ...entry.material, sourceId, lastUsedAt: at });
     } else {
       delete entry.material;

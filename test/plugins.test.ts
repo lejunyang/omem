@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { deleteAgentSpec, findAgentSpec, listAgentSpecs, listSkills, readRaw, saveAgentSpec } from "../src/agents/specs.ts";
 import { callTool, issueToolToken, toolContextForToken } from "../src/agents/tools.ts";
 import { all, one, run } from "../src/core/db.ts";
+import { mergeLibrary } from "../src/core/pull.ts";
 import { prepareRun } from "../src/agents/runner.ts";
 import { upsertSource } from "../src/sources/store.ts";
 import { listRules } from "../src/rules/store.ts";
@@ -244,6 +245,37 @@ describe("plugins", () => {
     await submitBlock(app, env, { userId: "owner", blockId: block.id, answers: { q1: 0 } });
     expect(store.get("points", "phrase:to-go")).toMatchObject({ lastCorrect: false, expression: { ...expression, material } });
     expect(snapshot(store).recentMaterials).toMatchObject([{ sourceId: id, ...material }]);
+  });
+
+  it("keeps a pulled single-line chat citation when opening and answering a bank quiz", async () => {
+    const app = await englishApp();
+    const peer = testApp();
+    createSpace(peer, { id: "english", name: "英语", kind: "learning" });
+    const chat = { spaceId: "english", kind: "chat" as const, uri: "chat:packing", title: "点餐讨论" };
+    const line = "请帮我把剩下的饭菜打包。";
+    const remote = upsertSource(peer, { ...chat, text: line }).id;
+    const local = upsertSource(app, { ...chat, text: [...Array.from({ length: 7 }, (_, i) => `讨论 ${i + 1}`), line].join("\n") }).id;
+    const material = { ref: `src:${remote}#L1-L1`, title: chat.title, summary: "请店员打包。" };
+    const expression = { zh: "打包", en: "to go" };
+    const remoteBank = pluginStore(peer, "english", "owner", "english");
+    const items = [{ ...quiz.items[0], material, expression }, ...quiz.items.slice(1), ...quiz.items.slice(1, 3)];
+    items.forEach((item, i) => remoteBank.put("bank", `q${i}`, { item, scene: "点餐", addedAt: new Date().toISOString() }));
+    peer.db.close();
+    mergeLibrary(app, peer.home);
+    const store = pluginStore(app, "english", "owner", "english");
+    expect(store.get("bank", "q0")).toMatchObject({ item: { material: { ref: `src:${local}#L8` } } });
+
+    const { manifest, env } = getPlugin("english");
+    savePluginSettings(app, "english", manifest.settings, "owner", "english", { materialSpaces: ["english"], quizSize: "6" });
+    const { conversationId, ctx } = await tutorTurn(app);
+    const opened = await callTool(ctx, "english_next", { session_id: conversationId, scene: "点餐" });
+    expect(opened.isError, opened.text).toBe(false);
+    const block = sessionView(app, env, conversationId, "owner").blocks[0];
+    const question = block.data.items.find((it: { type: string }) => it.type === "choice");
+    const canonical = { ...material, ref: `src:${local}#L8-L8` };
+    expect(question.material).toEqual(canonical);
+    await submitBlock(app, env, { userId: "owner", blockId: block.id, answers: { [question.id]: 1 } });
+    expect(store.get("points", "phrase:to-go")).toMatchObject({ expression: { ...expression, material: canonical } });
   });
 
   it("imports a disabled morning lesson rule, updates the same day's bank and opens the notified lesson", async () => {
