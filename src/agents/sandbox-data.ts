@@ -30,13 +30,13 @@ export function sandboxData(app: App, user: string) {
   if (spaces) {
     const readable = spacesWithCapability(app, user, "sources.view");
     const restricted = restrictedSourceFilter(app, user);
-    files = all<{ name: string }>(app.db, `select distinct coalesce(v.file, f.name) name
+    files = all<{ name: string; variant: string | null }>(app.db, `select distinct f.name, v.file variant
       from stored_file_refs f join sources on sources.id=f.target join spaces s on s.id=sources.space_id
       left join file_variants v on v.original=f.name and v.status='done'
       where f.origin in ('sources','lark_messages') and sources.deleted_at is null and ${restricted.sql}
       and sources.space_id in (select value from json_each(?))
       and (sources.kind != 'doc' or coalesce(json_extract(s.settings,'$.larkAccess'),0)=0)`,
-      ...restricted.params, JSON.stringify(spaces.filter(s => !readable || readable.includes(s)))).map(row => row.name);
+      ...restricted.params, JSON.stringify(spaces.filter(s => !readable || readable.includes(s)))).flatMap(row => row.variant ? [row.name, row.variant] : [row.name]);
   }
   return { data, spaces, repos, artifacts, files };
 }
