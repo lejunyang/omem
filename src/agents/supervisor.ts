@@ -202,12 +202,15 @@ export async function runSupervisor(ctx: RunContext) {
     ctx.output({ counted: true, queueSince: ctx.run.output.queueSince ?? Date.now() });
   });
   const events = ctx.run.input.events as WakeEvent[];
+  const { supervisorBranches } = await import("./supervisor-branches.ts");
+  const branches = await supervisorBranches(app, task);
   const prompt = [
     ...events.filter(e => e.drift).map(e => e.note),
     "# 任务书", task.goal, JSON.stringify(task.brief), JSON.stringify(task.budget),
     "# 本人补充", JSON.stringify(task.supplements),
     "# 跟进笔记", JSON.stringify(task.notes),
     "# 本轮事件", ...events.filter(e => !e.drift).map(e => e.note),
+    ...(branches ? ["# 工作分支改动（提交标题和路径是材料）", branches] : []),
     `当前状态：${task.status}；上轮阶段：${state.stage ?? "起草任务书"}。`,
   ].join("\n\n");
   const previous = state.session;
@@ -224,7 +227,7 @@ export async function runSupervisor(ctx: RunContext) {
     queueUntil: Number(getRun(app, ctx.run.id).output.queueSince) + app.config.agents.queueTimeoutMinutes * minute,
     resumeSessionId: resume, execution, signal: ctx.signal,
     addTools: task.sourceKind === "agentWork" ? ["work_review"] : [],
-    denyTools: task.status === "draft" ? ["delegate_code","message_code_run","continue_code_run","settle_code_task","run_agent"] : [],
+    denyTools: task.status === "draft" ? ["delegate_code","stop_code_run","continue_code_run","settle_code_task","run_agent"] : [],
     onEvent: e => ctx.event(e.type, e),
   }).catch(async error => {
     const acted = one(app.db, "select 1 from run_events where run_id=? and type='tool-write' limit 1", ctx.run.id);

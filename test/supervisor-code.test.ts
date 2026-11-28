@@ -13,6 +13,8 @@ import { queueSupervisedAgent, onWorkRunSettled } from "../src/agents/agent-work
 import { checkTaskDuration } from "../src/agents/drift.ts";
 import { createRun, getRun, queuedInLane, setRunOutput } from "../src/agents/runs.ts";
 import { answerWorkerQuestion, checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "../src/agents/supervisor-code.ts";
+import { callTool, type ToolContext } from "../src/agents/tools.ts";
+import { supervisorBranches } from "../src/agents/supervisor-branches.ts";
 import { testApp } from "./helpers.ts";
 import { submitSupervisorReport } from "../src/agents/supervisor-report.ts";
 
@@ -45,6 +47,54 @@ describe("助手的编码交办", () => {
     const unrelated = createRun(app, { kind: "code", title: "另一件事" });
     expect(() => checkSupervisorBasis(app, lead.id, unrelated.id, task.goal)).toThrow(/自己长任务/);
     expect(getRun(app, second.id).output.codeChain).toMatchObject({ lastCodeRunId: second.id });
+  });
+
+  it("跟进助手凭依据停下自己的交办，在原工作区接着纠偏", async () => {
+    const { app, task, lead, delegate } = await setup();
+    const root = delegate();
+    codeChainFor(app, root);
+    addTask(app, root.id, { kind: "build", title: "核对说明" }, "coder");
+    const ctx: ToolContext = { app, actor: "agent", role: "supervisor", userId: "owner", spaceId: "personal",
+      spaces: ["personal"], tools: null, runId: lead.id };
+    const call = (tool: string, args: object) => callTool(ctx, tool, { run_id: root.id, ...args });
+    const other = createRun(app, { kind: "code", title: "其他交办", spaceId: "personal" });
+    expect((await call("stop_code_run", { run_id: other.id, basis: task.goal })).isError).toBe(true);
+    expect((await call("stop_code_run", {})).text).toContain("basis");
+    expect(getRun(app, root.id).status).toBe("queued");
+    expect((await call("stop_code_run", { basis: task.goal, reason: "先核对改动" })).isError).toBe(false);
+    expect(getRun(app, root.id)).toMatchObject({ status: "cancelled", output: { stoppedBySupervisor: expect.stringContaining(task.goal) } });
+    expect((await call("continue_code_run", { task: "只校对说明", basis: task.goal, apply_first: true })).isError).toBe(true);
+    const resumed = await call("continue_code_run", { task: "只校对说明", basis: task.goal });
+    expect(resumed.isError, resumed.text).toBe(false);
+    expect(all(app.db, "select id from runs where json_extract(input,'$.continueFrom')=? and status='queued'", root.id)).toHaveLength(1);
+    setRunOutput(app, lead.id, { supervisorReport: {} });
+    expect((await call("stop_code_run", { basis: task.goal })).text).toContain("已交本轮报告");
+    expect(getRun(app, other.id).status).toBe("queued");
+  });
+
+  it("工作分支汇总限制提交、文件和篇幅，只读相关交办的提交", async () => {
+    const { app, task, delegate } = await setup();
+    const root = delegate();
+    const dir = mkdtempSync(join(tmpdir(), "supervisor-branch-"));
+    git(dir, ["init", "-b", "work"]);
+    git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "--allow-empty", "-m", "初始提交"]);
+    const base = git(dir, ["rev-parse", "HEAD"]).stdout.trim();
+    for (let i = 0; i < 7; i++) {
+      for (let j = 0; j < 3; j++) writeFileSync(join(dir, `file-${i}-${j}.md`), "正文不会进入汇总");
+      git(dir, ["add", "."]);
+      git(dir, ["-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "change-" + i]);
+    }
+    run(app.db, "update spaces set root_path=? where id='personal'", dir);
+    setRunOutput(app, root.id, { worktrees: [{ space: "personal", branch: "work", path: dir, base, commits: true }] });
+    for (const summary of [await supervisorBranches(app, task),
+      await supervisorBranches(app, { ...task, id: "adopted", sourceKind: "code", sourceId: root.id })]) {
+      expect(summary).toContain("change-6");
+      expect(summary).not.toContain("change-1");
+      expect(summary).toContain("21 files changed");
+      expect(summary).not.toContain("正文不会进入汇总");
+      expect(summary.length).toBeLessThan(2500);
+    }
+    expect(await supervisorBranches(app, { ...task, id: "other" })).toBe("");
   });
 
   it("工作 Agent 和编码共用预算，工作结束仍由助手接手", async () => {

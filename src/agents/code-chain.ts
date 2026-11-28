@@ -225,7 +225,7 @@ export function settleCodeChain(app: App, runId: string) {
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     } else {
       const next = setChainAwaitingUser(app, chain, true);
-      next.waitReason = r.output.stoppedByOwner ? "stopped" : r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : (r.output.reviewStop as CodeChain["waitReason"]) ?? (chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review");
+      next.waitReason = r.output.stoppedByOwner || r.output.stoppedBySupervisor ? "stopped" : r.status !== "done" ? "failed" : r.output.verdict === "no-changes" ? "no-changes" : (r.output.reviewStop as CodeChain["waitReason"]) ?? (chain.round >= maxCodeRounds(app, chain) ? "auto-limit" : "review");
       saveCodeChain(app, next, next.askRunId, ...next.rounds);
     }
     // The originating assistant can consume the result on its next turn. Do not wake a

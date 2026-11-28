@@ -91,7 +91,7 @@ import { addWatch, listWatches, removeWatch, syncWatches } from "../plugins/plat
 import { checkSlug, confirmPage, folderOf, folderOverview, listPages, movePages, pageContext, pageExists, readPage, writePage, appendLog } from "../wiki/store.ts";
 import { keepOwnerSection } from "./work-state.ts";
 import { addRunEvent, cancelRun, createRun, getRun, listRuns, runEvents, runUser, setRunOutput, stopRequested } from "./runs.ts";
-import { takeCodeSteering } from "./code-steer.ts";
+import { latestRound, takeCodeSteering } from "./code-steer.ts";
 import { abortBranchSyncForBlock, assertBranchSyncIdle, checkSyncBranch, normalizeBranchSync, queueBranchSync, syncBranchTool, takeBranchSyncSteering, type BranchSync } from "./code-round-sync.ts";
 import { afterToolCall, isBackgroundNotification, ownerNews, preSendCheck } from "./awareness.ts";
 import { homeOf, moveHome, replyAnchor } from "./home.ts";
@@ -5856,8 +5856,9 @@ def({
   handler: async (ctx, a) => {
     const by = ctx.role === "supervisor" ? "supervisor" : ctx.userId ?? OWNER;
     if (ctx.role === "supervisor") {
-      checkSupervisorBasis(ctx.app, ctx.runId, a.run_id, a.basis);
-      if (!["code", "review"].includes(getRun(ctx.app, a.run_id).kind)) throw new HttpError(400, "请指定编码交办或评审的运行 ID");
+      const target = supervisedRound(ctx, a.run_id, a.basis);
+      if (target.output.stoppedBySupervisor && target.status === "running") throw new HttpError(409, "编码轮正在停止，结束后再继续");
+      a = { ...a, run_id: target.id };
       if (a.apply_first) throw new HttpError(403, "应用交办涉及推送，请在报告中交给本人确认");
       if (a.task) a = { ...a, task: a.task + "\n\n跟进依据：" + a.basis };
     }
@@ -5916,7 +5917,7 @@ def({
     const task = a.task?.trim() || (a.onto_latest_target ? "把改动移到目标分支的最新提交上（只处理冲突，不改别的）" : "按 sync 同步工作分支（只处理冲突，不改别的）");
     const { codeChainFor, codeChainRounds, queueNextCodeRound } = await import("./code-chain.ts");
     const seed = getRun(ctx.app, a.run_id);
-    const rounds = seed.kind === "code" ? (await import("./review-fix.ts")).workRuns(ctx.app, seed.id).map(id => getRun(ctx.app, id))
+    const rounds = ctx.role === "supervisor" ? [seed] : seed.kind === "code" ? (await import("./review-fix.ts")).workRuns(ctx.app, seed.id).map(id => getRun(ctx.app, id))
       : codeChainRounds(ctx.app, seed.id).filter((r) => r.kind === "code");
     const last = rounds.at(-1);
     if (!last) throw new HttpError(400, "这不是一次交办编码任务");
@@ -5979,6 +5980,15 @@ function steerable(ctx: ToolContext, runId: string) {
   for (const id of [r.spaceId!, ...((r.input.repos as string[] | undefined) ?? [])]) codeSpace(ctx, id);
   if (runUser(ctx.app, r.id) !== (ctx.userId ?? OWNER)) throw new HttpError(403, "只能调整本人发起的编码交办");
   return r;
+}
+
+function supervisedRound(ctx: ToolContext, id: string, basis?: string) {
+  const requested = getRun(ctx.app, id);
+  if (!["code", "review"].includes(requested.kind)) throw new HttpError(400, "请指定编码交办或评审的运行 ID");
+  checkSupervisorBasis(ctx.app, ctx.runId, id, basis);
+  const target = latestRound(ctx.app, id);
+  if (target.id !== id) checkSupervisorBasis(ctx.app, ctx.runId, target.id, basis);
+  return steerable(ctx, target.id);
 }
 
 function followingRound(round: ReturnType<typeof getRun>) {
@@ -6075,11 +6085,13 @@ def({
   name: "stop_code_run",
   description: "停下一次编码交办正在进行的一轮（编码或评审）和排队中的评审，不再自动续轮；工作区和已经改的代码保留，之后可以 continue_code_run 接着做、apply_code_run 应用或丢弃。本人说“先停 / 别做了 / 这轮不要了”时用。",
   write: true,
-  schema: z.object({ run_id: z.string().describe("交办的任一运行 id"), reason: z.string().max(1000).optional().describe("本人为什么停") }),
+  schema: z.object({ run_id: z.string().describe("交办的任一运行 id"), reason: z.string().max(1000).optional().describe("为什么停下"),
+    basis: z.string().trim().min(1).max(3000).optional().describe("跟进纠偏时必填：任务书条目、本人补充原文或本长任务运行 ID") }),
   handler: async (ctx, a) => {
-    steerable(ctx, a.run_id);
+    const supervisor = ctx.role === "supervisor";
+    const target = supervisor ? supervisedRound(ctx, a.run_id, a.basis) : steerable(ctx, a.run_id);
     const { stopCodeWork } = await import("./code-steer.ts");
-    const r = stopCodeWork(ctx.app, a.run_id, a.reason ?? "");
+    const r = stopCodeWork(ctx.app, target.id, supervisor ? [a.reason, "跟进依据：" + a.basis].filter(Boolean).join("\n") : a.reason ?? "", supervisor ? "supervisor" : "owner");
     return r.stopped.length ? `已停下 ${r.stopped.join("、")}；工作区保留，不会自动续轮。` : `${r.runId} 没有在进行或排队的编码和评审，不用停。`;
   },
 });
