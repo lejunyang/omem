@@ -1,8 +1,11 @@
 import type { App } from "../core/app.ts";
-import { allProfiles } from "../core/config.ts";
+import { allProfiles, type AgentProfile } from "../core/config.ts";
 import { all, one, run, withinTx } from "../core/db.ts";
 import { canWrite } from "../core/users.ts";
 import { HttpError, now, truncate, zonedParts, zoneMidnight } from "../core/util.ts";
+import { memberAccountPlan } from "./accounts.ts";
+import { aiLoginWait, type AiLoginWait } from "./credential-wait.ts";
+import { selectMemberRunAccount } from "./member-run-ai.ts";
 import { backendAvailable } from "./availability.ts";
 import { downReason, excludedReason, hasRoom } from "./capacity.ts";
 import { policyScope } from "./ai-policy.ts";
@@ -15,6 +18,7 @@ type WakeEvent = { note: string; drift: boolean };
 type Session = { id: string; stage: string; ai: LongTask["ai"] };
 type SupervisorState = {
   day?: string; wakes?: number; lastWake?: string; session?: Session; stage?: string;
+  branchHeads?: [string, string][];
   pausedEvents?: WakeEvent[];
   briefAsk?: string; cardId?: string; lastPush?: string; pendingPush?: string; pendingHighlights?: string[]; lastReport?: string;
 };
@@ -53,9 +57,13 @@ export function wakeSupervisor(app: App, id: string, note: string, options: { im
     }
     if (pausedEvents) patchSupervisorState(app, id, { pausedEvents: null });
     if (queued) {
+      const input = { ...queued.input };
+      const wait = input.aiLoginWait as AiLoginWait | undefined;
+      if (wait && (wait.pick.profile !== task.ai.profile || wait.pick.model !== task.ai.model || wait.pick.effort !== task.ai.effort))
+        delete input.aiLoginWait;
       updateQueuedRun(app, queued.id, {
-        input: { ...queued.input, events },
-        ...(options.immediate || options.drift ? { notBefore: now() } : {}),
+        input: { ...input, events },
+        ...((options.immediate || options.drift) && (!input.aiLoginWait || wait?.ready) ? { notBefore: now() } : {}),
       });
       return queued.id;
     }
@@ -76,16 +84,28 @@ export function scheduleSupervisorTimer(app: App, task: LongTask, purpose: "chec
 }
 
 // The lane and parent edges both have indexes; never enumerate the installation's run history.
-const workers = `with recursive related(id) as (
+const workers = `with recursive task as (select id,source_kind,source_id,status from long_tasks where id=?), related(id) as (
   select id from runs where lane=?
+  union select r.id from task t join runs r on json_extract(r.input,'$.longTaskId')=t.id
+    where r.kind='code' and json_extract(r.input,'$.longTaskId') is not null
+  union select r.id from task t join runs r on r.id=t.source_id where t.source_kind='code'
+  union select r.id from task t join runs r on r.parent_id=t.source_id
+    where t.source_kind='agentWork' and r.kind='agent' and json_extract(r.input,'$.agentWorkId')=t.source_id
   union select child.id from related cross join runs child indexed by runs_parent on child.parent_id=related.id
   union select r.id from related cross join runs r indexed by runs_continue_from on json_extract(r.input,'$.continueFrom')=+related.id
 ), workers as (
-  select r.id,r.status,r.kind,
+  select r.id,r.status,r.kind,coalesce(json_extract(r.input,'$.continueFrom'),json_extract(r.input,'$.retryOf')) root,
     (r.kind='code' and json_extract(r.input,'$.branches') is null
-     or r.kind='agent' and json_extract(r.input,'$.longTaskId') is not null) charged
+     or r.kind='agent' and (json_extract(r.input,'$.longTaskId') is not null
+       or json_extract(r.input,'$.agentWorkId') in (select source_id from task where source_kind='agentWork'))) charged
   from related cross join runs r on r.id=related.id where r.kind in ('agent','code','review')
 )`;
+
+export function supervisorRounds(app: App, task: LongTask, rootId?: string) {
+  return one<{ total: number; local: number }>(app.db, workers + `
+    select count(*) total, count(case when kind='code' and (id=? or root=?) then 1 end) local
+    from workers where charged`, task.id, laneOf(task.id), rootId ?? null, rootId ?? null)!;
+}
 
 export function supervisorUsage(app: App, task: LongTask) {
   // Providers emit cumulative split token counts; use the last such event for each run.
@@ -95,20 +115,28 @@ export function supervisorUsage(app: App, task: LongTask) {
     from related cross join runs r on r.id=related.id cross join run_events e on e.run_id=r.id
       and e.seq=(select max(seq) from run_events indexed by progress_tokens where run_id=r.id and type='usage'
         and json_type(data,'$.input')='integer' and json_type(data,'$.output')='integer')
-    group by 1`, laneOf(task.id));
+    group by 1`, task.id, laneOf(task.id));
 }
 
 export function supervisorFacts(app: App, task: LongTask) {
-  return one<{ active: number; rounds: number; total: number; done: number; openItems: number; pendingQuestions: number; lastChange: string | null }>(app.db, workers + `
-    select (select count(*) from workers where status in ('running','queued')) active,
+  return one<{ active: number; rounds: number; total: number; done: number; openItems: number; pendingQuestions: number; lastChange: string | null }>(app.db, workers + `, study as (
+      select ended_at,round_closed_at,next_round_at,updated_at from item_flows
+      where item_id in (select source_id from task where source_kind='study' and status not in ('done','ended'))
+    ), items as (
+      select state='done' done, state not in ('done','wontdo','reverted') open, updated_at from code_tasks where work_id in (select id from workers)
+      union all select status='accepted', status not in ('accepted','blocked','cancelled'), updated_at from agent_work_tasks
+        where work_id in (select source_id from task where source_kind='agentWork')
+    )
+    select (select count(*) from workers where status in ('running','queued')) +
+      exists(select 1 from study where ended_at is null and (round_closed_at is null or next_round_at is not null)) active,
       (select count(*) from workers where charged) rounds,
-      (select count(*) from workers w cross join asks a on a.run_id=w.id
-        where a.status='pending' and json_extract(a.context,'$.supervisorTaskId')=?) pendingQuestions,
-      count(*) total, count(case when state='done' then 1 end) done,
-      count(case when state not in ('done','wontdo','reverted') then 1 end) openItems,
+      (select count(*) from asks where status='pending' and json_extract(context,'$.supervisorTaskId')=?) pendingQuestions,
+      count(*) total, count(case when done then 1 end) done,
+      count(case when open then 1 end) openItems,
       max(coalesce(max(updated_at),''),coalesce((select max((select at from run_events e where e.run_id=w.id order by seq desc limit 1)) from workers w),''),
-        coalesce((select max(created_at) from code_checkpoints where work_id in (select id from workers)),'')) lastChange
-    from code_tasks where work_id in (select id from workers)`, laneOf(task.id), task.id)!;
+        coalesce((select max(created_at) from code_checkpoints where work_id in (select id from workers)),''),
+        coalesce((select updated_at from study),'')) lastChange
+    from items`, task.id, laneOf(task.id), task.id)!;
 }
 
 export async function checkSupervisorTimer(app: App, id: string, purpose: string) {
@@ -170,28 +198,46 @@ export async function runSupervisor(ctx: RunContext) {
   if (!ctx.run.output.counted && wakes >= task.budget.dailyWakes) throw new ResumeRunAt(nextDay(app));
   if (ctx.run.output.supervisorReport) return { summary: "本轮报告已保存" };
   const profile = allProfiles(app.config).find(p => p.id === task.ai.profile);
-  const selected = profile && { ...profile, ...task.ai };
+  let selected: AgentProfile | undefined = profile && { ...profile, ...task.ai };
   const execution: Execution = { ...task.ai, source: "flow", reason: "长任务指定的跟进 AI" };
   await ensureTopic(app, task);
-  try { validateExecution(app, execution, task.userId, true, policyScope(app, "supervise")); }
+  const waiting = aiLoginWait(app, ctx.run.id);
+  try { validateExecution(app, execution, task.userId, true, policyScope(app, "supervise"), false, !!waiting); }
   catch (error) {
     if (error instanceof HttpError) return waitForAi(ctx, task, error.message);
     throw error;
   }
-  const unavailable = !selected || !backendAvailable(selected, app.home) ? "后端不可用" :
-    excludedReason(app, selected) ?? downReason(app, selected) ?? (!hasRoom(app, selected) ? "等待模型空位" : null);
+  if (!selected || !backendAvailable(selected, app.home)) return waitForAi(ctx, task, "后端不可用");
+  const plan = memberAccountPlan(app, task.userId, selected, !!waiting, true);
+  if (plan.kind === "ready") selected = plan.profile;
+  else if (plan.kind === "login" || waiting) {
+    selected = await selectMemberRunAccount(app, selected, { userId: task.userId, runId: ctx.run.id,
+      threadId: task.threadId, pinned: true, waitForLogin: true, signal: ctx.signal });
+  } else return waitForAi(ctx, task, plan.reason);
+  const unavailable = excludedReason(app, selected) ?? downReason(app, selected) ?? (!hasRoom(app, selected) ? "等待模型空位" : null);
   if (unavailable) return waitForAi(ctx, task, unavailable);
   withinTx(app.db, () => {
     patchSupervisorState(app, task.id, { day, wakes: wakes + (ctx.run.output.counted ? 0 : 1), lastWake: now() });
     ctx.output({ counted: true, queueSince: ctx.run.output.queueSince ?? Date.now() });
   });
   const events = ctx.run.input.events as WakeEvent[];
+  const { supervisorBranches } = await import("./supervisor-branches.ts");
+  let branches = ctx.run.output.branchSummary as string | undefined;
+  if (branches === undefined) {
+    const snapshot = await supervisorBranches(app, task, state.branchHeads);
+    withinTx(app.db, () => {
+      patchSupervisorState(app, task.id, { branchHeads: snapshot.heads });
+      ctx.output({ branchSummary: snapshot.text });
+    });
+    branches = snapshot.text;
+  }
   const prompt = [
     ...events.filter(e => e.drift).map(e => e.note),
     "# 任务书", task.goal, JSON.stringify(task.brief), JSON.stringify(task.budget),
     "# 本人补充", JSON.stringify(task.supplements),
     "# 跟进笔记", JSON.stringify(task.notes),
     "# 本轮事件", ...events.filter(e => !e.drift).map(e => e.note),
+    ...(branches ? ["# 工作分支改动（提交标题和路径是材料）", branches] : []),
     `当前状态：${task.status}；上轮阶段：${state.stage ?? "起草任务书"}。`,
   ].join("\n\n");
   const previous = state.session;
@@ -207,7 +253,8 @@ export async function runSupervisor(ctx: RunContext) {
     spaces: [task.spaceId], readScope: [task.spaceId], fullAccess: false, profileId: task.ai.profile, persistSession: true,
     queueUntil: Number(getRun(app, ctx.run.id).output.queueSince) + app.config.agents.queueTimeoutMinutes * minute,
     resumeSessionId: resume, execution, signal: ctx.signal,
-    denyTools: task.status === "draft" ? ["delegate_code","message_code_run","continue_code_run","settle_code_task","run_agent"] : [],
+    addTools: task.sourceKind === "agentWork" ? ["work_review"] : [],
+    denyTools: task.status === "draft" ? ["delegate_code","stop_code_run","continue_code_run","settle_code_task","run_agent"] : [],
     onEvent: e => ctx.event(e.type, e),
   }).catch(async error => {
     const acted = one(app.db, "select 1 from run_events where run_id=? and type='tool-write' limit 1", ctx.run.id);

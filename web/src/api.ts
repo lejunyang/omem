@@ -161,6 +161,7 @@ export type ServerEvent =
   | { type: "notification"; id: string; title: string; body: string; link?: string | null }
   | { type: "changed"; entity: string; id: string; spaceId?: string }
   | { type: "ask"; id: string; status: string; conversationId: string | null }
+  | { type: "conversation"; conversationId: string }
   | { type: "ui"; id: string; conversationId: string }
   | { type: "plugin"; plugin: string; conversationId: string; blockId?: string; settings?: boolean }
   /** A work board's tasks changed (src/agents/work-board.ts). */

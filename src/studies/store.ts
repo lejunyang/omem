@@ -150,7 +150,7 @@ export function reviseFinding(app: App, input: ReviseStudyFinding) {
 }
 
 /** A flow that proposes directions or runs trials keeps a ledger. */
-export const isStudy = (f: ItemFlow) => f.definition.stages.some((d) => d.tools?.includes("propose_directions") || typeof d.by === "object" && "object" in d.by && ["trials", "fixes"].includes(d.by.object));
+export const isStudy = (f: Pick<ItemFlow, "definition">) => f.definition.stages.some((d) => d.tools?.includes("propose_directions") || typeof d.by === "object" && "object" in d.by && ["trials", "fixes"].includes(d.by.object));
 /** Findings keep their creation round; merges and later owner decisions do not create another. */
 export function idleRounds(app: App, item: string, includeCurrent = false, at = now()) {
   const f = itemFlow(app, item);

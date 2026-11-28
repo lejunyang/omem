@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scheduleIngest } from "../agents/jobs.ts";
-import { registerThreadSender, retryChannelReply } from "../agents/inbox.ts";
+import { isFollowOptOut, registerThreadSender, retryChannelReply } from "../agents/inbox.ts";
 import { getRun, setRunOutput } from "../agents/runs.ts";
 import type { App } from "../core/app.ts";
 import { all, one, run } from "../core/db.ts";
@@ -560,6 +560,15 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
     // so it quotes only this work's own latest message there, or nothing — never whatever the chat
     // said last (a meeting's conclusion, another task's request).
     const quote = typeof meta.larkReplyTo === "string" ? meta.larkReplyTo : topic ? thread.settings.lastMessageId : replyAnchor(app, runId, thread.id) ?? undefined;
+    if (typeof meta.autoFollowId === "string") {
+      const { recordInteraction } = await import("./lark-send.ts");
+      const card = buildCard({ blocks: [{ markdown }, { buttons: [{ text: "不用跟进", value: "detach" }] }] });
+      const to = quote ? { replyTo: quote, inThread: !!topic } : { chatId };
+      const result = await sendLark({ ...to, conversationId: thread.id, purpose: "progress", uuid: `follow-${omemId}` }, { card });
+      recordInteraction(app, { messageId: result.messageId, chatId, conversationId: thread.id, runId: null,
+        purpose: "supervisor", allowed: [], payload: { longTaskId: meta.autoFollowId } });
+      return sent(result.messageId);
+    }
     // First message of a multi-agent work topic: open the topic from the request message.
     if (!topic && typeof (meta as { openTopicFrom?: unknown }).openTopicFrom === "string") {
       const opened = await sendLark({ replyTo: String(meta.openTopicFrom), inThread: true, runId: cite.runId, conversationId: thread.id }, { markdown, note });
@@ -793,15 +802,24 @@ export async function setupLarkBot(app: App, ref: BotRef, client: any) {
 
   // The initiator can address the supervisor in its work topic without mentioning the bot.
   const supervisorTopic = (m: Inbound) => {
-    if (m.fromApp || m.type !== "text" || !m.topicId) return;
+    if (m.fromApp || m.type !== "text") return;
     const userId = who(m);
     if (!userId) return;
+    const text = (m.mentions.length ? spoken(m, true) : m.text).trim();
+    if (isFollowOptOut(text)) {
+      const origin = one<{ id: string }>(app.db, `select c.id from conversations c
+        where c.channel=? and c.external_id=? and c.user_id=? and c.status='active'
+          and exists (select 1 from conversations child join long_tasks t on t.thread_id=child.id
+            where child.parent_id=c.id and t.source_kind is not null and t.status in ('active','paused'))
+        order by c.updated_at desc limit 1`, channel, m.topicId ? `${m.chatId}#${m.topicId}` : m.chatId, userId);
+      if (origin) return origin.id;
+    }
+    if (!m.topicId) return;
     const topic = one<{ id: string; status: string }>(app.db, `select c.id, t.status from conversations c
       join long_tasks t on t.thread_id=c.id
       where c.channel=? and c.external_id=? and c.status='active' and t.user_id=?
       order by c.updated_at desc limit 1`, channel, `${m.chatId}#${m.topicId}`, userId);
     if (!topic) return;
-    const text = (m.mentions.length ? spoken(m, true) : m.text).trim();
     if (text.startsWith("/")) {
       const command = parseCommand(text);
       if (command?.name === "跟进") return topic.id;

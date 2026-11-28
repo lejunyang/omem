@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api, authUrl, del, get, onServerEvent, onServerResync, post, type Ask as AskItem, type UiViewItem } from "../api";
+import { api, authUrl, del, get, onServerEvent, onServerResync, patch, post, type Ask as AskItem, type UiViewItem } from "../api";
 import AskCard from "../components/AskCard.vue";
 import UiView from "../components/UiView.vue";
 import Icon from "../components/Icon.vue";
@@ -15,10 +15,10 @@ import VoiceChat from "../components/VoiceChat.vue";
 import { recordSpeech, voiceStatus } from "../lib/voice";
 import { currentSpace, relTime, state, toast } from "../store";
 
-type Conversation = { id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
+type Conversation = { user_id: string; id: string; space_id: string; channel: string; title: string; updated_at: string; status?: string; external_id?: string | null; summary?: string };
 /** A file pasted, dropped or picked into the box (src/agents/attachments.ts); the text refers to it as [label]. */
 type Attachment = { name: string; filename: string; kind: "image" | "file"; label: string; size: number };
-type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; meta?: { attachments?: Attachment[]; runId?: unknown } };
+type Message = { id: string; role: "user" | "assistant"; text: string; runId: string | null; createdAt: string; meta?: { autoFollowId?: string; attachments?: Attachment[]; runId?: unknown } };
 
 const route = useRoute();
 const router = useRouter();
@@ -26,6 +26,20 @@ const conversations = ref<Conversation[]>([]);
 const messages = ref<Message[]>([]);
 const conversationSpace = ref<string | null>(null);
 const asks = ref<AskItem[]>([]);
+const stoppingFollow = ref<string | null>(null);
+const conversationOwner = ref<string | null>(null);
+async function detachFollow(taskId: string) {
+  stoppingFollow.value = taskId;
+  try {
+    await patch(`/api/long-tasks/${encodeURIComponent(taskId)}`, { action: "detach" });
+    await loadConversation();
+    toast("已退出自动跟进", "ok");
+  } catch (error) {
+    toast((error as Error).message, "error");
+  } finally {
+    stoppingFollow.value = null;
+  }
+}
 let asksSeq = 0, listSeq = 0, convSeq = 0;
 async function loadAsks() {
   const seq = ++asksSeq, target = id.value;
@@ -77,6 +91,7 @@ async function loadConversation() {
     // A reply posted later (after an authorization or a delegated result) carries its run only in meta:
     // without it that run would look unanswered and its output would show a second time below.
     messages.value = r.messages.map((m) => (m.runId || typeof m.meta?.runId !== "string" ? m : { ...m, runId: m.meta.runId }));
+    conversationOwner.value = "conversation" in r ? r.conversation?.user_id ?? null : null;
     conversationSpace.value = "conversation" in r ? r.conversation?.space_id ?? null : null;
   } finally {
     if (seq === convSeq) convLoading.value = false;
@@ -147,6 +162,7 @@ watch(id, () => {
   showList.value = false;
 });
 const off = onServerEvent((e) => {
+  if (e.type === "conversation" && e.conversationId === id.value) void loadConversation();
   if (e.type === "ask" && e.conversationId === id.value) void loadAsks();
   if (e.type === "ui" && e.conversationId === id.value) void loadViews();
   if (e.type === "run" && (e.status === "done" || e.status === "failed") && messages.value.some((m) => m.runId === e.runId)) {
@@ -339,6 +355,7 @@ watch(text, () => void nextTick(autosize), { flush: "post" });
             <div v-else class="msg bot">
               <RunActivity v-if="m.runId" :run-id="m.runId" :show-text="false" />
               <Markdown :source="m.text" />
+              <button v-if="conversationOwner === state.me?.id && m.meta?.autoFollowId" class="btn ghost sm" :disabled="!!stoppingFollow" @click="detachFollow(m.meta.autoFollowId)">不用跟进</button>
               <UiView v-for="v in viewsFor(m.runId)" :key="v.id" :components="v.components" :title="v.title" :space="conversationSpace ?? undefined" />
               <AskCard v-for="a in formsFor(m.runId)" :key="a.id" :ask="a" @answered="loadAsks" />
               <AskCard v-for="a in suggestionsFor(m.runId)" :key="a.id" :ask="a" compact @answered="loadAsks" />

@@ -6,6 +6,7 @@ import { automaticNames, backendProgram, commonBackendAliases } from "./backend-
 import { cachedMachineLoginState } from "./machine-login.ts";
 import { OWNER } from "../core/users.ts";
 import { isAiMember, memberAccountPlan } from "./accounts.ts";
+import { memberLoginGroupPick } from "./execution.ts";
 import { groupPick } from "./ai-policy.ts";
 import { backendAvailable } from "./availability.ts";
 import { acpCatalog, installHint } from "./catalog.ts";
@@ -82,7 +83,7 @@ export function validateCommandNames(config: App["config"], home: string, comman
   for (const p of profiles) for (const name of p.aliases ?? []) register(name, "后端 " + p.id, true);
 }
 
-export function parseAiSpec(app: App, text: string, { userId = OWNER }: { userId?: string } = {}): AiSpec {
+export function parseAiSpec(app: App, text: string, { userId = OWNER, waitForLogin = false }: { userId?: string; waitForLogin?: boolean } = {}): AiSpec {
   const body = text.trim().replace(/^\//, "");
   const lower = body.toLowerCase();
   const result: AiSpec = { rest: text.trim(), notes: [] };
@@ -118,8 +119,8 @@ export function parseAiSpec(app: App, text: string, { userId = OWNER }: { userId
   if (group) {
     result.group = group.id;
     result.rest = tail.trim();
-    const usable = userId === OWNER ? undefined : (p: AgentProfile) => memberAccountPlan(app, userId, p).kind !== "blocked";
-    const pick = groupPick(app, group.id, undefined, false, usable);
+    const usable = userId === OWNER ? undefined : (p: AgentProfile) => memberAccountPlan(app, userId, p, false, waitForLogin).kind !== "blocked";
+    const pick = waitForLogin && userId !== OWNER ? memberLoginGroupPick(app, group.id, userId) : groupPick(app, group.id, undefined, false, usable);
     if (!pick) return { ...result, unknown: "AI 组「" + group.name + "」当前没有可用后端。" };
     result.ai = pick;
     return result;
@@ -150,7 +151,7 @@ export function parseAiSpec(app: App, text: string, { userId = OWNER }: { userId
     const entry = acpCatalog.find(e => e.id === (commonBackendAliases[name] ?? backendProgram(candidates[0])));
     return { ...result, unknown: [name + " 没装或现在不可用。", entry && installHint(entry)].filter(Boolean).join(" ") };
   }
-  const accessible = available.filter(p => userId === OWNER || memberAccountPlan(app, userId, p).kind !== "blocked");
+  const accessible = available.filter(p => userId === OWNER || memberAccountPlan(app, userId, p, false, waitForLogin).kind !== "blocked");
   if (!accessible.length) return { ...result, unknown: "你的账号不能使用 " + name + "。" };
   const configured = new Set(app.config.agents.profiles.map(p => p.id));
   const accountRank = (p: AgentProfile) => p.keyRef || p.peer ? 2 : login(p) === "logged-in" ? 0 : 1;

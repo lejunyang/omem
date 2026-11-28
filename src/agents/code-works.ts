@@ -163,7 +163,7 @@ function roundsOf(app: App, roots: string[]): RoundRow[] {
   const marks = roots.map(() => "?").join(",");
   return all<RoundRow>(app.db, `select id, coalesce(json_extract(input, '$.continueFrom'), id) root, status, title, json_extract(input, '$.round') round,
       json_extract(output, '$.verdict') verdict, json_extract(output, '$.appliedAt') applied_at, json_extract(output, '$.discardedAt') discarded_at,
-      json_extract(output, '$.stoppedByOwner') stopped, json_extract(output, '$.reviewStage') stage, json_extract(output, '$.designWait.by') design_by,
+      coalesce(json_extract(output, '$.stoppedByOwner'),json_extract(output, '$.stoppedBySupervisor')) stopped, json_extract(output, '$.reviewStage') stage, json_extract(output, '$.designWait.by') design_by,
       json_array_length(json_extract(output, '$.reviewPlan.checks')) plan_checks, created_at, finished_at
     from runs where kind = 'code' and (id in (${marks}) or json_extract(input, '$.continueFrom') in (${marks})) order by created_at`, ...roots, ...roots);
 }

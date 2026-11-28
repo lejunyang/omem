@@ -2576,6 +2576,15 @@ export const migrations: readonly string[] = [
    create index if not exists long_tasks_updated on long_tasks(updated_at desc);`,
   `create index if not exists supervised_code_rounds on runs(json_extract(input,'$.longTaskId'))
      where kind='code' and json_extract(input,'$.longTaskId') is not null;`,
+  `alter table long_tasks add column source_kind text;
+   alter table long_tasks add column source_id text;
+   alter table long_tasks add column source_generation integer not null default 1;
+   create unique index long_tasks_source on long_tasks(source_kind,source_id,source_generation) where source_kind is not null;
+   create index conversation_children on conversations(parent_id) where parent_id is not null;
+   create index supervised_pending_asks on asks(json_extract(context,'$.supervisorTaskId'))
+     where status='pending' and json_extract(context,'$.supervisorTaskId') is not null;
+   create index item_flows_unfinished on item_flows(item_id) where ended_at is null;
+   create index if not exists runs_done_code_verdict on runs(json_extract(output,'$.verdict')) where kind='code' and status='done';`,
 ];
 
 export type Db = DatabaseSync;

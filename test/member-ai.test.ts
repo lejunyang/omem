@@ -8,10 +8,13 @@ import { markOutOfQuota } from "../src/agents/capacity.ts";
 import { aiLoginWait, backendLoginReady } from "../src/agents/credential-wait.ts";
 import { registerCredential, stopCredentialLogins } from "../src/agents/credentials.ts";
 import { receive, registerThreadSender } from "../src/agents/inbox.ts";
+import * as dispatch from "../src/agents/dispatch.ts";
+import { startLongTask, changeLongTask } from "../src/agents/long-tasks.ts";
+import { parseAiSpec } from "../src/agents/ai-spec.ts";
 import { memberAi } from "../src/agents/member-ai.ts";
 import { noteRateLimit } from "../src/agents/quota.ts";
 import { runRole } from "../src/agents/runner.ts";
-import { getRun, runEvents, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
+import { getRun, runEvents, queuedInLane, setRunOutput, startWorker, stopWorker, waitForRun } from "../src/agents/runs.ts";
 import { setSandboxSupportForTests } from "../src/agents/sandbox.ts";
 import { releaseAll } from "../src/agents/sessions.ts";
 import { getThread } from "../src/agents/threads.ts";
@@ -21,8 +24,8 @@ import { closeVault } from "../src/auth/vault.ts";
 import { setKey } from "../src/core/ai-keys.ts";
 import { allProfiles } from "../src/core/config.ts";
 import { setDecisionFetchForTests } from "../src/core/decision.ts";
-import { run } from "../src/core/db.ts";
-import { createUser, linkIdentity } from "../src/core/users.ts";
+import { all, run } from "../src/core/db.ts";
+import { createUser, linkIdentity, personalSpaceId } from "../src/core/users.ts";
 import { registerAgentAccountRoutes } from "../src/server/agent-accounts-http.ts";
 import "../src/agents/jobs.ts";
 import { testApp } from "./helpers.ts";
@@ -152,6 +155,82 @@ describe.skipIf(process.platform !== "linux")("成员的 AI 选择和飞书登�
       const plan = memberAccountPlan(app, "ann", p);
       expect(plan.kind === "ready" && selectedMemberAccount(plan.profile)?.holder).toBe("ann");
     } finally { delete app.config.agents.accounts.codex; }
+  });
+
+  it("成员的长任务等待指定后端登录，保留工作话题和唤醒次数", async () => {
+    const userId = "web-member";
+    createUser(app, { id: userId, name: "网页成员" });
+    app.config.agents.accounts.codex = "own";
+    const backend = vi.spyOn(dispatch, "runBackend").mockImplementation(async (host, profile, request) => {
+      expect(profile.id).toBe("codex");
+      expect(request.strictSelection?.model).toBe(true);
+      expect(selectedMemberAccount(profile)?.holder).toBe(userId);
+      setRunOutput(host, request.runId!, { supervisorReport: { stage: "起草" } });
+      return { agent: "codex", text: "已起草", stopReason: "end_turn" };
+    });
+    try {
+      const group = app.config.agents.groups.find(g => g.id === "strong")!;
+      const items = group.items;
+      group.items = [{ profile: "codex" }];
+      try {
+        markOutOfQuota(app, allProfiles(app.config).find(p => p.id === "codex")!, "usage limit");
+        expect(parseAiSpec(app, "/强 核对说明", { userId, waitForLogin: true }).ai?.profile).toBe("codex");
+      } finally { group.items = items; }
+      run(app.db, "delete from kv where key='agent_quota_exhausted'");
+      const spec = parseAiSpec(app, "codex 核对说明", { userId, waitForLogin: true });
+      expect(spec.ai?.profile).toBe("codex");
+      const task = startLongTask(app, { userId, spaceId: personalSpaceId(userId), goal: spec.rest, ai: spec.ai });
+      const id = queuedInLane(app, "supervisor:" + task.id, "supervise")!.id;
+      await vi.waitFor(() => {
+        expect(aiLoginWait(app, id)).toMatchObject({ userId, backend: "codex", threadId: task.threadId });
+        expect(getRun(app, id).status).toBe("queued");
+      }, { timeout: 8000 });
+      await changeLongTask(app, task.id, { action: "supplement", text: "保留原示例" });
+      expect(getRun(app, id).input.events).toContainEqual({ drift: false, note: "保留原示例" });
+      expect(all(app.db, "select text from messages where conversation_id=? and text like '%我的 AI 账号%'", task.threadId)).toHaveLength(1);
+      backendLoginReady(app, "bob", "codex");
+      backendLoginReady(app, userId, "alternate");
+      expect(aiLoginWait(app, id)?.ready).toBeUndefined();
+      expect(getRun(app, id).output.counted).toBeUndefined();
+      expect(backend).not.toHaveBeenCalled();
+      // The owner's account still has no quota; the resumed round checks the member's capacity.
+      markOutOfQuota(app, allProfiles(app.config).find(p => p.id === "codex")!, "usage limit");
+      ensureAccountHome(app, userId);
+      run(app.db, "insert into kv(key,value) values(?,?)", "agent_account:" + userId + ":codex", '{"state":"logged-in"}');
+      backendLoginReady(app, userId, "codex");
+      await answer(id);
+      expect(backend).toHaveBeenCalledTimes(1);
+      expect(getRun(app, id).output.counted).toBe(true);
+    } finally {
+      delete app.config.agents.accounts.codex;
+      backend.mockRestore();
+    }
+  }, 30_000);
+
+  it("等待登录时换跟进 AI，原登录完成也不会切回去", async () => {
+    const userId = "switch-member";
+    createUser(app, { id: userId, name: "网页成员" });
+    app.config.agents.accounts.codex = "own";
+    const backend = vi.spyOn(dispatch, "runBackend").mockImplementation(async (host, profile, request) => {
+      setRunOutput(host, request.runId!, { supervisorReport: { stage: "起草" } });
+      return { agent: profile.id, text: "已起草", stopReason: "end_turn" };
+    });
+    try {
+      const task = startLongTask(app, { userId, spaceId: personalSpaceId(userId), goal: "核对说明", ai: { profile: "codex" } });
+      const id = queuedInLane(app, "supervisor:" + task.id, "supervise")!.id;
+      await vi.waitFor(() => {
+        expect(aiLoginWait(app, id)?.backend).toBe("codex");
+        expect(getRun(app, id).status).toBe("queued");
+      }, { timeout: 8000 });
+      await changeLongTask(app, task.id, { action: "ai", ai: { profile: "alternate" } });
+      expect(aiLoginWait(app, id)).toBeUndefined();
+      backendLoginReady(app, userId, "codex");
+      await answer(id);
+      expect(backend.mock.calls.map(call => call[1].id)).toEqual(["alternate"]);
+    } finally {
+      delete app.config.agents.accounts.codex;
+      backend.mockRestore();
+    }
   });
 
   it("话题内提示等待，设备码仅显示给发起成员，授权后原运行使用成员账号并回原话题", async () => {

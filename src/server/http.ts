@@ -105,7 +105,8 @@ import { runWrites, visibleRunEvent, writeVisible } from "../agents/run-writes.t
 import { createCard, dueCards, listCards, reviewCard, studyStats, updateCard } from "../learn/cards.ts";
 import { refExcerpt } from "../items/evidence.ts";
 import { getItem, ITEM_KINDS, itemEvents, listItems, upsertItem } from "../items/store.ts";
-import { addMaterials, itemsOfRun, linkRunToItem, materialViews, removeMaterials, workItem, type MaterialView } from "../items/materials.ts";
+import { queueCodeWork } from "../agents/code-delegate.ts";
+import { addMaterials, itemsOfRun, materialViews, removeMaterials, workItem, type MaterialView } from "../items/materials.ts";
 import { getMemory, listMemories, memoryHistory, memoryTags, remember, retract, supersede, updateMemoryText } from "../memory/store.ts";
 import { memoryQualityStats, recentRejections } from "../memory/quality.ts";
 import { ensureFolder, listFolders, moveMemories, normalizeFolder, relocateFolder, removeFolder, unfiledCount } from "../memory/folders.ts";
@@ -545,7 +546,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
       if (e.type === "run" || e.type === "run-event") return readable(e.runId);
       if (e.type === "notification") return can(app, userId, "notifications.view") && one<{ user_id: string }>(app.db, "select user_id from notifications where id = ?", e.id)?.user_id === userId;
       if (e.type === "ask") return one<{ user_id: string }>(app.db, "select user_id from asks where id = ?", e.id)?.user_id === userId;
-      if (e.type === "plugin") return one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", e.conversationId)?.user_id === userId;
+      if (e.type === "plugin" || e.type === "conversation") return one<{ user_id: string }>(app.db, "select user_id from conversations where id = ?", e.conversationId)?.user_id === userId;
       if (e.type === "changed") {
         const space = e.spaceId ?? (e.entity === "space" ? e.id : null);
         return !space || (accessibleSpaces(app, userId) ?? []).includes(space);
@@ -2357,8 +2358,7 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     if (b.itemId && getItem(app, b.itemId).userId !== userId) throw new HttpError(403, "不能使用他人的事项");
     // Another repository than the item's code: the item is background only.
     const scoped = workItem(app, b.itemId, repos);
-    const r = createRun(app, { kind: "code", spaceId: businessOf(app, s.id), title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, ...scoped, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(!b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { taskMode: true, ...(b.maxRounds ? { maxRounds: b.maxRounds } : {}) } : {}) }, userId });
-    if (scoped.itemId) linkRunToItem(app, r, scoped.itemId, userId);
+    const r = queueCodeWork(app, { spaceId: businessOf(app, s.id), title: b.task.split("\n")[0].slice(0, 80), input: { task: b.task, checkCommand: b.checkCommand, repos, reviewTier: b.reviewTier || undefined, fromBranches, branchNames, ...scoped, ...(b.sync ? { sync: b.sync, syncOnly: !!b.syncOnly } : {}), ...(b.maxRounds && !b.syncOnly && app.config.agents.autoAdvance.taskLoop ? { maxRounds: b.maxRounds } : {}) }, userId });
     return r;
   });
 

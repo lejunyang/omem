@@ -41,6 +41,7 @@ export const stageFields = z.object({
   tools: z.array(z.string().refine((n) => TOOL_GROUPS.find((g) => g.id === "study")!.tools.includes(n), "阶段 tools 只允许 study 分组里的工具")).max(6).optional(),
   done: z.union([text(300), z.object({ signal: z.union([z.enum(["git.pushed", "git.merged"]), providerId]), with: providerParams }).strict(), z.object({ object: objectName, status: z.union([text(100), z.array(text(100)).min(1, "至少写一个状态")]) }).strict()], { error: "完成规则只能是 confirm、Git 信号、对象状态或一句话；其他规则在后续阶段实现" }).optional(),
   gate: z.enum(["auto", "confirm"], { error: "关卡只能是 auto 或 confirm；指定 person 在后续阶段实现" }).default("auto"), fixed: z.boolean().default(false),
+  confirm: z.literal("supervisor").optional(),
   ai: z.union([tierSchema, aiChoice]).optional(), at: clock.optional(),
   window: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d$/, "时间段必须写成 HH:mm-HH:mm").refine((s) => s.slice(0, 5) !== s.slice(6), "时间段的开始和结束不能相同").optional(),
   budget: budgetSchema.optional(), escalate: z.object({ to: tierSchema, max: z.number().int().min(0).max(100) }).strict().optional(),
@@ -67,6 +68,7 @@ export const flowSchema = z.object({
     for (const n of s.needs ?? []) if (!seen.has(n)) ctx.addIssue({ code: "custom", path: ["stages", i, "needs"], message: `前提 ${n} 必须是列表中更早的阶段` });
     seen.add(s.id);
     const isRun = typeof s.by === "object" && ("run" in s.by || "object" in s.by && ["trials", "fixes"].includes(s.by.object));
+    if (s.confirm && !(s.done === "confirm" && typeof s.by === "object" && "run" in s.by)) ctx.addIssue({ code: "custom", path: ["stages", i, "confirm"], message: "confirm: supervisor 用于运行结果的完成确认（by.run、done: confirm）" });
     if (s.tools?.includes("study_push")) ctx.addIssue({ code: "custom", path: ["stages", i, "tools"], message: "study_push 只能由宿主按范围临时授予" });
     if (s.tools?.length && !isRun) ctx.addIssue({ code: "custom", path: ["stages", i, "tools"], message: "附加工具只适用于运行或 trials 阶段" });
     if (s.ai && !isRun) ctx.addIssue({ code: "custom", path: ["stages", i, "ai"], message: "指定 AI 只适用于由运行承担的阶段" });

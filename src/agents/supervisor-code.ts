@@ -5,17 +5,22 @@ import { answerAsk, createAsk, getAsk } from "./asks.ts";
 import { getLongTask, longTaskInThread, type LongTask } from "./long-tasks.ts";
 import { fieldsText } from "./ui-blocks.ts";
 import { createRun, runUser } from "./runs.ts";
-import { wakeSupervisor } from "./supervisor.ts";
+import { followCodePlan } from "./code-auto-follow.ts";
+import { autoFollowFor } from "./auto-follow.ts";
+import { supervisorRounds, wakeSupervisor } from "./supervisor.ts";
 
 /** Helpers and review runs inherit the work of their parent. A continuation belongs to its original delegation. */
 export function longTaskForRun(app: App, runId: string | null): LongTask | null {
   const seen = new Set<string>();
   while (runId && !seen.has(runId)) {
     seen.add(runId);
-    const row: { input: string; parent_id: string | null } | undefined = one(app.db, "select input,parent_id from runs where id=?", runId);
+    const row: { kind: string; input: string; parent_id: string | null } | undefined = one(app.db, "select kind,input,parent_id from runs where id=?", runId);
     if (!row) break;
     const input = JSON.parse(row.input);
     if (input.longTaskId) return getLongTask(app, input.longTaskId);
+    const adopted = row.kind === "code" ? autoFollowFor(app, "code", input.continueFrom ?? runId)
+      : input.agentWorkId ? autoFollowFor(app, "agentWork", input.agentWorkId) : null;
+    if (adopted) return adopted;
     const thread = input.threadId ?? input.conversationId;
     const task = thread && longTaskInThread(app, thread);
     if (task) return task;
@@ -27,13 +32,7 @@ export function longTaskForRun(app: App, runId: string | null): LongTask | null 
 export function workBudgetStop(app: App, task: LongTask, rootId?: string): string | null {
   if (task.status !== "active") return "长任务当前未在推进，先查看任务状态";
   if (Date.now() >= Date.parse(task.createdAt) + task.budget.hours * 3_600_000) return "长任务已达到总时长预算，需要本人加预算";
-  const used = one<{ total: number; local: number }>(app.db, `select count(*) + (
-      select count(*) from runs lead join runs worker on worker.parent_id=lead.id
-      where lead.lane=? and worker.kind='agent' and json_extract(worker.input,'$.longTaskId')=?
-    ) total,
-    count(case when id=? or json_extract(input,'$.continueFrom')=? then 1 end) local
-    from runs where kind='code' and json_extract(input,'$.longTaskId')=? and json_extract(input,'$.branches') is null`,
-    `supervisor:${task.id}`, task.id, rootId ?? null, rootId ?? null, task.id)!;
+  const used = supervisorRounds(app, task, rootId);
   if (used.total >= task.budget.codeRounds) return `长任务已用完 ${task.budget.codeRounds} 个工作轮次，需要本人加预算`;
   if (used.local >= app.config.agents.autoAdvance.codeRoundsMax) return "本次交办已达单个交办的编码轮次上限";
   return null;
@@ -46,15 +45,21 @@ export function createCodeRound(app: App, request: Parameters<typeof createRun>[
     const root = typeof input.continueFrom === "string" ? input.continueFrom : undefined;
     const task = typeof input.longTaskId === "string" ? getLongTask(app, input.longTaskId)
       : longTaskForRun(app, root ?? (typeof input.fromReview === "string" ? input.fromReview : request.parentId ?? null));
-    if (!task) return createRun(app, request);
+    if (!task) {
+      const round = createRun(app, request);
+      if (!root && !input.branches) followCodePlan(app, round.id);
+      return round;
+    }
     if ((request.userId ?? runUser(app, request.parentId ?? null)) !== task.userId)
       throw new HttpError(403, "编码运行与长任务必须属于同一用户");
     if (request.parentId && one(app.db, `select 1 from runs where id=? and kind='supervise' and json_extract(output,'$.supervisorReport') is not null`, request.parentId))
       throw new HttpError(409, "助手已交本轮报告，不能再派活");
     if (!input.branches) {
-      const stop = workBudgetStop(app, task, root);
+      const stop = workBudgetStop(app, task, root ?? (typeof input.retryOf === "string" ? input.retryOf : undefined));
       if (stop) throw new HttpError(409, stop);
     }
+    // Adopted rounds keep their original chain. Detaching the source restores its normal routing.
+    if (root && task.sourceKind === "code" && task.sourceId === root) return createRun(app, request);
     return createRun(app, { ...request, input: { ...input, longTaskId: task.id } });
   });
 }
@@ -118,5 +123,5 @@ export async function answerWorkerQuestion(app: App, taskId: string, questionId:
   const ask = getAsk(app, questionId);
   if (ask.status === "answered" && ask.answer === answer.trim()) return;
   const choice = ask.options.findIndex(option => option.label === answer.trim());
-  await answerAsk(app, questionId, { by: "supervisor", ...(choice < 0 ? { text: answer } : { choice }) });
+  await answerAsk(app, questionId, { by: ownerId && (ask.handler?.startsWith("study-") || ask.handler === "flow-stage") ? ownerId : "supervisor", ...(choice < 0 ? { text: answer } : { choice }) });
 }

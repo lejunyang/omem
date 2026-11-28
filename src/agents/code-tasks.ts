@@ -265,7 +265,7 @@ export function updateTask(app: App, rootId: string, seq: number, patch: TaskPat
   const t = getTask(app, rootId, seq);
   const next = { ...t, ...patch };
   const supervised = longTaskForRun(app, rootId);
-  const newQuestion = next.state === "assistant" && (t.state !== "assistant" || next.question !== t.question || JSON.stringify(next.options) !== JSON.stringify(t.options));
+  const newQuestion = next.state === "assistant" && (!next.origin.questionId || t.state !== "assistant" || next.question !== t.question || JSON.stringify(next.options) !== JSON.stringify(t.options));
   if (supervised && newQuestion) next.origin = { ...next.origin, questionId: newId("q") };
   if (supervised && next.state !== t.state) {
     if (next.state === "coding" && !t.origin.startedAt) next.origin = { ...next.origin, startedAt: now() };

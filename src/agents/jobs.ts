@@ -171,6 +171,17 @@ async function runAsk(ctx: RunContext) {
   // A coding round's result handed to the assistant, already told by a turn about the same work that
   // ended after it (a wake-up it set for the round): not a second report of the same result.
   const handedOff = (ctx.run.input as { handoff?: { kind: string; runId?: string; workId?: string } }).handoff;
+  // A handoff queued before startup can belong to a work that was adopted during recovery.
+  const queuedWork = coordinate?.workId ?? (handedOff?.kind === "code" || handedOff?.kind === "code-tasks" ? handedOff.workId : undefined);
+  if (queuedWork && msgs.every(m => m.role === "assistant")) {
+    const { autoFollowFor } = await import("./auto-follow.ts");
+    const task = autoFollowFor(ctx.app, coordinate ? "agentWork" : "code", queuedWork);
+    if (task) {
+      const { wakeSupervisor } = await import("./supervisor.ts");
+      wakeSupervisor(ctx.app, task.id, `接手此前排队的协调 ${ctx.run.id}：${ctx.run.title}。相关消息：${ids.join("、")}`);
+      return { answer: "", quiet: true, supervisedBy: task.id };
+    }
+  }
   if (handedOff?.kind === "code") {
     const { reportedSince } = await import("./code-chain.ts");
     const by = reportedSince(ctx.app, input.conversationId, handedOff, ctx.run.id);
