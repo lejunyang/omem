@@ -23,6 +23,7 @@ owner = not home and policy["spaces"] is None
 spaces = set(policy.get("spaces") or [])
 repos = set(policy.get("repos", []))
 artifacts = set(policy.get("artifacts", []))
+artifact_links = policy.get("artifactLinks", {})
 files = set(policy.get("files", []))
 nodes = {"/": "dir"}
 links = dict(policy["links"])
@@ -120,6 +121,12 @@ def visible(path):
     return len(parts) <= count or "/".join(parts[count:]) in tracked("/".join(parts[:count]))
 
 
+def readable_file(path, info):
+    if not stat.S_ISREG(info.st_mode):
+        return False
+    return home or info.st_nlink == 1 or artifact_links.get(path) == f"{info.st_dev}:{info.st_ino}:{info.st_ctime_ns}"
+
+
 def workspace_link(path):
     parts = PurePosixPath(path).parts
     if not owner or len(parts) != 5 or parts[1] != "runs" or parts[3] != "work":
@@ -168,7 +175,7 @@ class View(fuse.Fuse):
             info = os.fstat(fd)
             if stat.S_ISLNK(info.st_mode) and (home or workspace_link(path)):
                 return info
-            if stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode) and (home or info.st_nlink == 1):
+            if stat.S_ISDIR(info.st_mode) or readable_file(path, info):
                 return info
             return -errno.ENOENT
         finally:
@@ -204,7 +211,7 @@ class View(fuse.Fuse):
         fd = open_at(path, os.O_PATH)
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or not home and info.st_nlink != 1:
+            if not readable_file(path, info):
                 return -errno.ENOENT
             reader = os.open("/proc/self/fd/" + str(fd), os.O_RDONLY)
             try:

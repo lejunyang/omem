@@ -6,6 +6,7 @@ import type { App } from "../core/app.ts";
 import { all } from "../core/db.ts";
 import { listSpaces } from "../core/spaces.ts";
 import { accessibleSpaces } from "../core/users.ts";
+import { publishedArtifactLinks } from "./artifacts.ts";
 import { canonical } from "./own-sandbox.ts";
 
 export function sandboxData(app: App, user: string) {
@@ -38,5 +39,5 @@ export function sandboxData(app: App, user: string) {
       and (sources.kind != 'doc' or coalesce(json_extract(s.settings,'$.larkAccess'),0)=0)`,
       ...restricted.params, JSON.stringify(spaces.filter(s => !readable || readable.includes(s)))).flatMap(row => row.variant ? [row.name, row.variant] : [row.name]);
   }
-  return { data, spaces, repos, artifacts, files };
+  return { data, spaces, repos, artifacts, artifactLinks: publishedArtifactLinks(app, artifacts), files };
 }
