@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { App } from "./app.ts";
@@ -35,8 +35,10 @@ export type BackupState = {
   away?: boolean;
   /** When the owner was last told it is not getting through. */
   toldAt?: string;
-  /** A backup that has not got through yet: since when it has been trying. */
+  /** Since when it has not been getting through (the first look that failed after the last good pull). */
   failingSince?: string;
+  /** Pulls in a row that started (the device answered) and did not get through. */
+  fails?: number;
 };
 
 const key = (peer: string) => `peer_backup:${peer}`;
@@ -86,6 +88,14 @@ const pullInChild: Puller = (app, b) =>
     // directory (often a smaller disk than the one chosen for the backup).
     const tmp = join(b.to, ".pull-tmp");
     mkdirSync(tmp, { recursive: true });
+    // What a pull that was killed halfway left there (the service restarted, the machine went off):
+    // gigabytes each, and nothing comes back for them. A day old: no pull of this backup is still at it.
+    for (const name of readdirSync(tmp)) {
+      if (!name.startsWith("omem-pull-")) continue;
+      try {
+        if (Date.now() - statSync(join(tmp, name)).mtimeMs > 86400_000) rmSync(join(tmp, name), { recursive: true, force: true });
+      } catch { /* in use, or gone meanwhile */ }
+    }
     const child = spawn(process.execPath, [cliScript(), "--home", app.home, "peer", "pull", b.peer, "--to", b.to, "--only", b.parts.join(","), "--prefer-remote", "-y"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, TEMP: tmp, TMP: tmp, TMPDIR: tmp } });
     let out = "";
     const take = (d: Buffer) => (out = (out + d.toString()).slice(-4000));
@@ -118,36 +128,56 @@ export async function runBackup(app: App, peer: string, opts: { probeMs?: number
     try {
       await peerJson(app, peer, "/api/diag", undefined, opts.probeMs ?? 15_000);
     } catch (e) {
-      const s: BackupState = { ...prev, triedAt: now(), away: true, problem: (e as Error).message.slice(0, 200) };
-      save(app, peer, tellIfStale(app, b, s));
+      const s: BackupState = { ...prev, triedAt: now(), away: true, problem: (e as Error).message.slice(0, 200), failingSince: prev.failingSince ?? now() };
+      save(app, peer, tellIfFailing(app, b, s));
       return { ...s, ran: false };
     }
     const r = await puller(app, b);
     const s: BackupState = r.ok
       ? { okAt: now(), summary: summarize(r.output) || "没有新内容", ms: Date.now() - started, triedAt: now() }
-      : { ...prev, triedAt: now(), away: false, problem: r.output.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 400) || "拉取没有成功" };
+      : { ...prev, triedAt: now(), away: false, problem: r.output.split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 400) || "拉取没有成功", failingSince: prev.failingSince ?? now(), fails: (prev.fails ?? 0) + 1 };
     if (r.ok) console.log(`[omem] 备份 ${peer} → ${b.to}：${s.summary}（${Math.round((s.ms ?? 0) / 1000)} 秒）`);
     else console.warn(`[omem] 备份 ${peer} 没有成功：${s.problem}`);
-    save(app, peer, r.ok ? s : tellIfStale(app, b, s));
+    save(app, peer, r.ok ? s : tellIfFailing(app, b, s));
     return { ...s, ran: true };
   } finally {
     running.delete(peer);
   }
 }
 
-/** Not through for days (or never, days after it was set up): the owner hears once in a while. */
-function tellIfStale(app: App, b: Backup, s: BackupState): BackupState {
+/** How many pulls in a row may fail before the owner hears. */
+const FAILS_TO_TELL = 3;
+
+/**
+ * The owner hears when a backup is not getting through: after three pulls in a row that started and
+ * failed, or after days without one (a device that is only away says nothing until then), and then
+ * every few days while it stays that way. Through this device's own notifications.
+ */
+function tellIfFailing(app: App, b: Backup, s: BackupState): BackupState {
   // Counted from the last good pull; for a backup that never got through, from its first failed look.
-  const from = Date.parse(s.okAt ?? s.failingSince ?? "") || 0;
-  if (!from) return { ...s, failingSince: now() };
+  const from = Date.parse(s.okAt ?? s.failingSince ?? "") || Date.now();
   const told = Date.parse(s.toldAt ?? "") || 0;
-  if (Date.now() - from < STALE_MS || Date.now() - told < STALE_MS) return s;
+  const stale = Date.now() - from >= STALE_MS;
+  if (!(stale || (s.fails ?? 0) >= FAILS_TO_TELL) || Date.now() - told < STALE_MS) return s;
+  const title = !stale ? `${b.peer} 的备份连续 ${s.fails} 次没拉下来` : s.okAt ? `${b.peer} 的备份已经 ${Math.floor((Date.now() - Date.parse(s.okAt)) / 86400_000)} 天没更新` : `${b.peer} 的备份一直没成功`;
   notify(app, {
-    title: `${b.peer} 的备份${s.okAt ? `已经 ${Math.floor((Date.now() - Date.parse(s.okAt)) / 86400_000)} 天没更新` : "一直没成功"}`,
-    body: `${s.away ? "这几天一直连不上它" : "连得上，但拉取出错"}：${s.problem ?? ""}\n\n备份目录：${b.to}。连上后会自动再拉；也可以运行 omem peer backup ${b.peer} --now。`,
+    title,
+    body: `${s.away ? "这几天一直连不上它" : "连得上，但拉取出错"}：${s.problem ?? ""}\n\n备份目录：${b.to}。${s.away ? "连上后会自动再拉" : "之后隔得越来越久再试（最久 6 小时一次）"}；也可以运行 omem peer backup ${b.peer} --now。`,
     link: "#/settings?tab=peers",
   });
   return { ...s, toldAt: now() };
+}
+
+/**
+ * After a pull that started and failed, how long the schedule leaves the device alone: each attempt
+ * has it make a whole snapshot, so one look after another failing the same way is not free for it.
+ * Twenty minutes, doubling, six hours at most. A device that was only away is looked for at every look.
+ */
+export function backupHoldOff(s: BackupState, nowMs = Date.now()) {
+  if (!s.fails || s.away) return false;
+  const wait = Math.min(6 * 3600_000, 20 * 60_000 * 2 ** (s.fails - 1));
+  // A minute of slack: the look comes every twenty minutes, give or take.
+  return nowMs - (Date.parse(s.triedAt ?? "") || 0) < wait - 60_000;
 }
 
 /**
@@ -170,7 +200,7 @@ export async function backupTick(app: App) {
   for (const b of app.config.backups) {
     const s = stateOf(app, b.peer);
     if (running.has(b.peer) || !findPeer(app, b.peer)) continue;
-    if (!backupDue(app, b, s)) continue;
+    if (!backupDue(app, b, s) || backupHoldOff(s)) continue;
     await runBackup(app, b.peer).catch((e) => console.warn(`[omem] 备份 ${b.peer} 出错：`, (e as Error).message));
   }
 }

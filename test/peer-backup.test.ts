@@ -37,9 +37,19 @@ describe("backing up another device by itself", async () => {
   });
 
   it("pulls into the directory when the device answers (the real pull, in a process of its own)", async () => {
+    // Left by a pull that was killed halfway, days ago, and by one that may still be running.
+    const { existsSync, mkdirSync, utimesSync } = await import("node:fs");
+    const stale = join(dir, ".pull-tmp", "omem-pull-stale");
+    const fresh = join(dir, ".pull-tmp", "omem-pull-fresh");
+    mkdirSync(stale, { recursive: true });
+    mkdirSync(fresh, { recursive: true });
+    writeFileSync(join(stale, "snapshot.tar"), "half of one");
+    utimesSync(stale, new Date(Date.now() - 2 * 86400_000), new Date(Date.now() - 2 * 86400_000));
     const r = await runBackup(B, "server");
     expect(r, r.problem).toMatchObject({ ran: true });
     expect(r.okAt).toBeTruthy();
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
     // The copy is a data directory of its own, holding the server's document.
     const copy = App.open(dir);
     expect(all<{ title: string }>(copy.db, "select title from sources where kind = 'doc'").map((s) => s.title)).toContain("报销制度");
@@ -73,6 +83,55 @@ describe("backing up another device by itself", async () => {
     expect(listBackups(B)[0].problem).toBeUndefined();
     removeBackup(B, "server");
     expect(listBackups(B)).toEqual([]);
+  }, 60_000);
+
+  it("tells the owner after three pulls in a row that failed, once, and leaves the device alone for longer each time", async () => {
+    const { backupHoldOff } = await import("../src/core/peer-backup.ts");
+    setBackup(B, { peer: "server", to: dir, everyHours: 1 });
+    B.db.prepare("delete from kv where key = 'peer_backup:server'").run();
+    const notices = () => all<{ title: string; body: string }>(B.db, "select title, body from notifications where title like 'server 的备份%' order by rowid");
+    const before = notices().length;
+    let pulls = 0;
+    setBackupPullerForTests(async () => (pulls++, { ok: false, output: "从设备 server 拉取…\n快照传到 300 MB / 2000 MB 后 15 分钟没再收到数据：terminated" }));
+    // As if each look came after the wait the one before it asked for.
+    const later = () => {
+      const s = JSON.parse((B.db.prepare("select value from kv where key = 'peer_backup:server'").get() as { value: string }).value);
+      B.db.prepare("update kv set value = ? where key = 'peer_backup:server'").run(JSON.stringify({ ...s, triedAt: new Date(Date.now() - 7 * 3600_000).toISOString() }));
+    };
+    await backupTick(B);
+    expect(listBackups(B)[0]).toMatchObject({ fails: 1, away: false, problem: expect.stringContaining("没再收到数据") });
+    // Twenty minutes have not passed: the next look does not have the device make another snapshot.
+    await backupTick(B);
+    expect(pulls).toBe(1);
+    later();
+    await backupTick(B);
+    expect(notices().length).toBe(before);
+    later();
+    await backupTick(B);
+    expect(listBackups(B)[0]).toMatchObject({ fails: 3 });
+    expect(notices().slice(before)).toEqual([expect.objectContaining({ title: "server 的备份连续 3 次没拉下来", body: expect.stringContaining("没再收到数据") })]);
+    // Told once: the fourth failure says nothing new.
+    later();
+    await backupTick(B);
+    expect(pulls).toBe(4);
+    expect(notices().length).toBe(before + 1);
+    // 20 minutes, 40, 80 … six hours at most; a device that was only away is looked for at every look.
+    const at = Date.parse("2026-11-14T00:00:00.000Z");
+    const tried = { triedAt: new Date(at).toISOString() };
+    expect(backupHoldOff({ ...tried, fails: 1 }, at + 10 * 60_000)).toBe(true);
+    expect(backupHoldOff({ ...tried, fails: 1 }, at + 20 * 60_000)).toBe(false);
+    expect(backupHoldOff({ ...tried, fails: 3 }, at + 60 * 60_000)).toBe(true);
+    expect(backupHoldOff({ ...tried, fails: 3 }, at + 80 * 60_000)).toBe(false);
+    expect(backupHoldOff({ ...tried, fails: 30 }, at + 5 * 3600_000)).toBe(true);
+    expect(backupHoldOff({ ...tried, fails: 30 }, at + 6 * 3600_000)).toBe(false);
+    expect(backupHoldOff({ ...tried, fails: 3, away: true }, at + 60_000)).toBe(false);
+    // A pull that gets through starts the count again.
+    setBackupPullerForTests(async () => ({ ok: true, output: "合并完成（…）" }));
+    later();
+    await backupTick(B);
+    expect(listBackups(B)[0].fails).toBeUndefined();
+    expect(listBackups(B)[0].problem).toBeUndefined();
+    removeBackup(B, "server");
   }, 60_000);
 });
 

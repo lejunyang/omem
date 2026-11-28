@@ -5,6 +5,28 @@ kind: reference
 updated: 2026-11-29
 ---
 
+## 拉取设备快照能断点续传，备份连续失败会提醒并拉长重试间隔（2026-11-29）
+
+**起因**：一台 Windows 电脑每晚经中间设备备份常驻服务器，连续两周没成功，状态里先后是 `Invalid empty pathname`、“aborted due to timeout”、“terminated”。查到的是几件事叠在一起：
+
+- **Windows 上解包失败**：`untar` 调的 `tar` 在服务进程里解析到系统自带的 bsdtar，它把没有 pax 名字的 tar 头按系统代码页读。Linux 上打的包里文件名是 UTF-8：中文名的页面在 GBK 下要么变成别的字，要么字节数凑不成合法字符，报 `Invalid empty pathname`，整次拉取失败。知识库里出现一个三个汉字的目录之后，每次传完都倒在这一步。
+- **快照一次传不完就全部作废**：`GET /api/peer/snapshot` 每次请求现做一份、整份流式发出。中间设备转发一次请求总共只给 15 分钟（`/api/peers/:id/*` 的 `AbortSignal.timeout` 连响应体一起算）；常驻那台的主线程被成批的同步 SQL 卡住一两分钟时流就停住；中间设备是台空闲就睡眠的笔记本，睡着后只在收到网络包时醒十秒，中间一睡几分钟，转发的连接就断了。任何一种发生，已收到的几个 GB 全丢。
+- **越失败越大**：`pull_since:<设备>` 只在成功后前移，两周的原件和运行事件攒到快照里，数据库部分从几百 MB 涨到 3.3 GB，更传不完。
+- **失败后每 20 分钟重试**：每次都让对方重新生成整份快照，对方磁盘和主线程跟着变慢。
+- **提醒没人看到**：三天一次的通知只进了备份那台设备自己的站内通知，那台没有推送渠道。
+
+**改法**：
+
+- **解包时告诉 bsdtar 文件名是 UTF-8**（`pull-transfer.ts` 的 `tarReading`）：`tar --version` 认出 bsdtar 就给列目录和解包都加 `--options hdrcharset=UTF-8`；GNU tar 不用。这一条只改拉取方，对方不用更新就生效。
+- **对方把快照留在磁盘上**（`src/core/pull-held.ts`）：`POST /api/peer/snapshot` 开始生成并返回 id，`GET /api/peer/snapshot/:id` 看状态和大小，`GET /api/peer/snapshot/:id/data` 按 `Range` 取字节，`DELETE` 用完删除。文件放在数据目录的 `tmp/pull-held/<id>/`，tar 直接写文件，不经过服务进程；半小时没人问就删，最多留两份，服务启动时清掉上一个进程留下的。只有本人令牌能用，四个路由登记在 `settings-sections.ts` 的 `node` 一组。
+- **拉取方分块取**（`pull-transfer.ts` 的 `fetchHeldSnapshot`）：每块 32 MB，一块中途断了从已写到的字节接着要，不从头来；等待从 5 秒翻倍到 1 分钟，连续 15 分钟一个字节都没收到才放弃（`FetchOptions.stallMs`）。对方重启丢了快照（404）就重新要一份，最多三次。对方是旧版本（`POST` 返回 404 / 405）时退回原来的整份流式下载。中间设备只转发，不用更新：它本来就透传 `Range` 和 `Content-Range`。
+- **附件列表和每批附件**同样按“15 分钟内没成功才放弃”重试（`patiently`），原来是 5 秒、10 秒各试一次。
+- **备份的状态多记 `fails`**（`peer-backup.ts`）：连得上但拉取失败的连续次数。满 3 次通知一次（之前只按“3 天没成功”），之后仍是每 3 天一次；失败后的重试间隔按 20 分钟翻倍，最久 6 小时（`backupHoldOff`），手动 `--now` 不受限。只是连不上时照旧每 20 分钟看一眼。备份目录 `.pull-tmp` 里一天以前的 `omem-pull-*`（拉到一半被杀掉的进程留下的半份快照，每份几个 GB）在下一次拉取前删掉。
+
+**没改的**：通知仍只发在备份那台设备上（`notify`）；那台没有机器人或通知出口时还是只在它的站内通知里。跨设备转发提醒会让一台设备能在另一台上给本人发消息，和 `PEER_DENY` 不让别的设备调 `notify` 的约定相冲，留给本人定。跨进程的续传（上一次进程留下的半份文件下次接着用）没做：一次拉取之内能续就够用。
+
+测试：`test/pull-resume.test.ts`（两个节点之间放一个会掐断响应的转发器：每块传 100 KB 就断，下一块从断点开始；15 分钟换成 300 ms 验证放弃；对方丢了快照重新要；旧版本对方走整份下载；`Range` / 416 / 最多两份 / 半小时清理）、`test/pull-untar.test.ts`（手工拼一个只有 UTF-8 文件名的 tar 头，默认的 tar 和 Windows 自带的 tar 都要解出中文名）、`test/peer-backup.test.ts`（连续三次失败通知一次、重试间隔、成功后清零）。
+
 ## 沙箱卡片：主目录的层、登记命令，HTTP 规则的来源（2026-11-29）
 
 - `web/src/components/SandboxSettings.vue`：新行“主目录的改动”读 `GET /api/security/sandbox` 的 `overlay` 和 `layers`，每层按人列出大小（`lib/sandbox.ts` 的 `layerRows`、`fmtBytes`，成员名字取 `/api/users`），“清空”确认后调 `DELETE /api/security/sandbox/layers/:identity`；`overlay.ok` 为假时写原因。卡片说明和 `/tmp` 那行改成写时复制、按这件事保留之后的说法。

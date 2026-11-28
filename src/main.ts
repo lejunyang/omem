@@ -122,6 +122,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
   // Once: the old template's “还没查清” sections leave the pages for their open questions (wiki/migrate.ts).
   (await import("./wiki/migrate.ts")).queueMigration(app);
   sweepWorktreeSpaces(app);
+  // Snapshots an earlier process kept for a puller (core/pull-held.ts): gigabytes nobody can ask for any more.
+  (await import("./core/pull-held.ts")).clearHeldSnapshots(app);
   {
     // repo-sync on for libraries that never ran it; overlays left from before they expired go now.
     const ci = await import("./sources/code-index.ts");

@@ -3610,6 +3610,40 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     reply.type("application/x-tar");
     return reply.send(await snapshotStream(app, q.parts === undefined && q.strip === undefined && q.files === undefined ? undefined : { parts, strip: q.strip === "1", ...(q.since && !Number.isNaN(Date.parse(q.since)) ? { since: q.since } : {}), separateFiles: q.files === "separate" }));
   });
+  // The same snapshot kept on disk for a while (core/pull-held.ts): asked for, waited for, taken in
+  // pieces with `Range` (a piece that breaks is asked again from where it stopped), then dropped.
+  server.post("/api/peer/snapshot", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
+    const { parseParts } = await import("../core/pull.ts");
+    const b = q(z.object({ parts: z.string().max(200).optional(), strip: z.boolean().optional(), since: z.string().max(40).optional(), files: z.enum(["separate"]).optional() }), req.body);
+    let parts;
+    try { parts = parseParts(b.parts); } catch (e) { throw new HttpError(400, (e as Error).message); }
+    const { holdSnapshot } = await import("../core/pull-held.ts");
+    return holdSnapshot(app, { parts, strip: !!b.strip, ...(b.since && !Number.isNaN(Date.parse(b.since)) ? { since: b.since } : {}), separateFiles: b.files === "separate" });
+  });
+  server.get("/api/peer/snapshot/:id", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
+    const { heldSnapshot } = await import("../core/pull-held.ts");
+    const h = heldSnapshot((req.params as { id: string }).id);
+    if (!h) throw new HttpError(404, "没有这份快照（放了半小时没人取，或服务重启过）：重新要一份");
+    return { id: h.id, state: h.state, size: h.size, error: h.error };
+  });
+  server.get("/api/peer/snapshot/:id/data", async (req, reply) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
+    const { heldSnapshot, byteRange } = await import("../core/pull-held.ts");
+    const h = heldSnapshot((req.params as { id: string }).id);
+    if (!h) throw new HttpError(404, "没有这份快照（放了半小时没人取，或服务重启过）：重新要一份");
+    if (h.state !== "ready" || h.size === undefined) throw new HttpError(409, h.state === "failed" ? `快照没有生成出来：${h.error ?? ""}` : "快照还在生成");
+    const range = byteRange(typeof req.headers.range === "string" ? req.headers.range : undefined, h.size);
+    if (!range) return reply.status(416).header("content-range", `bytes */${h.size}`).send("");
+    reply.type("application/x-tar").header("accept-ranges", "bytes").header("content-length", range.end - range.start + 1);
+    if (range.partial) reply.status(206).header("content-range", `bytes ${range.start}-${range.end}/${h.size}`);
+    return reply.send(createReadStream(h.file, { start: range.start, end: range.end }));
+  });
+  server.delete("/api/peer/snapshot/:id", async (req) => {
+    if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
+    return (await import("../core/pull-held.ts")).dropHeldSnapshot((req.params as { id: string }).id);
+  });
   server.get("/api/peer/files", async (req) => {
     if (who(req) !== OWNER) throw new HttpError(403, "只有本人能拉取设备快照");
     const { FILE_NAME } = await import("../core/pull-transfer.ts");

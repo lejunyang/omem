@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
@@ -28,7 +28,12 @@ export const PULL_PART_LABELS: Record<PullPart, string> = {
 /** `strip`: leave out what a merge rebuilds itself (search chunks, code outline). */
 /** `since` (with `strip`): only the sources and run events changed after this moment (the other side's clock); the puller has the rest from its last complete pull. */
 export type PullSelection = { parts: PullPart[]; strip?: boolean; since?: string };
-export type FetchOptions = { selection?: PullSelection; log?: (s: string) => void; dryRun?: boolean; haveFile?: (name: string) => boolean };
+/**
+ * `stallMs`: how long a pull from a device keeps asking again when nothing gets through (default a
+ * quarter of an hour); `chunkBytes`: the size of a piece of the snapshot; `retryMs` / `pollMs`: the
+ * first wait before asking again, and between looks at a snapshot being made (tests shorten them).
+ */
+export type FetchOptions = { selection?: PullSelection; log?: (s: string) => void; dryRun?: boolean; haveFile?: (name: string) => boolean; stallMs?: number; chunkBytes?: number; retryMs?: number; pollMs?: number };
 
 export function parseParts(value: string | undefined | null): PullPart[] {
   if (value == null) return [...PULL_PARTS];
@@ -42,12 +47,33 @@ export function parseParts(value: string | undefined | null): PullPart[] {
 export const FILE_NAME = /^[a-f0-9]{16}\.[a-z0-9]+$/;
 const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
+let tarProgram = "tar";
+const bsdtar = new Map<string, boolean>();
+/** Tests: another tar (Windows has two: bsdtar in System32, GNU tar with Git). */
+export function setTarForTests(program: string | null) {
+  tarProgram = program ?? "tar";
+}
+/**
+ * File names in a snapshot are UTF-8: it is made on Linux or macOS, or carries them in pax headers.
+ * bsdtar (the tar Windows ships) reads a header that has no pax name in the system's code page: a
+ * Chinese page name came out as other characters, or, when its bytes are not valid there, the file
+ * was refused with "Invalid empty pathname" and the whole pull failed. It is told the charset.
+ */
+function tarReading(): string[] {
+  let is = bsdtar.get(tarProgram);
+  if (is === undefined) {
+    is = /bsdtar/i.test(spawnSync(tarProgram, ["--version"], { encoding: "utf8" }).stdout ?? "");
+    bsdtar.set(tarProgram, is);
+  }
+  return is ? ["--options", "hdrcharset=UTF-8"] : [];
+}
+
 /** Unpack an archive fetched into `dir`, refusing paths that leave it. */
 export function untar(dir: string, archive: string) {
   // Relative to the snapshot dir: GNU tar (Git for Windows) reads "C:\…" as a remote host.
-  const listing = spawnSync("tar", ["-tf", archive], { cwd: dir, encoding: "utf8", maxBuffer: 256 * 1024 ** 2 });
+  const listing = spawnSync(tarProgram, [...tarReading(), "-tf", archive], { cwd: dir, encoding: "utf8", maxBuffer: 256 * 1024 ** 2 });
   if (listing.status !== 0 || listing.stdout.split("\n").some((p) => p.startsWith("/") || /^[A-Za-z]:/.test(p) || p.split(/[\\/]/).includes(".."))) throw new Error("快照目录不合法或传输不完整");
-  const r = spawnSync("tar", ["-xf", archive], { cwd: dir, maxBuffer: 64 * 1024 ** 2 });
+  const r = spawnSync(tarProgram, [...tarReading(), "-xf", archive], { cwd: dir, maxBuffer: 64 * 1024 ** 2 });
   if (r.status !== 0) {
     // A repository's working tree can hold links whose target is gone (rotated logs), and Windows
     // cannot make those: everything else is unpacked, so the pull goes on without them.
@@ -134,9 +160,15 @@ tar -cf - -C "$T" . -C "$H" "$@"`;
   }
 }
 
-/** The snapshot as a tar stream. No selection: everything, attachments included (older pullers). */
-export async function snapshotStream(app: App, selection?: PullSelection & { separateFiles?: boolean }): Promise<Readable> {
-  const dir = mkdtempSync(join(tmpdir(), "omem-snap-"));
+export type SnapshotSelection = PullSelection & { separateFiles?: boolean };
+
+/**
+ * The snapshot's own files in a new directory (the database, the manifest, repositories), and what tar
+ * archives after `-cf <where>`: that directory, then the library and attachments straight from the
+ * data directory. The caller removes `dir`.
+ */
+export async function buildSnapshot(app: App, selection?: SnapshotSelection, into = tmpdir()): Promise<{ dir: string; members: string[] }> {
+  const dir = mkdtempSync(join(into, "omem-snap-"));
   const parts = selection?.parts ?? [...PULL_PARTS];
   try {
     await new Promise<void>((resolve, reject) => {
@@ -147,8 +179,14 @@ export async function snapshotStream(app: App, selection?: PullSelection & { sep
       child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`生成快照失败：${error}`)));
     });
     const names = ["library", "files"].filter((name) => parts.includes(name as PullPart) && !(name === "files" && selection?.separateFiles) && existsSync(join(app.home, name)));
-    return tarStream(["-cf", "-", "-C", dir, ".", ...(names.length ? ["-C", app.home, ...names] : [])], () => rmSync(dir, { recursive: true, force: true }));
+    return { dir, members: ["-C", dir, ".", ...(names.length ? ["-C", app.home, ...names] : [])] };
   } catch (e) { rmSync(dir, { recursive: true, force: true }); throw e; }
+}
+
+/** The snapshot as a tar stream. No selection: everything, attachments included (older pullers). */
+export async function snapshotStream(app: App, selection?: SnapshotSelection): Promise<Readable> {
+  const { dir, members } = await buildSnapshot(app, selection);
+  return tarStream(["-cf", "-", ...members], () => rmSync(dir, { recursive: true, force: true }));
 }
 
 /** Stored attachments by name, as a tar stream (pullers fetch the ones they lack in batches). */
@@ -175,6 +213,117 @@ function tarStream(args: string[], done: () => void): Readable {
   return output;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const mb = (n: number) => `${(n / 1024 ** 2).toFixed(n < 10 * 1024 ** 2 ? 1 : 0)} MB`;
+const reason = (e: unknown) => {
+  const cause = (e as { cause?: { code?: string; message?: string } }).cause;
+  return [(e as Error).message, cause?.code ?? cause?.message].filter(Boolean).join("：").slice(0, 160);
+};
+/** The other side no longer has the snapshot it was keeping (it restarted, or dropped it). */
+class SnapshotGone extends Error {}
+
+/**
+ * Asks again while the link is only interrupted (a device reached through another one that sleeps
+ * for a few minutes, a service whose main thread is held up): gives up when nothing got through for
+ * `stallMs`.
+ */
+async function patiently<T>(opts: FetchOptions, what: string, fn: () => Promise<T>): Promise<T> {
+  const stallMs = opts.stallMs ?? STALL_MS;
+  const started = Date.now();
+  for (let wait = opts.retryMs ?? 5000; ; wait = Math.min(wait * 2, 60_000)) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e instanceof SnapshotGone || Date.now() - started > stallMs) throw e;
+      opts.log?.(`  ${what}没有成功（${reason(e)}），${Math.round(wait / 1000)} 秒后再试`);
+      await sleep(wait);
+    }
+  }
+}
+
+const STALL_MS = 15 * 60_000;
+const CHUNK_BYTES = 32 * 1024 ** 2;
+
+/**
+ * The snapshot from a device that keeps it for the puller (core/pull-held.ts), piece by piece: a piece
+ * that breaks is asked again from the byte it stopped at, so a connection lost halfway costs what was
+ * in flight and not the gigabytes already here. `false`: an older device that only streams.
+ */
+async function fetchHeldSnapshot(app: App, peerId: string, selection: PullSelection, to: string, opts: FetchOptions): Promise<boolean> {
+  const { peerFetch } = await import("./peers.ts");
+  const log = opts.log ?? (() => {});
+  const stallMs = opts.stallMs ?? STALL_MS;
+  const chunk = opts.chunkBytes ?? CHUNK_BYTES;
+  const at = (id: string) => `/api/peer/snapshot/${id}`;
+  for (let round = 1; ; round++) {
+    const made = await patiently(opts, "向对方要快照", async () => {
+      const res = await peerFetch(app, peerId, "/api/peer/snapshot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ parts: selection.parts.join(","), strip: !!selection.strip, files: "separate", ...(selection.since ? { since: selection.since } : {}) }), timeoutMs: 60_000 });
+      if (res.status === 404 || res.status === 405) return void (await res.body?.cancel());
+      if (!res.ok) throw new Error(`拉取失败：${res.status} ${(await res.text()).slice(0, 200)}`);
+      return (await res.json()) as { id: string };
+    });
+    if (!made) return false;
+    const fd = openSync(to, "w");
+    try {
+      let size = 0;
+      for (const since = Date.now(); ; await sleep(opts.pollMs ?? 2000)) {
+        const info = await patiently(opts, "问快照好了没有", async () => {
+          const res = await peerFetch(app, peerId, at(made.id), { timeoutMs: 60_000 });
+          if (res.status === 404) throw new SnapshotGone("对方已经没有这份快照");
+          if (!res.ok) throw new Error(`拉取失败：${res.status}`);
+          return (await res.json()) as { state: string; size?: number; error?: string };
+        });
+        if (info.state === "failed") throw new Error(`对方没能生成快照：${info.error ?? ""}`);
+        if (info.state === "ready" && typeof info.size === "number") { size = info.size; break; }
+        if (Date.now() - since > 60 * 60_000) throw new Error("对方一小时还没生成好快照");
+      }
+      log(`  快照 ${mb(size)}，分块取（断了接着传）`);
+      let offset = 0;
+      let moved = Date.now();
+      let said = Date.now();
+      for (let wait = opts.retryMs ?? 5000; offset < size; ) {
+        const before = offset;
+        let problem: unknown;
+        try {
+          const res = await peerFetch(app, peerId, `${at(made.id)}/data`, { headers: { range: `bytes=${offset}-${Math.min(size, offset + chunk) - 1}` }, timeoutMs: 5 * 60_000 });
+          if (res.status === 404) throw new SnapshotGone("对方已经没有这份快照");
+          if ((res.status !== 206 && res.status !== 200) || !res.body) throw new Error(`拉取失败：${res.status}`);
+          // 200: something on the way dropped the `Range`, and this is the whole of it from the start.
+          let pos = res.status === 200 ? 0 : Number(/^bytes (\d+)-/.exec(res.headers.get("content-range") ?? "")?.[1] ?? NaN);
+          if (pos !== 0 && pos !== offset) throw new Error(`对方发来的不是要的那一段（${res.headers.get("content-range")}）`);
+          for await (const part of res.body as unknown as AsyncIterable<Uint8Array>) {
+            writeSync(fd, part, 0, part.length, pos);
+            pos += part.length;
+            if (pos > offset) { offset = Math.min(pos, size); moved = Date.now(); }
+          }
+        } catch (e) {
+          if (e instanceof SnapshotGone) throw e;
+          problem = e;
+        }
+        if (offset >= size) break;
+        if (offset > before) wait = opts.retryMs ?? 5000;
+        if (problem || offset === before) {
+          if (Date.now() - moved > stallMs) throw new Error(`快照传到 ${mb(offset)} / ${mb(size)} 后 ${Math.round(stallMs / 60_000)} 分钟没再收到数据：${problem ? reason(problem) : "对方没有发数据"}`);
+          log(`  传到 ${mb(offset)} / ${mb(size)} 时断了（${problem ? reason(problem) : "对方没有发数据"}），${Math.round(wait / 1000)} 秒后接着传`);
+          await sleep(wait);
+          wait = Math.min(wait * 2, 60_000);
+        } else if (Date.now() - said > 30_000) {
+          log(`  已收 ${mb(offset)} / ${mb(size)}`);
+          said = Date.now();
+        }
+      }
+      return true;
+    } catch (e) {
+      if (!(e instanceof SnapshotGone) || round >= 3) throw e;
+      log("  对方已经没有这份快照（服务重启过，或放得太久）：重新要一份，从头取");
+    } finally {
+      closeSync(fd);
+      // Not waited for long, and not fatal: the other side drops it by itself after half an hour.
+      await peerFetch(app, peerId, at(made.id), { method: "DELETE", timeoutMs: 10_000 }).then((r) => r.body?.cancel(), () => {});
+    }
+  }
+}
+
 export async function fetchPeer(app: App, peerId: string, opts: FetchOptions = {}): Promise<Fetched> {
   const { peerFetch } = await import("./peers.ts");
   const selection = opts.selection ?? { parts: [...PULL_PARTS] };
@@ -187,8 +336,11 @@ export async function fetchPeer(app: App, peerId: string, opts: FetchOptions = {
     await pipeline(Readable.fromWeb(res.body as import("node:stream/web").ReadableStream), createWriteStream(to));
   };
   try {
-    const query = new URLSearchParams({ parts: selection.parts.join(","), strip: selection.strip ? "1" : "0", files: "separate", ...(selection.since ? { since: selection.since } : {}) });
-    await download(`/api/peer/snapshot?${query}`, join(dir, "snapshot.tar"));
+    if (!(await fetchHeldSnapshot(app, peerId, selection, join(dir, "snapshot.tar"), opts))) {
+      // An older device: the snapshot in one stream, made anew for every request.
+      const query = new URLSearchParams({ parts: selection.parts.join(","), strip: selection.strip ? "1" : "0", files: "separate", ...(selection.since ? { since: selection.since } : {}) });
+      await download(`/api/peer/snapshot?${query}`, join(dir, "snapshot.tar"));
+    }
     const fetched = unpack(dir, selection);
     if (!existsSync(join(dir, "pull-manifest.json"))) {
       // Compatibility with old peers: include originals already present locally too,
@@ -211,22 +363,15 @@ export async function fetchPeer(app: App, peerId: string, opts: FetchOptions = {
       log("对方版本较旧：已补拉附件，代码仓库需要先升级对方再拉取。");
     } else if (selection.parts.includes("files") && selective(dir)) {
       // A newer peer left attachments out of the snapshot: list them and fetch only the missing ones.
-      const res = await peerFetch(app, peerId, "/api/peer/files");
-      if (!res.ok) throw new Error(`读取对方附件列表失败：${res.status}`);
-      const { names } = (await res.json()) as { names: string[] };
+      const { names } = await patiently(opts, "读对方的附件列表", async () => {
+        const res = await peerFetch(app, peerId, "/api/peer/files");
+        if (!res.ok) throw new Error(`读取对方附件列表失败：${res.status}`);
+        return (await res.json()) as { names: string[] };
+      });
       // Hundreds of batches over a link that may pass through another device: one that breaks is
       // asked again (it only reads), so a hiccup does not throw away the snapshot already fetched.
-      await pullMissingFiles(fetched, names, opts, async (batch, archive) => {
-        for (let attempt = 1; ; attempt++) {
-          try {
-            return await download("/api/peer/files", archive, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ names: batch }) });
-          } catch (e) {
-            if (attempt >= 3) throw e;
-            log(`  这一批附件没拉下来（${(e as Error).message.slice(0, 120)}），${attempt * 5} 秒后再试`);
-            await new Promise((r) => setTimeout(r, attempt * 5000));
-          }
-        }
-      });
+      await pullMissingFiles(fetched, names, opts, (batch, archive) =>
+        patiently(opts, "拉这一批附件", () => download("/api/peer/files", archive, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ names: batch }), timeoutMs: 10 * 60_000 })));
     } else if (!selective(dir)) log("对方版本较旧，发来了全部内容；只合并选中的部分。");
     fetched.fetchedFiles = readdirSync(fetched.filesDir);
     return fetched;
