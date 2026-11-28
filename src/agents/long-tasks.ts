@@ -147,6 +147,10 @@ export async function changeLongTask(app: App, id: string, command: LongTaskComm
   const task = saveLongTaskChange(app, id, command);
   if (command.action === "detach") {
     const { restoreWorkerQuestions } = await import("./asks.ts");
+    if (task.sourceKind === "study" && task.sourceId) {
+      const { resumeStudyWithoutFollow } = await import("../studies/auto-follow.ts");
+      resumeStudyWithoutFollow(app, task.sourceId);
+    }
     await restoreWorkerQuestions(app, task.id);
   }
   if (command.action !== "supplement") {

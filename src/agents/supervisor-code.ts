@@ -123,5 +123,5 @@ export async function answerWorkerQuestion(app: App, taskId: string, questionId:
   const ask = getAsk(app, questionId);
   if (ask.status === "answered" && ask.answer === answer.trim()) return;
   const choice = ask.options.findIndex(option => option.label === answer.trim());
-  await answerAsk(app, questionId, { by: ownerId && ask.handler?.startsWith("study-") ? ownerId : "supervisor", ...(choice < 0 ? { text: answer } : { choice }) });
+  await answerAsk(app, questionId, { by: ownerId && (ask.handler?.startsWith("study-") || ask.handler === "flow-stage") ? ownerId : "supervisor", ...(choice < 0 ? { text: answer } : { choice }) });
 }

@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { autoFollowFor, ensureAutoFollow } from "../agents/auto-follow.ts";
-import { cancelAsk, conversationOfRun, createAsk, getAsk, restoreWorkerQuestions, type Ask } from "../agents/asks.ts";
+import { cancelAsk, conversationOfRun, createAsk, getAsk, type Ask } from "../agents/asks.ts";
 import type { LongTask } from "../agents/long-tasks.ts";
 import { wakeSupervisor } from "../agents/supervisor.ts";
 import { findThread } from "../agents/threads.ts";
@@ -35,7 +35,7 @@ export function studyGate(app: App, follow: LongTask | null, input: Parameters<t
   });
 }
 
-/** All three gates are tied to this attempt and round, including while an owner card is in flight. */
+/** Study gates are tied to this attempt and round, including while an owner card is in flight. */
 export function checkStudyGate(app: App, ask: Ask, ctx: Record<string, unknown>, by: string, choice: number | null, startsWork: boolean) {
   const id = String(ctx.itemId), item = getItem(app, id), f = itemFlow(app, id);
   if (ask.userId !== item.userId) throw new HttpError(403, "这个关卡不属于研究本人");
@@ -65,17 +65,14 @@ export function askStudyNextRound(app: App, f: ItemFlow, follow: LongTask, idle:
 }
 
 /** On detach the ordinary ask delivery restores the cards. Update the workflow's waiting party too. */
-export async function resumeStudyWithoutFollow(app: App, studyId: string) {
-  const task = one<{ id: string }>(app.db, "select id from long_tasks where source_kind='study' and source_id=? and status='ended'", studyId);
-  if (!task) return;
-  await restoreWorkerQuestions(app, task.id);
+export function resumeStudyWithoutFollow(app: App, studyId: string) {
   for (const s of itemStages(app, studyId)) {
     if (s.waitingOn === "跟进助手" && s.askId && getAsk(app, s.askId).status === "pending")
       changeStage(app, studyId, s.id, s.state, { waitingOn: "owner" }, { actor: "host" }, "已退出跟进，等本人选择");
   }
 }
 
-export function backfillStudyFollow(app: App) {
+export async function backfillStudyFollow(app: App) {
   if (!app.config.longTasks.auto.studies) return;
   let after = "";
   for (;;) {
@@ -83,7 +80,6 @@ export function backfillStudyFollow(app: App) {
       where f.item_id>? and f.ended_at is null and i.status not in (${CLOSED_STATUSES.map(() => "?").join(",")})
       and not exists (select 1 from long_tasks t where t.source_kind='study' and t.source_id=f.item_id)
       order by f.item_id limit 100`, after, ...CLOSED_STATUSES);
-    if (!rows.length) return;
     for (const { item_id: id, definition } of rows) {
       if (!isStudy({ definition: JSON.parse(definition) })) continue;
       const f = itemFlow(app, id)!;
@@ -94,15 +90,19 @@ export function backfillStudyFollow(app: App) {
         for (const s of itemStages(app, id)) {
           if (!s.askId) continue;
           const old = getAsk(app, s.askId);
-          if (old.status !== "pending" || old.handler !== "study-plan") continue;
+          const stage = f.definition.stages.find(d => d.id === s.id);
+          const confirmResult = old.handler === "flow-stage" && s.control.question === "done" && stage?.confirm === "supervisor";
+          if (old.status !== "pending" || (old.handler !== "study-plan" && !confirmResult)) continue;
           const ctx = one<{ context: string }>(app.db, "select context from asks where id=?", old.id)!;
-          cancelAsk(app, old.id, "研究方向已交给跟进助手");
-          const ask = studyGate(app, follow, { runId: null, userId: old.userId, question: old.question, options: old.options, allowText: old.allowText, context: JSON.parse(ctx.context) });
-          changeStage(app, id, s.id, s.state, { askId: ask.id, waitingOn: "跟进助手" }, { actor: "host" }, "等跟进助手选方向");
+          cancelAsk(app, old.id, "研究关卡已交给跟进助手");
+          const ask = studyGate(app, follow, { runId: null, userId: old.userId, question: old.question, options: old.options, allowText: old.allowText, context: { ...JSON.parse(ctx.context), round: f.round } });
+          changeStage(app, id, s.id, s.state, { askId: ask.id, waitingOn: "跟进助手" }, { actor: "host" }, confirmResult ? "等跟进助手验收结果" : "等跟进助手选方向");
         }
         if (f.roundClosedAt && f.definition.repeat && !f.nextRoundAt) askStudyNextRound(app, f, follow, idleRounds(app, id));
       });
     }
+    if (rows.length < 100) return;
     after = rows.at(-1)!.item_id;
+    await new Promise<void>(resolve => setImmediate(resolve));
   }
 }

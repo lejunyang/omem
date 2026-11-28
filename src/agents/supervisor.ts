@@ -124,14 +124,16 @@ export function supervisorFacts(app: App, task: LongTask) {
       union all select status='accepted', status not in ('accepted','blocked','cancelled'), updated_at from agent_work_tasks
         where work_id in (select source_id from task where source_kind='agentWork')
     )
-    select (select count(*) from workers where status in ('running','queued')) active,
+    select (select count(*) from workers where status in ('running','queued')) +
+      exists(select 1 from item_flows where item_id in (select source_id from task where source_kind='study')
+        and ended_at is null and (round_closed_at is null or next_round_at is not null)) active,
       (select count(*) from workers where charged) rounds,
-      (select count(*) from workers w cross join asks a on a.run_id=w.id
-        where a.status='pending' and json_extract(a.context,'$.supervisorTaskId')=?) pendingQuestions,
+      (select count(*) from asks where status='pending' and json_extract(context,'$.supervisorTaskId')=?) pendingQuestions,
       count(*) total, count(case when done then 1 end) done,
       count(case when open then 1 end) openItems,
       max(coalesce(max(updated_at),''),coalesce((select max((select at from run_events e where e.run_id=w.id order by seq desc limit 1)) from workers w),''),
-        coalesce((select max(created_at) from code_checkpoints where work_id in (select id from workers)),'')) lastChange
+        coalesce((select max(created_at) from code_checkpoints where work_id in (select id from workers)),''),
+        coalesce((select updated_at from item_flows where item_id in (select source_id from task where source_kind='study')),'')) lastChange
     from items`, task.id, laneOf(task.id), task.id)!;
 }
 

@@ -61,3 +61,11 @@ export function autoFollowInOrigin(app: App, threadId: string, userId: string) {
     and t.source_kind is not null and t.status in ('active','paused','draft') limit 2`, threadId, userId);
   return rows.length === 1 ? getLongTask(app, rows[0].id) : null;
 }
+
+/** Adopt active work once at service start, before its ordinary handoff cards are reconciled. */
+export async function backfillAutoFollow(app: App) {
+  const { backfillCodeFollow } = await import("./code-auto-follow.ts");
+  const { backfillStudyFollow } = await import("../studies/auto-follow.ts");
+  backfillCodeFollow(app);
+  await backfillStudyFollow(app);
+}

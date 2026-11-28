@@ -10,6 +10,7 @@ stages:
     by: { run: { agent: assistant, skill: study-map } }
     ai: strong
     done: confirm
+    confirm: supervisor
   - id: plan
     name: 定方向
     note: 对着功能清单提出这一轮往哪个方向试。

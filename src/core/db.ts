@@ -2582,6 +2582,7 @@ export const migrations: readonly string[] = [
    create index conversation_children on conversations(parent_id) where parent_id is not null;
    create index supervised_pending_asks on asks(json_extract(context,'$.supervisorTaskId'))
      where status='pending' and json_extract(context,'$.supervisorTaskId') is not null;`,
+  `create index item_flows_unfinished on item_flows(item_id) where ended_at is null;`,
 ];
 
 export type Db = DatabaseSync;

@@ -165,8 +165,8 @@ export async function boot(home?: string, opts: BootOptions = {}) {
     if (n) console.log(`[omem] ${n} 个交办或评审已经有了新的一轮（或已应用、丢弃），关掉它们旧的待处理卡片`);
   }
   {
-    const { backfillCodeFollow } = await import("./agents/code-auto-follow.ts");
-    backfillCodeFollow(app);
+    const { backfillAutoFollow } = await import("./agents/auto-follow.ts");
+    await backfillAutoFollow(app);
     const { reconcileWaiting } = await import("./agents/code-loop.ts");
     const r = reconcileWaiting(app);
     if (r.closed || r.woken || r.moved) console.log(`[omem] 修改项：关掉 ${r.closed} 张已经不等本人的卡片，为 ${r.woken} 个交办叫醒发起的助手，${r.moved} 个没有助手的交办交给本人`);

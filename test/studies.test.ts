@@ -1,8 +1,8 @@
-import { autoFollowFor } from "../src/agents/auto-follow.ts";
+import { autoFollowFor, backfillAutoFollow } from "../src/agents/auto-follow.ts";
 import { changeLongTask } from "../src/agents/long-tasks.ts";
+import { supervisorFacts } from "../src/agents/supervisor.ts";
 import { submitSupervisorReport } from "../src/agents/supervisor-report.ts";
 import { answerWorkerQuestion } from "../src/agents/supervisor-code.ts";
-import { backfillStudyFollow, resumeStudyWithoutFollow } from "../src/studies/auto-follow.ts";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -91,6 +91,28 @@ function configureFollow(app: App) {
   app.config.longTasks.supervisor = { profile: "demo-follow" };
 }
 
+it.each([true, false])("结果确认关卡按研究当前是否有跟进选择答复人（跟进 %s）", async follow => {
+  const app = fixture();
+  configureFollow(app);
+  app.config.longTasks.auto.studies = follow;
+  const item = upsertItem(app, undefined, { spaceId: "personal", title: "核对清单", kind: "watch" }, "user");
+  const flow = JSON.parse(definition());
+  flow.stages.unshift({ id: "map", name: "整理清单", by: { run: {} }, done: "confirm", confirm: "supervisor" });
+  saveFlow(app, JSON.stringify(flow), "user");
+  await startFlow(app, item.id, flow.id, owner);
+  const stage = () => getStage(app, item.id, "map");
+  const runId = stage().control.runId!;
+  await reportStage(app, item.id, "map", { state: "done", note: "清单已整理", evidence: [runId] }, { actor: "assistant", userId: "owner", runId });
+  const ask = getAsk(app, stage().askId!);
+  expect(stage().waitingOn).toBe(follow ? "跟进助手" : "owner");
+  if (follow) {
+    expect(ask.shownAt).toBeNull();
+    await answerWorkerQuestion(app, autoFollowFor(app, "study", item.id)!.id, ask.id, "确认");
+  } else await answerAsk(app, ask.id, { by: "owner", choice: 0 });
+  expect(stage().state).toBe("done");
+  expect(getAsk(app, ask.id).answeredBy).toBe(follow ? "supervisor" : "owner");
+});
+
 it("方向、预算内升档和本轮小结先交给同一个跟进，研究本人仍可选择", async () => {
   const f = await setup({ ai: "cheap", escalate: { to: "strong", max: 1 } }, "manual", true);
   const { app, item, s } = f, task = autoFollowFor(app, "study", item.id)!;
@@ -99,6 +121,7 @@ it("方向、预算内升档和本轮小结先交给同一个跟进，研究本�
   await proposeDirections(app, { item: item.id, directions: [planned(1)] }, f.by());
   expect(listAsks(app, { status: "pending" })).toEqual([]);
   expect(s("plan").waitingOn).toBe("跟进助手");
+  expect(supervisorFacts(app, task)).toMatchObject({ active: 1, pendingQuestions: 1 });
   await expect(answerWorkerQuestion(app, "other", askId("plan"), planned(1).goal)).rejects.toThrow();
   await answerWorkerQuestion(app, task.id, askId("plan"), planned(1).goal);
   expect(s("plan").note).toContain("跟进助手确认方向");
@@ -112,6 +135,7 @@ it("方向、预算内升档和本轮小结先交给同一个跟进，研究本�
   await result(f);
   await summary(f);
   const next = askId("summary");
+  expect(supervisorFacts(app, task)).toMatchObject({ active: 0, pendingQuestions: 1 });
   expect(getAsk(app, next).question).toContain("本轮核验结束");
   expect(listAsks(app, { status: "pending" })).toEqual([]);
   await answerWorkerQuestion(app, task.id, next, "开始下一轮");
@@ -143,7 +167,7 @@ it("只为进行中的研究补挂一次；退出时恢复待选方向，以后�
   const f = await setup(), { app, item } = f;
   configureFollow(app);
   await proposeDirections(app, { item: item.id, directions: [planned(1)] }, f.by());
-  backfillStudyFollow(app);
+  await backfillAutoFollow(app);
   expect(autoFollowFor(app, "study", item.id)).toBeNull();
   const original = f.s("plan").askId!;
   const ended = upsertItem(app, undefined, { spaceId: item.spaceId, title: "已结束的研究", kind: "watch" }, "user");
@@ -152,21 +176,26 @@ it("只为进行中的研究补挂一次；退出时恢复待选方向，以后�
   const ordinary = upsertItem(app, undefined, { spaceId: item.spaceId, title: "普通事项", kind: "todo" }, "user");
   saveFlow(app, JSON.stringify({ id: "ordinary", name: "普通流程", stages: [{ id: "do", name: "处理", by: "owner" }] }), "user");
   await startFlow(app, ordinary.id, "ordinary", owner);
+  const code = createRun(app, { kind: "code", spaceId: item.spaceId, title: "核对文档", input: { task: "核对文档", maxRounds: 4 } });
   app.config.longTasks.auto.studies = true;
-  backfillStudyFollow(app);
+  await backfillAutoFollow(app);
+  const codeTask = autoFollowFor(app, "code", code.id);
+  expect(codeTask?.goal).toBe("核对文档");
   expect(autoFollowFor(app, "study", ended.id)).toBeNull();
   expect(autoFollowFor(app, "study", ordinary.id)).toBeNull();
   const task = autoFollowFor(app, "study", item.id)!, routed = f.s("plan").askId!;
   expect(getAsk(app, original).status).toBe("cancelled");
-  backfillStudyFollow(app);
+  await backfillAutoFollow(app);
+  expect(autoFollowFor(app, "code", code.id)?.id).toBe(codeTask!.id);
   expect(f.s("plan").askId).toBe(routed);
   expect(getAsk(app, routed).shownAt).toBeNull();
   await changeLongTask(app, task.id, { action: "detach" });
-  await resumeStudyWithoutFollow(app, item.id);
+  expect(f.s("plan").waitingOn).toBe("owner");
+  expect(getAsk(app, routed).shownAt).toBeTruthy();
   expect(listAsks(app, { status: "pending" }).map(a => a.id)).toContain(routed);
   await expect(answerWorkerQuestion(app, task.id, routed, planned(1).goal)).rejects.toThrow();
   await answerAsk(app, routed, { by: "owner", choice: 0 });
-  backfillStudyFollow(app);
+  await backfillAutoFollow(app);
   expect(autoFollowFor(app, "study", item.id)).toBeNull();
   expect(f.s("try").control.trialId).toBeTruthy();
 });
