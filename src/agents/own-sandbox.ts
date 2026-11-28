@@ -124,8 +124,10 @@ export function runAccess(mode: Config["agents"]["fullAccess"], run: {
 }) {
   const force = (mode === "sandboxed" && !!run.box && (run.owner || run.guest)) ||
     (mode === "all" && run.owner && run.allowWrites && !run.box?.readOnly && !run.guest);
-  // Doubao historically granted always_allow to writable roles, independent of the per-role full switch.
-  const doubaoPermission = run.allowWrites || force ? "always_allow" : "ask_risky";
+  // Doubao grants always_allow to writable roles, and to the owner's own runs whose role has 完全访问 on:
+  // otherwise the CLI asks the owner in the Doubao app for each risky step of a background run.
+  // Guest turns keep risky approval even with the guest full-access setting.
+  const doubaoPermission = run.allowWrites || force || (run.legacyFull && run.owner && !run.guest) ? "always_allow" : "ask_risky";
   return { fullAccess: !!run.legacyFull || !!force, doubaoPermission,
     acpWritable: !run.box?.readOnly && (run.allowWrites || !!run.legacyFull) } as const;
 }

@@ -5,6 +5,10 @@ kind: reference
 updated: 2026-11-28
 ---
 
+## 豆包 CLI 跟随角色的“完全访问”（2026-11-29）
+
+本人自己的运行里，Agent 页给角色开了“完全访问”时，豆包 CLI 也用 `--permission-mode always_allow`。以前只有会写的角色和本人沙箱里的 `sandboxed` 轮次才这样，巡检这类不写文件的后台角色即使开了完全访问仍是 `ask_risky`，遇到风险操作会在本人的豆包客户端里弹确认。访客的轮次照旧用 `ask_risky`。`src/agents/own-sandbox.ts` 的 `runAccess`，测试 `test/full-access.test.ts`。
+
 ## 版本号读自 package.json（2026-11-28）
 
 `omem --version`、ACP 和 MCP 的 `clientInfo` / 服务名里的版本原来写死成 `0.0.1`，发 0.0.2 后仍报 0.0.1。现在统一由 `src/core/version.ts` 的 `packageVersion()` 读包的 `package.json`（源码和 `dist/` 两种位置都认）。

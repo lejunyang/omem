@@ -102,7 +102,8 @@ it("covers backend mode and ACP writes for every role, sandbox and global select
       const run = { owner, guest, box: boxed ? { readOnly: !writes } : undefined, allowWrites: writes };
       const doubaoPermission = writes || force ? "always_allow" : "ask_risky";
       expect(runAccess(mode, run), role).toEqual({ doubaoPermission, fullAccess: force, acpWritable: writes });
-      expect(runAccess(mode, { ...run, legacyFull: true })).toEqual({ doubaoPermission, fullAccess: true, acpWritable: !boxed || writes });
+      const fullDoubao = writes || force || (owner && !guest) ? "always_allow" : "ask_risky";
+      expect(runAccess(mode, { ...run, legacyFull: true })).toEqual({ doubaoPermission: fullDoubao, fullAccess: true, acpWritable: !boxed || writes });
     }
   }
 });
