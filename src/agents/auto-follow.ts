@@ -4,10 +4,11 @@ import { HttpError, now } from "../core/util.ts";
 import { addMessage, getThread } from "./threads.ts";
 import { followAiLabel, getLongTask, startLongTask, type FollowKind, type LongTask } from "./long-tasks.ts";
 
-type Source = { kind: FollowKind; sourceId: string; userId: string; spaceId: string; threadId?: string | null; goal: string };
+type Source = { sourceId: string; userId: string; spaceId: string; threadId?: string | null; goal: string }
+  & ({ kind: "study"; startingRound?: boolean } | { kind: Exclude<FollowKind, "study"> });
 
 function sourceTask(app: App, kind: FollowKind, id: string) {
-  const row = one<{ id: string }>(app.db, "select id from long_tasks where source_kind=? and source_id=?", kind, id);
+  const row = one<{ id: string }>(app.db, "select id from long_tasks where source_kind=? and source_id=? order by source_generation desc limit 1", kind, id);
   return row ? getLongTask(app, row.id) : null;
 }
 
@@ -22,13 +23,14 @@ export function autoFollowFor(app: App, kind: FollowKind, id: string) {
 export function ensureAutoFollow(app: App, source: Source): LongTask | null {
   return withinTx(app.db, () => {
     const existing = sourceTask(app, source.kind, source.sourceId);
-    // Ended attachments retain the owner's choice across later rounds and service restarts.
-    if (existing) return open(existing);
+    // A new research round can follow a completed one. An owner opt-out stays attached as "ended".
+    if (existing && !(source.kind === "study" && source.startingRound && existing.status === "done")) return open(existing);
     if (!app.config.longTasks.auto[source.kind === "study" ? "studies" : source.kind]) return null;
+    const threadId = source.threadId ?? (existing && getThread(app, existing.threadId).parentId);
     let task: LongTask;
     try {
-      task = startLongTask(app, { userId: source.userId, spaceId: source.spaceId, threadId: source.threadId ?? undefined,
-        goal: source.goal }, { kind: source.kind, id: source.sourceId });
+      task = startLongTask(app, { userId: source.userId, spaceId: source.spaceId, threadId: threadId ?? undefined,
+        goal: source.goal }, { kind: source.kind, id: source.sourceId, generation: (existing?.sourceGeneration ?? 0) + 1 });
     } catch (error) {
       // Invalid or missing AI settings must leave the original work available.
       if (!(error instanceof HttpError)) throw error;
@@ -36,7 +38,7 @@ export function ensureAutoFollow(app: App, source: Source): LongTask | null {
       return null;
     }
     const text = `这件事较长，由 ${followAiLabel(task.ai)} 跟进；说“不用跟进”就回到原来的方式。`;
-    const notice = queueThreadNotice(app, source.threadId ?? task.threadId, text, { autoFollowId: task.id });
+    const notice = queueThreadNotice(app, threadId ?? task.threadId, text, { autoFollowId: task.id });
     run(app.db, "update long_tasks set state=json_set(state,'$.notice',?) where id=?", notice, task.id);
     return task;
   });

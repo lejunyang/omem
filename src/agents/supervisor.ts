@@ -84,7 +84,7 @@ export function scheduleSupervisorTimer(app: App, task: LongTask, purpose: "chec
 }
 
 // The lane and parent edges both have indexes; never enumerate the installation's run history.
-const workers = `with recursive task as (select id,source_kind,source_id from long_tasks where id=?), related(id) as (
+const workers = `with recursive task as (select id,source_kind,source_id,status from long_tasks where id=?), related(id) as (
   select id from runs where lane=?
   union select r.id from task t join runs r on json_extract(r.input,'$.longTaskId')=t.id
     where r.kind='code' and json_extract(r.input,'$.longTaskId') is not null
@@ -119,21 +119,23 @@ export function supervisorUsage(app: App, task: LongTask) {
 }
 
 export function supervisorFacts(app: App, task: LongTask) {
-  return one<{ active: number; rounds: number; total: number; done: number; openItems: number; pendingQuestions: number; lastChange: string | null }>(app.db, workers + `, items as (
+  return one<{ active: number; rounds: number; total: number; done: number; openItems: number; pendingQuestions: number; lastChange: string | null }>(app.db, workers + `, study as (
+      select ended_at,round_closed_at,next_round_at,updated_at from item_flows
+      where item_id in (select source_id from task where source_kind='study' and status not in ('done','ended'))
+    ), items as (
       select state='done' done, state not in ('done','wontdo','reverted') open, updated_at from code_tasks where work_id in (select id from workers)
       union all select status='accepted', status not in ('accepted','blocked','cancelled'), updated_at from agent_work_tasks
         where work_id in (select source_id from task where source_kind='agentWork')
     )
     select (select count(*) from workers where status in ('running','queued')) +
-      exists(select 1 from item_flows where item_id in (select source_id from task where source_kind='study')
-        and ended_at is null and (round_closed_at is null or next_round_at is not null)) active,
+      exists(select 1 from study where ended_at is null and (round_closed_at is null or next_round_at is not null)) active,
       (select count(*) from workers where charged) rounds,
       (select count(*) from asks where status='pending' and json_extract(context,'$.supervisorTaskId')=?) pendingQuestions,
       count(*) total, count(case when done then 1 end) done,
       count(case when open then 1 end) openItems,
       max(coalesce(max(updated_at),''),coalesce((select max((select at from run_events e where e.run_id=w.id order by seq desc limit 1)) from workers w),''),
         coalesce((select max(created_at) from code_checkpoints where work_id in (select id from workers)),''),
-        coalesce((select updated_at from item_flows where item_id in (select source_id from task where source_kind='study')),'')) lastChange
+        coalesce((select updated_at from study),'')) lastChange
     from items`, task.id, laneOf(task.id), task.id)!;
 }
 

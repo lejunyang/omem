@@ -626,7 +626,6 @@ function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date, note = "") {
   if (!f.definition.repeat) throw new HttpError(409, "这份流程没有设置轮次");
   if (!roundComplete(app, f)) throw new HttpError(409, "这一轮还没做完，不能开始下一轮");
   closeRound(app, f, at);
-  followStudyRound(app, f, by.runId, note);
   const from = f.definition.stages.findIndex((d) => d.id === f.definition.repeat!.from);
   const noStarts = !itemStages(app, f.itemId).some((s) => f.definition.stages.slice(from).some((d) => d.id === s.id) && s.attempt > 0);
   atomic(app, () => {
@@ -640,6 +639,7 @@ function roundNow(app: App, f: ItemFlow, by: FlowActor, at: Date, note = "") {
     }
     if (by.actor === "host" && noStarts) run(app.db, "update item_flows set auto_streak=auto_streak+1 where item_id=?", f.itemId);
     const next = itemFlow(app, f.itemId)!;
+    followStudyRound(app, next, "start", by.runId, note);
     if (by.actor === "host" && next.autoStreak >= app.config.flows.autoAdvance) {
       const d = f.definition.stages[from];
       gate(app, next, d, getStage(app, f.itemId, d.id), "gate");
@@ -692,7 +692,7 @@ export async function startFlow(app: App, itemId: string, flowId: string | Inlin
     for (const d of f.stages) changeStage(app, itemId, d.id, "pending", {}, by, "加入流程");
     // The matter gets its 「关注」 (only reading) if it has none: its groups, one context, later replies.
     try { (await import("../channels/listen-items.ts")).flowStarted(app, itemId); } catch (e) { console.warn(`[omem] 没能给事项建关注：${(e as Error).message}`); }
-    followStudyRound(app, itemFlow(app, itemId)!, by.runId);
+    followStudyRound(app, itemFlow(app, itemId)!, "start", by.runId);
     initFollow(app, itemId, true);
     await advanceNow(app, item.id, "开始流程");
     return flowView(app, itemId);

@@ -10,12 +10,12 @@ import { CLOSED_STATUSES, getItem } from "../items/store.ts";
 import { changeStage, getStage, itemFlow, itemStages, type ItemFlow } from "../flows/store.ts";
 import { idleRounds, isStudy } from "./store.ts";
 
-export function followStudyRound(app: App, f: ItemFlow, runId?: string, note?: string) {
+export function followStudyRound(app: App, f: ItemFlow, reason: "start" | "backfill", runId?: string, note?: string) {
   if (!isStudy(f)) return null;
   const item = getItem(app, f.itemId);
   const origin = conversationOfRun(app, runId ?? null);
   const thread = origin ? findThread(app, origin) : null;
-  return ensureAutoFollow(app, { kind: "study", sourceId: item.id, userId: item.userId, spaceId: item.spaceId,
+  return ensureAutoFollow(app, { kind: "study", startingRound: reason === "start", sourceId: item.id, userId: item.userId, spaceId: item.spaceId,
     threadId: thread?.spaceId === item.spaceId && thread.userId === item.userId ? thread.id : undefined,
     goal: note || item.detail || item.title });
 }
@@ -85,7 +85,7 @@ export async function backfillStudyFollow(app: App) {
       const f = itemFlow(app, id)!;
       withinTx(app.db, () => {
         const origin = one<{ run_id: string }>(app.db, "select run_id from item_stage_log where item_id=? and at>=? and run_id is not null and note='加入流程' order by at limit 1", id, f.startedAt);
-        const follow = followStudyRound(app, f, origin?.run_id);
+        const follow = followStudyRound(app, f, "backfill", origin?.run_id);
         if (!follow) return;
         for (const s of itemStages(app, id)) {
           if (!s.askId) continue;

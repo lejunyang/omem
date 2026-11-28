@@ -52,7 +52,7 @@ type SupervisorNote = {
 };
 export type FollowKind = "study" | "code" | "agentWork";
 export type LongTask = {
-  sourceKind: FollowKind | null; sourceId: string | null;
+  sourceKind: FollowKind | null; sourceId: string | null; sourceGeneration: number;
   id: string; spaceId: string; userId: string; threadId: string; itemId: string;
   goal: string; ai: SupervisorAi; status: "draft" | "active" | "paused" | "ended" | "done";
   brief: Brief; confirmedAt: string | null; supplements: { at: string; text: string }[];
@@ -60,7 +60,7 @@ export type LongTask = {
   createdAt: string; updatedAt: string;
 };
 
-const columns = `source_kind sourceKind, source_id sourceId, id, space_id spaceId, user_id userId, thread_id threadId, item_id itemId, goal, ai, status,
+const columns = `source_kind sourceKind, source_id sourceId, source_generation sourceGeneration, id, space_id spaceId, user_id userId, thread_id threadId, item_id itemId, goal, ai, status,
   brief, confirmed_at confirmedAt, supplements, budget, notifications, notes, created_at createdAt, updated_at updatedAt`;
 type JsonColumn = "ai" | "brief" | "supplements" | "budget" | "notifications" | "notes";
 type Row = Omit<LongTask, JsonColumn> & Record<JsonColumn, string>;
@@ -99,7 +99,7 @@ function supervisorAi(app: App, userId: string, ai?: SupervisorAi): SupervisorAi
   return { profile: e.profile, model: e.model, effort: e.effort };
 }
 
-export function startLongTask(app: App, input: z.input<typeof startLongTaskSchema> & { userId: string }, source?: { kind: FollowKind; id: string }): LongTask {
+export function startLongTask(app: App, input: z.input<typeof startLongTaskSchema> & { userId: string }, source?: { kind: FollowKind; id: string; generation?: number }): LongTask {
   const { userId, ...args } = input;
   const { spaceId, threadId, goal, ...settings } = parse(startLongTaskSchema, args);
   requireTaskWrite(app, { userId, spaceId });
@@ -118,9 +118,9 @@ export function startLongTask(app: App, input: z.input<typeof startLongTaskSchem
       settings: { itemId: item.id, links: parent ? [parent.id] : [], ...(lark && { isolatedTopic: true,
         lastMessageId: parent.settings.lastMessageId, group: parent.settings.group, lark: parent.settings.lark }) } });
     const id = newId("lt"), at = now();
-    run(app.db, `insert into long_tasks(id,space_id,user_id,thread_id,item_id,goal,ai,brief,budget,notifications,created_at,updated_at,status,source_kind,source_id)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, spaceId, userId, thread.id, item.id, goal, JSON.stringify(ai),
-      JSON.stringify(initialBrief), JSON.stringify(budget), JSON.stringify(notifications), at, at, source ? "active" : "draft", source?.kind ?? null, source?.id ?? null);
+    run(app.db, `insert into long_tasks(id,space_id,user_id,thread_id,item_id,goal,ai,brief,budget,notifications,created_at,updated_at,status,source_kind,source_id,source_generation)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, spaceId, userId, thread.id, item.id, goal, JSON.stringify(ai),
+      JSON.stringify(initialBrief), JSON.stringify(budget), JSON.stringify(notifications), at, at, source ? "active" : "draft", source?.kind ?? null, source?.id ?? null, source?.generation ?? 1);
     wakeSupervisor(app, id, source ? `已接管现有工作 ${source.kind} ${source.id}。请为它起草首版任务书，写入报告的 brief，直接生效。现有工作照常推进，避免重复派活。` : "长任务已创建，请起草任务书", { immediate: true });
     return getLongTask(app, id);
   });
