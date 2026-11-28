@@ -12,7 +12,9 @@ import { queueCodeWork } from "../src/agents/code-delegate.ts";
 import { reviewMetrics } from "../src/agents/code.ts";
 import { planReview } from "../src/agents/review.ts";
 import { askPlan } from "../src/agents/review-chain.ts";
-import { addTask } from "../src/agents/code-tasks.ts";
+import { addTask, getTask, setWorkState, toAssistant } from "../src/agents/code-tasks.ts";
+import { createAsk, getAsk } from "../src/agents/asks.ts";
+import { followStudy } from "../src/studies/auto-follow.ts";
 import { createAgentWork, onWorkRunSettled, queueAgentRound } from "../src/agents/agent-work.ts";
 import { changeLongTask } from "../src/agents/long-tasks.ts";
 import { __testHandlers, addRunEvent, createRun, getRun, queuedInLane, setRunOutput } from "../src/agents/runs.ts";
@@ -236,6 +238,18 @@ it("研究里改缺陷的交办归研究的跟进，不另起一件；本人不�
     expect(followCodePlan(f.app, fix)).toBeNull();
     backfillCodeFollow(f.app);
     expect(all(f.app.db, "select id from long_tasks where source_kind='code'")).toEqual([]);
+
+    // Without a follow-up a fix that kept failing went to the owner; handing the study over again gives it to the follow-up.
+    const t = addTask(f.app, fix, { kind: "build", title: "核对示例" }, "coder");
+    toAssistant(f.app, fix, t.seq, "改了 3 次，验证还是没通过");
+    expect(getTask(f.app, fix, t.seq)).toMatchObject({ state: "owner", options: ["按原来的要求再做一次"] });
+    const card = createAsk(f.app, { runId: fix, userId: "owner", question: "T1 需要你决定", options: [{ label: "按原来的要求再做一次" }], context: { handler: "code-task", workId: fix, seq: t.seq } });
+    setWorkState(f.app, fix, { asks: { [String(t.seq)]: card.id } });
+    const again = followStudy(f.app, f.item.id, "owner");
+    expect(again.id).not.toBe(study.id);
+    expect(getTask(f.app, fix, t.seq)).toMatchObject({ state: "assistant", options: [] });
+    expect(getAsk(f.app, card.id).status).toBe("cancelled");
+    expect(JSON.stringify(queuedInLane(f.app, "supervisor:" + again.id, "supervise")!.input.events)).toContain("修改项问题");
   } finally {
     f.app.events.emit("close");
     if (!itemFlow(f.app, f.item.id)?.endedAt) await stopFlow(f.app, f.item.id);

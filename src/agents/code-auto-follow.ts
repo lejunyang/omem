@@ -2,7 +2,7 @@ import type { App } from "../core/app.ts";
 import { all, one, run, withinTx } from "../core/db.ts";
 import { ensureAutoFollow } from "./auto-follow.ts";
 import type { AgentWork } from "./agent-work.ts";
-import { updateTask } from "./code-tasks.ts";
+import { handOwnerTasksToFollow, updateTask } from "./code-tasks.ts";
 import { getRun, runUser } from "./runs.ts";
 import { getThread } from "./threads.ts";
 import { longTaskForRun } from "./supervisor-code.ts";
@@ -39,6 +39,7 @@ export function followCodePlan(app: App, rootId: string, additionalTasks = 0, es
       and json_extract(origin,'$.goal') is null`, task.goal, root.id);
     for (const { seq } of all<{ seq: number }>(app.db, `select seq from code_tasks where work_id=? and state='assistant'
       and json_extract(origin,'$.questionId') is null`, root.id)) updateTask(app, root.id, seq, {});
+    handOwnerTasksToFollow(app, root.id);
     return task;
   });
 }

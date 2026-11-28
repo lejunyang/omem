@@ -3,6 +3,7 @@ import { all, one, run, withinTx } from "../core/db.ts";
 import { HttpError } from "../core/util.ts";
 import { autoFollowFor, ensureAutoFollow } from "../agents/auto-follow.ts";
 import { cancelAsk, conversationOfRun, createAsk, getAsk, type Ask } from "../agents/asks.ts";
+import { handOwnerTasksToFollow } from "../agents/code-tasks.ts";
 import { followAiLabel, type LongTask } from "../agents/long-tasks.ts";
 import { wakeSupervisor } from "../agents/supervisor.ts";
 import { findThread } from "../agents/threads.ts";
@@ -42,6 +43,9 @@ function adoptStudy(app: App, f: ItemFlow, reason: "backfill" | "owner") {
     changeStage(app, id, s.id, s.state, { askId: ask.id, waitingOn: "跟进助手" }, { actor: "host" }, confirmResult ? "等跟进助手验收结果" : "等跟进助手选方向");
   }
   if (f.roundClosedAt && f.definition.repeat && !f.nextRoundAt) askStudyNextRound(app, f, follow, idleRounds(app, id));
+  // Its fixes asked the owner what a follow-up settles first (they reported to nobody): those go to the follow-up too.
+  for (const { work_id } of all<{ work_id: string }>(app.db, `select distinct t.work_id from code_tasks t join runs r on r.id=t.work_id
+    where t.state='owner' and r.kind='code' and json_extract(r.input,'$.itemId')=?`, id)) handOwnerTasksToFollow(app, work_id);
   return follow;
 }
 

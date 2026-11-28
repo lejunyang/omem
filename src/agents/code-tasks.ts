@@ -315,7 +315,31 @@ export function hasAssistant(app: App, rootId: string) {
  */
 export function toAssistant(app: App, rootId: string, seq: number, why: string, note?: Omit<TaskNote, "at">, patch: TaskPatch = {}): CodeTask {
   if (hasAssistant(app, rootId)) return updateTask(app, rootId, seq, { ...patch, state: "assistant", question: why, options: [] }, note);
-  return updateTask(app, rootId, seq, { ...patch, state: "owner", question: why, options: ["按原来的要求再做一次"] }, note);
+  return updateTask(app, rootId, seq, { ...patch, state: "owner", question: why, options: [RETRY_AS_ASKED] }, note);
+}
+const RETRY_AS_ASKED = "按原来的要求再做一次";
+
+/**
+ * Work that reported to no assistant (a study's fixes, a delegation from the web) asked the owner what an
+ * assistant settles first. Once a follow-up takes the work on, those tasks go to it and the owner's cards
+ * close; what the follow-up cannot settle it passes on to the owner. Returns how many tasks moved.
+ */
+export function handOwnerTasksToFollow(app: App, rootId: string) {
+  if ((lastRound(app, rootId).output as { codeChain?: unknown }).codeChain || !longTaskForRun(app, rootId)) return 0;
+  const asks = { ...(workState(app, rootId).asks ?? {}) };
+  let moved = 0;
+  for (const t of listTasks(app, rootId).filter(x => x.state === "owner")) {
+    const card = asks[String(t.seq)];
+    // An answer already given is the owner's: it is being applied.
+    if (card && one(app.db, "select 1 from asks where id=? and status='answered'", card)) continue;
+    if (card) lapseAsk(app, card, "交给跟进助手先判断");
+    delete asks[String(t.seq)];
+    updateTask(app, rootId, t.seq, { state: "assistant", options: t.options.filter(o => o !== RETRY_AS_ASKED) },
+      { by: "host", kind: "host", text: "交给了跟进，这一项先由跟进助手判断" });
+    moved++;
+  }
+  if (moved) setWorkState(app, rootId, { asks });
+  return moved;
 }
 
 /**
