@@ -65,20 +65,51 @@ export function hostMatches(pattern: string, hostname: string) {
   const host = pattern.toLowerCase();
   return host.startsWith("*.") ? hostname.endsWith(host.slice(1)) : hostname === host;
 }
-type CommandConditions = Pick<Extract<OperationRule["match"], {kind: "command"}>, "subcommand" | "argv" | "argsRegex">;
+type CommandConditions = Pick<OperationRule, "action"> & Pick<Extract<OperationRule["match"], {kind: "command"}>, "subcommand" | "argv" | "argsRegex">;
 /** Also embedded in the offline PATH wrapper. Keep this function self-contained. */
 export function commandArgsMatch(m: CommandConditions, args: string[], test: (pattern: string, input: string) => boolean) {
-  const words = args.filter(a => !a.startsWith("-"));
-  return (!m.subcommand || m.subcommand.every((w,i) => words[i] === w)) &&
+  function matchesPrefix(prefix: string[]) {
+    const restrictive = m.action === "deny" || m.action === "approve";
+    let options = true;
+    let mayBeValue = false;
+    // Track distinct unfinished prefix lengths, without enumerating combinations of option values.
+    let positions = new Set([0]);
+    for (const arg of args) {
+      if (options && arg === "--") {
+        options = false;
+        mayBeValue = false;
+        continue;
+      }
+      if (options && arg.startsWith("-") && arg !== "-") {
+        mayBeValue = !arg.includes("=");
+        continue;
+      }
+      const next = mayBeValue ? new Set(positions) : new Set<number>();
+      for (const pos of positions) {
+        if (arg !== prefix[pos]) {
+          if (!restrictive) return false;
+        } else if (pos + 1 === prefix.length) {
+          if (restrictive) return true;
+        } else {
+          next.add(pos + 1);
+        }
+      }
+      if (!next.size) return !restrictive;
+      positions = next;
+      mayBeValue = false;
+    }
+    return false;
+  }
+  return (!m.subcommand?.length || matchesPrefix(m.subcommand)) &&
     (!m.argv || m.argv.every(({index,regex}) => args[index] !== undefined && test(regex,args[index]!))) &&
     (!m.argsRegex || test(m.argsRegex,args.join(" ")));
 }
-function target(m: OperationRule["match"], op: Operation): boolean | undefined {
+function target({ match: m, action }: OperationRule, op: Operation): boolean | undefined {
   if (m.kind === "command" && op.kind === "command") {
     if (executableName(m.executable) !== executableName(op.executable)) return false;
     const args = op.argv;
     if (!args) return m.subcommand || m.argv || m.argsRegex ? undefined : true;
-    return commandArgsMatch(m,args,matches);
+    return commandArgsMatch({ ...m, action },args,matches);
   }
   if (m.kind === "http" && op.kind === "http") {
     const u = new URL(op.url);
@@ -103,7 +134,7 @@ export function decide(app: App, op: Operation, who: OperationWho): { rule?: Ope
   for (const rule of currentRules(app)) {
     if (!ruleApplies(rule, who)) continue;
     try {
-      const match = target(rule.match, op);
+      const match = target(rule, op);
       if (match === undefined) return { rule, action: "unavailable" };
       if (match) return { rule, action: rule.action };
     } catch (e) {

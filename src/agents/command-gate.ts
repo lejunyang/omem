@@ -74,7 +74,7 @@ export function syncCommandGate(home: string, rules: ({ command: string; args?: 
     mkdirSync(guarded, { recursive: true });
     const onlineOnly = new Set([...configured, ...declarations.filter(c => c.judge)].map(c => norm(c.name)));
     const offline = [...new Set([...declared, ...(sandbox ? ["git"] : [])])].filter(name => !onlineOnly.has(name)).map(name => [name, rules.filter(r => norm(r.command) === name).map(r => ({
-      subcommand: r.subcommand, argv: r.argv, argsRegex: r.argsRegex ?? r.args,
+      action: r.action, subcommand: r.subcommand, argv: r.argv, argsRegex: r.argsRegex ?? r.args,
     }))]);
     writeIfChanged(script, GATE_SCRIPT.replace("/*sandbox*/false", String(sandbox)).replace("/*local git*/false", String(sandbox && !declared.includes("git"))).replace("/*credential rules*/[]", () => JSON.stringify(offline)));
     const node = process.execPath;
@@ -355,7 +355,7 @@ child.on("close", async (code, signal) => {
 
 /** The guarded directory for an agent process of this app (written now), or null. */
 export function commandGateDir(app: App, sandbox = false) {
-  const rules = currentRules(app).flatMap(r => r.enabled && r.match.kind === "command" ? [{ ...r.match, command: r.match.executable }] : []);
+  const rules = currentRules(app).flatMap(r => r.enabled && r.match.kind === "command" ? [{ ...r.match, command: r.match.executable, action: r.action }] : []);
   const commands = app.config.security.protectedCommands;
   const sandboxHome = join(app.home, "bin", "sandbox");
   if (sandbox || existsSync(sandboxHome)) {
