@@ -4,7 +4,7 @@ import { closeSync, existsSync, openSync, statSync, mkdirSync, mkdtempSync, rmSy
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { AgentProfile } from "../core/config.ts";
-import { sandboxStartError, idleWatchdog, launch, resolveCommand, stop, touchWhileBusy } from "./spawn.ts";
+import { sandboxStartError, idleTimeoutFor, idleWatchdog, launch, resolveCommand, stop, touchWhileBusy } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { under } from "./own-sandbox.ts";
 import { aiUsageText, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
@@ -198,7 +198,7 @@ export async function runDoubaoCli(profile: AgentProfile, req: AgentRequest, emi
     let sessionId: string | undefined;
     try {
       await new Promise<void>((resolve, reject) => {
-        const watchdog = idleWatchdog(profile.idleTimeoutMs, () => {
+        const watchdog = idleWatchdog(idleTimeoutFor(profile), () => {
           stop(child);
           reject(new Error("豆包 CLI 长时间没有结果，已停止"));
         });

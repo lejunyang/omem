@@ -1,6 +1,6 @@
 import { keyedModelInfo } from "../core/config.ts";
 import type { AgentProfile } from "../core/config.ts";
-import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
+import { sandboxStartError, idleTimeoutFor, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { replyFromSegments, type AgentEvent, type AgentRequest, type AgentResult } from "./types.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
@@ -86,7 +86,7 @@ export async function runCli(profile: AgentProfile, req: AgentRequest, emit: (e:
   let sessionId: string | undefined;
   const toolNames = new Map<string, string>();
   await new Promise<void>((resolve, reject) => {
-    const watchdog = idleWatchdog(profile.idleTimeoutMs, () => {
+    const watchdog = idleWatchdog(idleTimeoutFor(profile), () => {
       stop(child);
       reject(new Error("Agent 长时间没有活动，已停止"));
     });

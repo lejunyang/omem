@@ -8,7 +8,7 @@ import { archiveSession } from "./session-archive.ts";
 import { requireReviewModel, resolveModelOption } from "./models.ts";
 import { launchConfigEnv, requirePluginBackend } from "./catalog.ts";
 import { codexAcpEnv } from "./codex-launch.ts";
-import { sandboxStartError, idleWatchdog, launch, stop } from "./spawn.ts";
+import { sandboxStartError, idleTimeoutFor, idleWatchdog, launch, stop } from "./spawn.ts";
 import { accountOf } from "./sandbox.ts";
 import { isQuotaMessage } from "./capacity.ts";
 import { claudeRateLimitEvent } from "./quota.ts";
@@ -174,6 +174,7 @@ export function setCatalogRetryForTests(v: typeof catalogRetryMs) {
  * with a retryable error; one that did not goes on with the agent's defaults after two tries.
  */
 export async function openAcp(profile: AgentProfile, opts: AcpOpenOptions, emitSetup: (e: AgentEvent) => void = () => {}): Promise<AcpHandle> {
+  profile = { ...profile, idleTimeoutMs: idleTimeoutFor(profile) };
   const named = !!(opts.strictSelection?.model || opts.strictSelection?.effort);
   const waits = named ? catalogRetryMs.named : catalogRetryMs.other;
   for (let attempt = 0; ; attempt++) {

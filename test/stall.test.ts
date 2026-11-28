@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runAcp } from "../src/agents/acp.ts";
 import { isRetryableAgentError } from "../src/agents/runner.ts";
+import { idleTimeoutFor } from "../src/agents/spawn.ts";
 import { agentProfileSchema } from "../src/core/config.ts";
 import type { AgentEvent } from "../src/agents/types.ts";
 
@@ -28,6 +29,16 @@ describe("agent stalls and provider queue", () => {
     expect(String(err.message)).toMatch(/没有任何活动/);
     expect(isRetryableAgentError(err)).toBe(false);
   }, 20_000);
+
+  it("gives the highest efforts more silence before a turn counts as stalled", async () => {
+    expect([undefined, "high", "xhigh", "XHigh", "max"].map(effort => idleTimeoutFor({ idleTimeoutMs: 600_000, effort }))).toEqual([600_000, 600_000, 1_200_000, 1_200_000, 1_800_000]);
+    // The same 4.5 s of thinking stops a turn at the default effort and passes at xhigh.
+    const quiet = fake({ FAKE_DELAY: "4500" }, 3000);
+    const stopped = await runAcp(quiet, { cwd: process.cwd(), prompt: "hi" }, () => {}).catch((e) => e);
+    expect(stopped).toBeInstanceOf(Error);
+    const r = await runAcp({ ...quiet, effort: "xhigh" }, { cwd: process.cwd(), prompt: "hi" }, () => {});
+    expect(r.stopReason).toBe("end_turn");
+  }, 30_000);
 
   it("keeps waiting while the provider reports a queue longer than the idle budget", async () => {
     const events: AgentEvent[] = [];

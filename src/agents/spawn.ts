@@ -167,6 +167,16 @@ export function touchWhileBusy(pid: number | undefined, watchdog: { touch(): voi
   return () => clearInterval(timer);
 }
 
+/**
+ * How long a backend may stay silent at its effort. At the highest efforts a model can think for over ten
+ * minutes without sending anything (Codex at xhigh / max, 2026-11-26..28: six runs stopped by the default
+ * limit after a tool result, one just as it answered), so those get a multiple of the profile's idle limit.
+ */
+export const EFFORT_IDLE_FACTOR: Readonly<Record<string, number>> = { xhigh: 2, max: 3 };
+export function idleTimeoutFor(profile: { idleTimeoutMs: number; effort?: string | null }) {
+  return Math.round(profile.idleTimeoutMs * (EFFORT_IDLE_FACTOR[String(profile.effort ?? "").toLowerCase()] ?? 1));
+}
+
 /** Abort if the agent stays silent for too long; any activity resets the timer. */
 export function idleWatchdog(ms: number, onIdle: () => void) {
   let timer = setTimeout(onIdle, ms);
