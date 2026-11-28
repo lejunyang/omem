@@ -18,7 +18,7 @@ async function relay(port: number) {
 }
 if (Number(callback)) await relay(Number(callback));
 const proxy = "http://127.0.0.1:" + await relay(0);
-const env = { ...process.env };
+const env: NodeJS.ProcessEnv = { ...process.env, NODE_USE_ENV_PROXY: process.env.NODE_USE_ENV_PROXY ?? "1" };
 for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]) {
   env[name] = env[name.toLowerCase()] = name === "NO_PROXY" ? "127.0.0.1,localhost" : proxy;
 }

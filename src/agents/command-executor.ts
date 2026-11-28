@@ -3,7 +3,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -95,6 +95,22 @@ function executorMounts(app: App, user: string, scope: CommandSandbox, call: Cal
   const runtime = dirname(dirname(process.execPath));
   if (writable.some(dir => under(runtime, dir) || under(dir, runtime))) throw new Error("执行器运行库位于 Agent 可写目录");
   ro.push(runtime, file);
+  // Standalone pnpm's bin launcher imports its sibling dist tree (outside node_modules).
+  if (call.command === "pnpm" && basename(dirname(file)) === "bin") {
+    const root = dirname(dirname(file));
+    const manifest = join(root, "package.json"), dist = join(root, "dist");
+    if (existsSync(join(dist, "pnpm.mjs")) && statSync(manifest, { throwIfNoEntry: false })?.isFile()) {
+      if (canonical(manifest) !== manifest || canonical(dist) !== dist || writable.some(dir => under(root, dir) || under(dir, root)))
+        throw new Error("pnpm 安装目录与 Agent 可写目录重叠");
+      if (JSON.parse(readFileSync(manifest, "utf8")).name === "pnpm") {
+        ro.push(dist, manifest);
+        for (const name of ["pnpm.cjs", "pnpm.mjs"]) {
+          const path = join(dirname(file), name);
+          if (canonical(path) === path && existsSync(path)) ro.push(path);
+        }
+      }
+    }
+  }
   const dependencies = file.indexOf("/node_modules/");
   if (dependencies > 0 && call.command !== "lark-cli") {
     const modules = file.slice(0, dependencies) + "/node_modules";

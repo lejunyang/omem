@@ -100,6 +100,11 @@ const config = require("node:fs").readFileSync(process.env.HOME + "/.npmrc", "ut
 const token = config.match(/^\/\/registry\.example\.org\/:_authToken=\$\{(\w+)\}$/m)?.[1];
 process.exit(token && process.env[token] === "fixture-npm" && !("GH_TOKEN" in process.env) ? 0 : 23);
 `, { mode: 0o755 });
+  const pnpm = join(root, "standalone-pnpm");
+  mkdirSync(join(pnpm, "bin"), { recursive: true }); mkdirSync(join(pnpm, "dist"));
+  writeFileSync(join(pnpm, "package.json"), JSON.stringify({ name: "pnpm" }));
+  writeFileSync(join(pnpm, "bin", "pnpm"), '#!/usr/bin/env node\nimport("../dist/pnpm.mjs");\n', { mode: 0o755 });
+  writeFileSync(join(pnpm, "dist", "pnpm.mjs"), 'if (process.env.NPM_TOKEN !== "fixture-npm") process.exit(23);');
   const entry = join(pkg, "cli.js"), link = join(bin, "samplecli");
   writeFileSync(join(pkg, "package.json"), JSON.stringify({ bin: { samplecli: "./cli.js" } }));
   writeFileSync(entry, '#!/usr/bin/env node\nconst fs=require("node:fs"); process.exit(fs.existsSync(process.env.HOME+"/.git-credentials") && fs.statSync(process.env.HOME+"/.git-credentials").size ? 0 : 23);', { mode: 0o755 });
@@ -120,13 +125,14 @@ esac
 `, { mode: 0o755 });
   copyFileSync(git, join(cwd, "git-fixture"));
   copyFileSync(entry, join(cwd, "copy.js"));
-  vi.stubEnv("HOME", home); vi.stubEnv("OMEM_DESKTOP_TOOLS", "off"); vi.stubEnv("PATH", [bin, join(python, "bin"), process.env.PATH].join(":"));
+  vi.stubEnv("HOME", home); vi.stubEnv("OMEM_DESKTOP_TOOLS", "off"); vi.stubEnv("PATH", [bin, join(pnpm, "bin"), join(python, "bin"), process.env.PATH].join(":"));
   const server = await startServer(app, { host: "127.0.0.1", port: 0, quiet: true });
   app.config.agents.ownSandbox.mode = "require";
   app.config.security.operationRules = ["samplecli", "guarded-tool", "samplepy"].map(executable => ({
     id: executable, revision: 1, enabled: true, action: "deny", match: { kind: "command", executable },
   }));
   app.config.security.operationRules.push({ id: "npm-install", revision: 1, enabled: true, action: "allow", match: { kind: "command", executable: "npm" } });
+  app.config.security.operationRules.push({ id: "pnpm-install", revision: 1, enabled: true, action: "allow", match: { kind: "command", executable: "pnpm" } });
   const profile = agentProfileSchema.parse({ id: "fixture", transport: "acp", command: "/bin/sh", env: { NPM_TOKEN: "fixture-npm" } });
   const prep = prepareRun(app, { actor: { role: "coder" }, spaceId: "personal", runId: null, profile, cwd });
   const box = prep.isolation.box!;
@@ -166,6 +172,8 @@ esac
       ["gh", { runId: null, argv: ["auth", "status"], cwd }],
       ["npm", { runId: null, argv: ["install"], cwd }],
     ]);
+    const install = await invoke("/bin/sh", ["-ec", "pnpm install"]);
+    expect(install.code, install.out).toBe(0);
     const remote = await invoke("/bin/sh", ["-ec", [
       "git status", "git remote -v", "git remote add update url", "git remote remove update",
       "git push", "git -C . remote update --prune origin",
