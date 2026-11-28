@@ -1,5 +1,6 @@
 import type { Writable } from "node:stream";
 import { sandboxNpmrc } from "./sandbox-npmrc.ts";
+import { openDataView } from "./sandbox-view.ts";
 import { openHomeLayer } from "./sandbox-home.ts";
 import { withPinnedBinds } from "./bwrap-spawn.ts";
 import { commandMounts } from "./command-mounts.ts";
@@ -72,46 +73,59 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   const account = opts.ownSandbox ?? opts.sandbox;
   const npmrc = account && join(canonical(account.home), ".npmrc");
   const registryFile = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => under(npmrc, p)) ? npmrc : undefined;
-  let boxed;
+  let view: ReturnType<typeof openDataView> | undefined;
   let layer: ReturnType<typeof openHomeLayer> | undefined;
-  if (opts.ownSandbox) {
-    const box = opts.ownSandbox;
-    const cwd = canonical(opts.cwd);
-    const plan = box.plan;
-    for (const dir of [box.runDir, ...box.state]) {
-      if (!dir || !plan.rw.includes(dir)) continue;
-      if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-    }
-    if (box.homeStore && !plan.ro.includes(box.home)) {
-      layer = openHomeLayer(box.homeStore, [...plan.hide, ...(box.masked ?? [])], [...plan.ro, ...plan.rw]);
-    }
-    boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-      ...bwrapArgs({ ...plan, overlay: layer?.overlay, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
-  } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, registryFile) : null;
-  // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
-  const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;
-  const start = (argv: string[], fds: number[]) => {
-    const child = spawn(boxed?.file ?? resolved.file, argv, {
-      cwd: opts.cwd, env: boxed?.env ?? env,
-      stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...(config ? ["pipe" as const] : []), ...fds],
-      shell: false, windowsHide: true, detached: process.platform !== "win32",
+  try {
+    let boxed;
+    if (opts.ownSandbox) {
+      const box = opts.ownSandbox;
+      const cwd = canonical(opts.cwd);
+      const plan = box.plan;
+      for (const dir of [box.runDir, ...box.state]) {
+        if (!dir || !plan.rw.includes(dir)) continue;
+        if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+      }
+      if (box.homeStore && !plan.ro.includes(box.home)) {
+        layer = openHomeLayer(box.homeStore, [...plan.hide, ...(box.masked ?? [])], [...plan.ro, ...plan.rw]);
+      }
+      if (box.dataView) {
+        try { view = openDataView(box.dataView, [...plan.ro, ...plan.rw, ...plan.hide, ...(box.masked ?? []).filter(existsSync), ...(plan.pointers ?? []).map(p => p.path)], plan.links); }
+        catch (error) { box.onSandboxStatus?.("数据只读视图不可用，保留私有数据遮罩：" + (error as Error).message); }
+      }
+      boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
+        ...bwrapArgs({ ...plan, dataView: view && { source: view.dir, path: box.data }, overlay: layer?.overlay, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
+    } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, registryFile) : null;
+    // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
+    const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;
+    const start = (argv: string[], fds: number[]) => {
+      const child = spawn(boxed?.file ?? resolved.file, argv, {
+        cwd: opts.cwd, env: boxed?.env ?? env,
+        stdio: [opts.stdin ?? "pipe", "pipe", "pipe", ...(config ? ["pipe" as const] : []), ...fds],
+        shell: false, windowsHide: true, detached: process.platform !== "win32",
+      });
+      if (config) {
+        const input = child.stdio[3] as Writable;
+        input.on("error", () => {});
+        input.end(config);
+      }
+      return child;
+    };
+    const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, config ? 4 : 3) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
+    if (view) child.once("close", view.close);
+    const saveHome = layer?.close;
+    if (saveHome) child.once("close", () => {
+      try {
+        if (saveHome()) opts.ownSandbox?.onSandboxStatus?.("同一身份有并发 HOME 修改，重叠路径采用后结束运行的改动。");
+      } catch (error) { opts.ownSandbox?.onSandboxStatus?.("保存 HOME 层失败：" + (error as Error).message); }
     });
-    if (config) {
-      const input = child.stdio[3] as Writable;
-      input.on("error", () => {});
-      input.end(config);
-    }
+    child.stdin?.on("error", () => {});
     return child;
-  };
-  const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, config ? 4 : 3) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
-  if (layer) child.once("close", () => {
-    try {
-      if (layer.close()) opts.ownSandbox?.onHomeMerge?.("同一身份有并发 HOME 修改，重叠路径采用后结束运行的改动。");
-    } catch (error) { opts.ownSandbox?.onHomeMerge?.("保存 HOME 层失败：" + (error as Error).message); }
-  });
-  child.stdin?.on("error", () => {});
-  return child;
+  } catch (error) {
+    view?.close();
+    layer?.close();
+    throw error;
+  }
 }
 
 export class SandboxStartError extends Error {}

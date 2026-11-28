@@ -51,7 +51,8 @@ export const defaultLoginPaths = [...new Set([
 ])].map(path => "~/" + path).concat(["/run/docker.sock", "/run/podman/podman.sock", "/run/systemd/private", "/run/dbus/system_bus_socket"]);
 
 export type OwnMountConfig = {
-  homeStore?: import("./sandbox-home.ts").HomeStore; onHomeMerge?: (message: string) => void;
+  dataView?: ReturnType<typeof import("./sandbox-data.ts").sandboxData>;
+  homeStore?: import("./sandbox-home.ts").HomeStore; onSandboxStatus?: (message: string) => void;
   data: string; home: string; state: string[]; stateFiles?: string[]; writable: string[]; hidden: string[];
   isolatedNetwork?: boolean; network?: SandboxNetwork; masked?: string[]; runtime: string[]; secretEnv: string[]; readOnly: boolean; snapshot?: string; runDir?: string; artifactDir?: string;
 };

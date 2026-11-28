@@ -118,6 +118,7 @@ const inside = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWit
 
 export type SandboxPlan = {
   privateTmp?: string;
+  dataView?: { source: string; path: string };
   overlay?: import("./sandbox-home.ts").HomeOverlay;
   minimalRoot?: boolean;
   commandMounts?: string[];
@@ -199,6 +200,7 @@ export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
       return [...layer.sources.flatMap(src => ["--overlay-src", src]), "--overlay", layer.upper, layer.work, path];
     }
     if (kind === "dir") return ["--perms", "0700", "--dir", path];
+    if (kind === "tmpfs" && plan.dataView?.path === path) return ["--ro-bind", plan.dataView.source, path];
     if (kind === "tmpfs" && path === "/tmp" && plan.privateTmp) return ["--bind", plan.privateTmp, path];
     if (kind === "tmpfs") return ["--tmpfs", path];
     return [kind === "ro" ? "--ro-bind-try" : "--bind", path, path];

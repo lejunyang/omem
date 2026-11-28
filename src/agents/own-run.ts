@@ -16,6 +16,7 @@ import { backendCapabilities } from "./capabilities.ts";
 import { accountOf, egressRequested, omemInstallDir, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 import { resolveCommand } from "./spawn.ts";
 import { doubaoExecutable } from "./doubao-cli.ts";
+import { sandboxData } from "./sandbox-data.ts";
 import { homeStore, homeLayers, overlaySupport } from "./sandbox-home.ts";
 import { addRunEvent, runUser } from "./runs.ts";
 import { defaultLoginPaths, canonical, normalizeSandbox, ownMounts, shortPath, under, type OwnSandbox } from "./own-sandbox.ts";
@@ -73,10 +74,12 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
   }
   const box = planRun(app, profile, cwd, readOnly, runId, context, settings, state);
   const store = homeStore(box.data, box.home, context.userId ?? runUser(app, runId ?? null));
-  const overlay = context.credentialState || context.restricted ? { ok: false, reason: "本轮使用受限身份" } : overlaySupport(store);
+  const overlay = box.isolatedNetwork ? { ok: false, reason: "出网隔离只挂运行所需目录，隔开 HOME 内的宿主套接字" }
+    : context.credentialState || context.restricted ? { ok: false, reason: "本轮使用受限身份" } : overlaySupport(store);
+  box.onSandboxStatus = text => { if (runId) addRunEvent(app, runId, "status", { text }); else console.warn(text); };
+  if (!context.credentialState && !context.restricted) box.dataView = sandboxData(app, store.identity);
   if (overlay.ok) {
     box.homeStore = store;
-    box.onHomeMerge = text => { if (runId) addRunEvent(app, runId, "status", { text }); else console.warn(text); };
   }
   return { box, note: (overlay.ok ? "HOME 的修改保存在本身份层。" : "HOME 只读：" + overlay.reason + "。") + "在 omem 沙箱里。可写：" + [...box.plan.rw.map(p => shortPath(p, box.home)), "/tmp（本轮临时目录）"].join("、") + "。" };
 }
@@ -103,7 +106,9 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   for (const file of existing) {
     if (!statSync(file).isFile()) throw new Error("沙箱状态文件需要普通文件：" + file);
   }
-  const runtime = [join(data, "bin"), join(data, "library", "_skills"), join(data, "agent-skills", "hubs"), omemInstallDir(), dirname(dirname(process.execPath)),
+  const machineSkills = (context.userId ?? runUser(app, runId ?? null)) === "owner" && !context.restricted
+    ? [join(data, "library", "_skills"), join(data, "agent-skills", "hubs")] : [];
+  const runtime = [join(data, "bin"), ...machineSkills, omemInstallDir(), dirname(dirname(process.execPath)),
     ...mounts.map(p => expandPath(p))].map(canonical);
   const isolatedNetwork = !!profile && egressRequested(app.config, profile, true);
   const dependencies = join(omemInstallDir(), "node_modules");
