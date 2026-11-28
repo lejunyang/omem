@@ -1,6 +1,7 @@
 import { checkSupervisorBasis, createWorkerAsk, longTaskForRun } from "./supervisor-code.ts";
 import { classSchema, specAiSchema } from "../core/ai-policy-schema.ts";
 import { proposalArgs, startPolicyDraft, submitPolicyDraft } from "./ai-policy-proposal.ts";
+import { proposalSchema as operationRuleProposal, proposeOperationRule } from "../remote/operation-rule.ts";
 import { groupPick, policyScope } from "./ai-policy.ts";
 import { inlineStages } from "../flows/inline.ts";
 import { reconcileResultSchema } from "../flows/reconcile-schema.ts";
@@ -1728,6 +1729,17 @@ def({
     noise: z.boolean().optional(),
   }),
   handler: async (ctx, a) => (await import("../remote/recordings.ts")).readRecording(ctx.app, a.id, ctx.userId ?? OWNER, a),
+});
+
+def({
+  name: "propose_operation_rule",
+  description: "起草一条网页请求操作规则，由本人点启用后生效。本人说刚才某一步的接口要审批，先用 read_recording part=requests 找到那个请求，拿不准就问本人。默认由发起人（caller）批准。也可以直接指定方法、主机和路径。",
+  write: true, schema: operationRuleProposal,
+  handler: (ctx, a) => {
+    if ((ctx.userId ?? OWNER) !== OWNER) throw new HttpError(403, "只有本人可以起草操作规则");
+    const ask = proposeOperationRule(ctx.app, ctx.runId, a);
+    return `操作规则草稿等本人确认：${ask.id}`;
+  },
 });
 
 def({

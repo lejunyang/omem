@@ -146,7 +146,7 @@ function stepLine(s: any, dir?: string): string {
   const where = a.heading ? `在「${truncate(String(a.heading), 60)}」下` : "";
   const context = role || where ? `（${[role, where].filter(Boolean).join("，")}）` : "";
   const changes = (s.changes ?? []).slice(0, 4).map((c: any) => truncate(typeof c === "string" ? c : JSON.stringify(c), 160));
-  const net = (s.network ?? []).slice(0, 4).map((n: any) => `${n.method ?? ""} ${truncate(String(n.url ?? ""), 120)} → ${n.status ?? "?"}`);
+  const net = (s.network ?? []).slice(0, 4).map((n: any) => `${n.method ?? ""} ${truncate(String(n.url ?? ""), 120)} → ${n.status ?? "?"}${n.ref ? ` [${n.ref}]` : ""}`);
   const shot = dir && s.screenshots?.[0]?.path ? join(dir, String(s.screenshots[0].path)) : "";
   return [
     `#${s.id} ${what}${context}${a.url ? ` @ ${truncate(String(a.url), 100)}` : ""}`,
@@ -234,7 +234,13 @@ const ordered = (list: Endpoint[]) => [...list.filter(isWrite), ...list.filter((
 function endpointText(e: Endpoint, n: number, bodies: boolean): string {
   const steps = e.steps.length ? `（第 ${e.steps.slice(0, 6).join("、")}${e.steps.length > 6 ? " 等" : ""} 步）` : "（不在哪一步里）";
   const ex = example(e);
-  const head = `${n}. ${e.method} ${e.host}${e.path} → ${e.statuses.slice(0, 3).join("/")}${e.requests.length > 1 ? ` ×${e.requests.length}` : ""}${steps}${e.noise ? ` [${e.noise}]` : ""} [${ex.id}]`;
+  // A single endpoint can be called by several buttons. Keep a selectable request
+  // number for each displayed step, even when the body example came from another.
+  const refs = e.steps.length > 1 ? e.steps.slice(0, 6).map(step => {
+    const request = e.requests.find(r => r.step === step);
+    return `第 ${step} 步 [${request!.id}]`;
+  }).join("、") : "";
+  const head = `${n}. ${e.method} ${e.host}${e.path} → ${e.statuses.slice(0, 3).join("/")}${e.requests.length > 1 ? ` ×${e.requests.length}` : ""}${steps}${e.noise ? ` [${e.noise}]` : ""} [${ex.id}]${refs ? `\n   分步请求：${refs}` : ""}`;
   if (!bodies) return head;
   const body = (v: unknown) => (v == null || v === "" ? "" : truncate(typeof v === "string" ? v : JSON.stringify(v), 1_500));
   const query = ex.url.includes("?") ? truncate(ex.url.slice(ex.url.indexOf("?")), 300) : "";
