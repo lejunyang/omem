@@ -12,6 +12,7 @@ updated: 2026-11-28
 - 重启后运行的处理函数照常重跑，`openAcpOnce` 先按运行、角色或检查（`AgentRequest.hostSlot`，runner 填）、AI 和目录找留着的宿主（`claimHost`）：接回后重放输出（重启前已上报的只拼回复），发 `_omem/await_turn` 等原来那个 `session/prompt` 的结果，不重发提示。Agent 的旧工具令牌核对哈希后代表新的一轮（`tools.ts` 的 `aliasToolToken`），沙箱的 `/tmp` 沿用启动时那个。对不上的宿主停掉。
 - 表 `agent_hosts`（本机，不同步）。宿主持有的后端会话在清理账上记成宿主的 pid，活着时不会被清理；启动时和每分钟清一遍（`sweepAgentHosts`），只经套接字让宿主停，不按 pid 杀。
 - 不走宿主：API key 中转的后端、出网隔离的运行、云端 HTTP 工具的一轮、对话和后台复用的会话、探测，以及用了 HOME 写时复制层或数据只读视图的本人沙箱运行（层和视图随 omem 进程结束，`src/agents/spawn.ts`）。
+- Agent 在 omem 第一次连上宿主之前就退出时（沙箱挂载失败、命令没登录），宿主留着它的 stderr（最多 64 KiB）和退出码，等 stderr 读完、omem 连上后按顺序交出（`src/agents/agent-host.ts`）。以前宿主只转发给已连上的 omem，启动失败的原因丢掉，运行只报“Agent 进程退出（1）”或 10 秒没有活动。
 - 测试：`test/agent-host.test.ts`，`test/fake-acp-agent.ts` 加 `FAKE_MODE=gap`；`OMEM_TEST_HOSTED=1` 让任何测试经宿主跑（`test/helpers.ts` 默认关）。设计在 `docs/v2/restart-hold.md`。
 
 ## 沙箱可读取已有本地仓库的远端副本（2026-11-28）

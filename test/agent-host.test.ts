@@ -1,8 +1,10 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { detachHostsForShutdown, setHostGraceForTests, sweepAgentHosts, type HostRow } from "../src/agents/hosted.ts";
+import { detachHostsForShutdown, HostedChild, setHostGraceForTests, sweepAgentHosts, type HostRow } from "../src/agents/hosted.ts";
 import { runRole } from "../src/agents/runner.ts";
 import { addRunEvent, createRun, markRestarted } from "../src/agents/runs.ts";
 import { forgetToolTokensForTests } from "../src/agents/tools.ts";
@@ -84,6 +86,43 @@ async function comeBack(home: string, port: number | undefined, env: Record<stri
 }
 
 const reply = (text: string | undefined) => JSON.parse(String(text).replace(/^第二段：/, "")) as { pid: number; prompts: number; toolError: boolean; search: string; permission: string; url: string };
+
+it("keeps what an agent said and how it exited for an omem that connects after it quit", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "omem-host-early-"));
+  const id = `hearly${Date.now().toString(36)}`;
+  const socket = process.platform === "win32" ? `\\\\.\\pipe\\omem-host-${id}` : join(dir, `${id}.sock`);
+  const key = "k".repeat(32);
+  const log = join(dir, "host.log");
+  const specPath = join(dir, "spec.json");
+  const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string"));
+  writeFileSync(specPath, JSON.stringify({ file: process.execPath, args: ["-e", "console.error('启动失败：示例的挂载错误'); process.exit(3)"], cwd: dir, env, socket, key, graceMs: 5_000, fds: 0, log }));
+  spawn(process.execPath, [resolve("src/agents/agent-host.ts"), "launch", specPath], { stdio: "ignore", detached: true, windowsHide: true }).unref();
+  // Connect only once the agent is gone: the host used to close before the first omem came, losing both.
+  await until(() => existsSync(log) && readFileSync(log, "utf8").includes("连上之前退出"));
+  const child = new HostedChild({ id, socket, key, attach: false });
+  let stderr = "";
+  child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+  const [code] = await once(child, "exit");
+  expect(code).toBe(3);
+  expect(stderr).toContain("启动失败：示例的挂载错误");
+});
+
+it("tells omem why an agent quit before omem connected: its stderr and exit come with the first hello", async () => {
+  const home = mkdtempSync(join(tmpdir(), "omem-host-"));
+  const app = testApp(home);
+  app.config.agents.default = "quits";
+  app.config.agents.restartHold = { enabled: true, minutes: 5 };
+  // Like a sandbox that cannot mount: says why on stderr and exits at once, before the first handshake.
+  app.config.agents.profiles = [agentProfileSchema.parse({ id: "quits", transport: "acp", command: process.execPath, args: ["-e", "console.error('启动失败：示例的挂载错误'); process.exit(3)"], idleTimeoutMs: 20_000 })];
+  const server = await startServer(app, { port: 0, quiet: true });
+  cleanups.push(async () => { detachHostsForShutdown(); await server.close(); forgetToolTokensForTests(); app.db.close(); });
+  const r = createRun(app, { kind: "code", spaceId: "personal", title: "一启动就退出" });
+  run(app.db, "update runs set status = 'running', started_at = ? where id = ?", new Date().toISOString(), r.id);
+  const started = Date.now();
+  await expect(runRole(app, { role: "coder", spaceId: "personal", task: "改退款按钮", runId: r.id })).rejects.toThrow(/启动失败：示例的挂载错误/);
+  // Not the idle limit: the exit itself ends the turn.
+  expect(Date.now() - started).toBeLessThan(15_000);
+});
 
 it("finishes a turn started before a restart under the next omem: same agent process, no new prompt, a tool call made in the gap succeeds", async () => {
   const dir = mkdtempSync(join(tmpdir(), "omem-gap-"));

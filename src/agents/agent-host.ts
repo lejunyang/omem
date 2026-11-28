@@ -82,6 +82,10 @@ async function host(specPath: string) {
   /** Requests from the agent no omem answered yet (a permission), sent again to the next one. */
   const agentAsks = new Map<string, string>();
   let stderrTail = "";
+  /** What the agent wrote to stderr before omem first connected, and how it exited if it did: given to that omem. */
+  const early: Buffer[] = [];
+  let earlyBytes = 0;
+  let earlyExit: { code?: number | null; signal?: string | null; error?: string } | null = null;
   let grace: NodeJS.Timeout | undefined;
   /** Until omem first connects. */
   let first: NodeJS.Timeout | undefined;
@@ -153,17 +157,30 @@ async function host(specPath: string) {
       setTimeout(done, 3000).unref();
     }
   };
+  // The exit goes out after what the agent wrote to stderr (it says why), so wait for the pipe to drain:
+  // `exit` can come first, and a grandchild holding the pipe open must not keep the host waiting long.
+  const drained = new Promise<void>((resolve) => { agent.stderr!.once("end", resolve); agent.stderr!.once("close", resolve); });
   const exited = (info: { code?: number | null; signal?: string | null; error?: string }) => {
     if (agentGone) return;
     agentGone = true;
-    client?.write(frame(FRAME.exit, JSON.stringify(info)));
-    finish(`Agent 退出 ${JSON.stringify(info)}`);
+    void Promise.race([drained, new Promise((r) => setTimeout(r, 1000))]).then(() => {
+      if (!hadClient) {
+        // The agent quit before omem connected (a sandbox that could not start): keep its last words and
+        // exit for the omem that is connecting, until FIRST_CONNECT_MS gives up on it.
+        earlyExit = info;
+        say(`Agent 在 omem 连上之前退出 ${JSON.stringify(info)}`);
+        return;
+      }
+      client?.write(frame(FRAME.exit, JSON.stringify(info)));
+      finish(`Agent 退出 ${JSON.stringify(info)}`);
+    });
   };
   agent.once("exit", (code, signal) => exited({ code, signal }));
   agent.once("error", (e) => exited({ error: e.message }));
   agent.stderr!.on("data", (d: Buffer) => {
     stderrTail = (stderrTail + d.toString("utf8")).slice(-4000);
-    client?.write(frame(FRAME.stderr, d));
+    if (client) client.write(frame(FRAME.stderr, d));
+    else if (!hadClient && earlyBytes < 64 * 1024) { early.push(d); earlyBytes += d.length; }
   });
 
   const pushLog = (t: Turn, line: string) => {
@@ -262,7 +279,15 @@ async function host(specPath: string) {
       mode = "attaching";
       snapshot = t?.total ?? 0;
       say(t ? `omem 回来接这一轮（已有 ${t.total} 条输出${t.response ? "，这一轮已经做完" : ""}）` : "omem 回来了，但没有进行中的一轮");
-    } else goLive();
+    } else {
+      for (const d of early.splice(0)) sock.write(frame(FRAME.stderr, d));
+      earlyBytes = 0;
+      if (earlyExit) {
+        sock.write(frame(FRAME.exit, JSON.stringify(earlyExit)));
+        return finish(`Agent 退出 ${JSON.stringify(earlyExit)}`);
+      }
+      goLive();
+    }
   };
   const server = netServer((sock) => {
     let authed = false;
