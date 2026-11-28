@@ -16,7 +16,9 @@ import { backendCapabilities } from "./capabilities.ts";
 import { accountOf, egressRequested, omemInstallDir, sandboxSupport, type WorkspaceMounts } from "./sandbox.ts";
 import { resolveCommand } from "./spawn.ts";
 import { doubaoExecutable } from "./doubao-cli.ts";
-import { cachePaths, defaultLoginPaths, canonical, normalizeSandbox, ownMounts, shortPath, under, type OwnSandbox } from "./own-sandbox.ts";
+import { homeStore, homeLayers, overlaySupport } from "./sandbox-home.ts";
+import { addRunEvent, runUser } from "./runs.ts";
+import { defaultLoginPaths, canonical, normalizeSandbox, ownMounts, shortPath, under, type OwnSandbox } from "./own-sandbox.ts";
 
 function backendState(profile: AgentProfile | undefined, profiles: AgentProfile[]) {
   const layout = profile && (profile.stateLayout ?? sourceOf(profile));
@@ -45,7 +47,7 @@ function checkStateDirectory(path: string) {
     throw new Error("沙箱状态路径需要目录：" + dir);
 }
 
-type MountContext = { workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv; kind?: string | null; credentialState?: string[] };
+type MountContext = { userId?: string; restricted?: boolean; workspace?: (readOnly: boolean) => WorkspaceMounts | undefined; inbox?: string; env?: NodeJS.ProcessEnv; kind?: string | null; credentialState?: string[] };
 
 export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: boolean, runId?: string | null, context: MountContext = {}): { box?: OwnSandbox; note?: string } {
   const settings = app.config.agents.ownSandbox;
@@ -70,7 +72,13 @@ export function ownRun(app: App, profile: AgentProfile, cwd: string, readOnly: b
     return { note };
   }
   const box = planRun(app, profile, cwd, readOnly, runId, context, settings, state);
-  return { box, note: "在 omem 沙箱里。可写：" + [...box.plan.rw.map(p => shortPath(p, box.home)), "/tmp（本轮临时目录）"].join("、") + "。写别处会失败，要放开在 设置 → 安全 里加可写目录。" };
+  const store = homeStore(box.data, box.home, context.userId ?? runUser(app, runId ?? null));
+  const overlay = context.credentialState || context.restricted ? { ok: false, reason: "本轮使用受限身份" } : overlaySupport(store);
+  if (overlay.ok) {
+    box.homeStore = store;
+    box.onHomeMerge = text => { if (runId) addRunEvent(app, runId, "status", { text }); else console.warn(text); };
+  }
+  return { box, note: (overlay.ok ? "HOME 的修改保存在本身份层。" : "HOME 只读：" + overlay.reason + "。") + "在 omem 沙箱里。可写：" + [...box.plan.rw.map(p => shortPath(p, box.home)), "/tmp（本轮临时目录）"].join("、") + "。" };
 }
 
 function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readOnly: boolean, runId: string | null | undefined, context: MountContext, settings: App["config"]["agents"]["ownSandbox"], stateLayout = backendState(profile, app.config.agents.profiles)): OwnSandbox {
@@ -81,7 +89,7 @@ function planRun(app: App, profile: AgentProfile | undefined, cwd: string, readO
   const declared = credentialStatePaths(app);
   // The existing lending executor works in a host-created empty directory and receives only this declaration.
   const grant = (context.credentialState ?? []).map(rel => canonical(join(home, rel))).filter(path => declared.includes(path));
-  const state = [...dirs, ...cachePaths.map(p => join(home, p)), ...grant];
+  const state = [...dirs, ...grant];
   const env = { ...process.env, ...profile?.env, ...context.env };
   const loginFiles = ["SSH_AUTH_SOCK", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "GOOGLE_APPLICATION_CREDENTIALS",
     "CLOUDSDK_CONFIG", "AZURE_CONFIG_DIR", "DOCKER_CONFIG", "GH_CONFIG_DIR", "GIT_CONFIG_GLOBAL", "GNUPGHOME"]
@@ -133,8 +141,9 @@ export function sandboxStatus(app: App, config = app.config) {
     rules: all<{ id: string; name: string }>(app.db, `select id,name from rules indexed by rules_full_access
       where instr(json(actions), '"fullAccess":true') > 0 order by id`),
   };
-  return { ...config.agents.ownSandbox, home, fullAccessGrants, fullAccess: config.agents.fullAccess, support: sandboxSupport(), backends,
+  const store = homeStore(data, home, "owner");
+  return { ...config.agents.ownSandbox, home, overlay: overlaySupport(store), layers: homeLayers(store), fullAccessGrants, fullAccess: config.agents.fullAccess, support: sandboxSupport(), backends,
     defaults: { exampleBackend: example?.id, writable, hidden: [data, ...credentialStatePaths(app)], loginPaths: defaultLoginPaths },
-    visibility: "默认遮住常用登录文件和凭据插件的状态目录，其他 HOME 文件只读，额外隐藏目录可加到 hidden。成员自有账号另行隔离，云端和其他设备不在这台的沙箱里。",
+    visibility: "默认遮住常用登录文件和凭据插件的状态目录，其他 HOME 文件的写入由本机写时复制能力决定，额外隐藏目录可加到 hidden。成员自有账号另行隔离，云端和其他设备不在这台的沙箱里。",
     warning: config.agents.fullAccess === "all" ? "没进沙箱的运行不受任何限制（指后端的沙箱和审批）。omem 工具授权与命令垫片照常检查。" : undefined };
 }

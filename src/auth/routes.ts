@@ -48,6 +48,7 @@ export const ROUTE_RULES: Record<string, RouteRule> = {
   "POST /api/ai/policy/propose": "owner",
   "GET /api/ai/decision/report": "owner",
   "GET /api/code/:id/improve": RUN,
+  "DELETE /api/security/sandbox/layers/:identity": "owner",
   "GET /api/quality": "owner",
   "GET /api/insights": "self",
   "GET /api/insights/export": "self",

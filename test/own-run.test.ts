@@ -200,7 +200,8 @@ it.skipIf(process.platform !== "linux")("reports exactly the writable plan used 
     for (const path of [root, hidden, ro]) expect(box!.plan.rw).not.toContain(path);
     expect(box!.plan.links).toEqual(workspace.links);
     expect(box!.plan.pointers).toEqual(workspace.pointers);
-    expect(note).toBe("在 omem 沙箱里。可写：" + [...box!.plan.rw.map(p => shortPath(p, box!.home)), "/tmp（本轮临时目录）"].join("、") + "。写别处会失败，要放开在 设置 → 安全 里加可写目录。");
+    expect(note).toContain("HOME 只读");
+    for (const path of box!.plan.rw) expect(note).toContain(shortPath(path, box!.home));
     const child = launch(profile.command, [], { cwd: root, ownSandbox: box, env: { OMEM_ARTIFACTS: inbox } });
     let args = "";
     child.stdout.on("data", chunk => args += chunk);
@@ -253,7 +254,7 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
   const home = mkdtempSync(join(tmpdir(), "tmp-cwd-"));
   const allowed = join(home, "allowed");
   mkdirSync(allowed);
-  writeFileSync(join(home, "host-file"), "host");
+  writeFileSync(join(app.home, "host-file"), "host");
   vi.stubEnv("HOME", home);
   app.baseUrl = "http://127.0.0.1:1";
   app.config.agents.ownSandbox = { mode: "require", writable: [allowed], hidden: [] };
@@ -268,7 +269,7 @@ it.skipIf(!sandboxSupport().ok)("keeps a read-only profile's /tmp cwd private wh
     expect([...box.plan.ro, ...box.plan.rw]).not.toContain("/tmp");
     expect(box.plan.rw).toContain(allowed);
     const name = "private-" + app.home.split("/").at(-1);
-    const child = launch(profile.command, ["-ec", 'test ! -e "$1/host-file"; echo private > "$2"; echo visible > "$1/allowed/result"', "sh", home, name],
+    const child = launch(profile.command, ["-ec", 'test ! -e "$3/host-file"; echo private > "$2"; echo visible > "$1/allowed/result"', "sh", home, name, app.home],
       { cwd: prep.cwd, ownSandbox: box });
     expect((await once(child, "close"))[0]).toBe(0);
     expect(existsSync(join("/tmp", name))).toBe(false);

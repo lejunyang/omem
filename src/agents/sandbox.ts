@@ -118,6 +118,7 @@ const inside = (p: string, dir: string) => p === dir || p.startsWith(dir.endsWit
 
 export type SandboxPlan = {
   privateTmp?: string;
+  overlay?: import("./sandbox-home.ts").HomeOverlay;
   minimalRoot?: boolean;
   commandMounts?: string[];
   masked?: string[];
@@ -146,7 +147,7 @@ export type WorkspaceMounts = Pick<SandboxPlan, "ro" | "rw" | "links" | "pointer
  */
 export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
   const pinned = new Set<string>();
-  const rank = { dir: 0, tmpfs: 1, ro: 2, rw: 3 } as const;
+  const rank = { dir: 0, tmpfs: 1, overlay: 2, ro: 3, rw: 4 } as const;
   const ops = new Map<string, { path: string; kind: keyof typeof rank }>();
   const add = (path: string, kind: keyof typeof rank) => {
     const p = posix.normalize(path).replace(/\/+$/, "") || "/";
@@ -156,6 +157,9 @@ export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
   };
   for (const p of plan.privateDirs ?? []) add(p, "dir");
   for (const p of [...plan.hide, "/tmp"]) add(p, "tmpfs");
+  if (plan.overlay) add(plan.overlay.home, "overlay");
+  // External identity stores must also stay private to runs started before the first store exists.
+  if (!plan.network && !plan.minimalRoot) add("/var/tmp", "tmpfs");
   for (const p of plan.ro) add(p, "ro");
   for (const p of plan.rw) add(p, "rw");
   // Project the existing names in a read-only parent. Newly created host logins stay
@@ -190,6 +194,10 @@ export function bwrapArgs(plan: SandboxPlan, registryFile?: string) {
   }
   const sorted = [...ops.values()].sort((a, b) => depth(a.path) - depth(b.path) || rank[a.kind] - rank[b.kind] || a.path.localeCompare(b.path));
   const mounts = sorted.flatMap(({ kind, path }) => {
+    if (kind === "overlay") {
+      const layer = plan.overlay!;
+      return [...layer.sources.flatMap(src => ["--overlay-src", src]), "--overlay", layer.upper, layer.work, path];
+    }
     if (kind === "dir") return ["--perms", "0700", "--dir", path];
     if (kind === "tmpfs" && path === "/tmp" && plan.privateTmp) return ["--bind", plan.privateTmp, path];
     if (kind === "tmpfs") return ["--tmpfs", path];

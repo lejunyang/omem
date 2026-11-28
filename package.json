@@ -75,6 +75,7 @@
     "plugins/*/agents/**",
     "plugins/*/skills/**",
     "packages/plugin-sdk/service.mjs",
+    "scripts/sandbox-home.py",
     "scripts/document-parser/convert.py",
     "scripts/document-parser/pyproject.toml",
     "scripts/document-parser/uv.lock",

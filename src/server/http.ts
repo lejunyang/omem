@@ -463,6 +463,14 @@ export async function startServer(app: App, opts: { port?: number; host?: string
     return { ok: true };
   });
   server.get("/api/security/sandbox", async () => (await import("../agents/own-run.ts")).sandboxStatus(app));
+  server.delete("/api/security/sandbox/layers/:identity", async req => {
+    const { identity } = req.params as { identity: string };
+    const { homeStore, clearHomeLayer } = await import("../agents/sandbox-home.ts");
+    const { canonical } = await import("../agents/own-sandbox.ts");
+    clearHomeLayer(homeStore(canonical(app.home), canonical(homedir()), identity));
+    audit(app, who(req), "sandbox.layer.clear", identity);
+    return { ok: true };
+  });
   server.put("/api/security/sandbox", async req => {
     const { fullAccess, confirmAll, ...settings } = q(ownSandboxSchema.extend({
       fullAccess: fullAccessMode, confirmAll: z.boolean().optional(),

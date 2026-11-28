@@ -628,7 +628,7 @@ export function prepareRun(
       input.worktreeAccess === "read" || readOnly ? "read" : "write") : undefined;
   };
   const isolation = ownRun(app, profile, cwd, guestTurn || !allowWrites || !!input.shadow, input.runId,
-    { workspace: mounts, kind: userId === OWNER && !guestTurn && !input.shadow ? input.scene?.kind : null, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
+    { workspace: mounts, userId, restricted: guestTurn || !!input.shadow || !!input.boardAccess || !!input.investigationTools || !!input.itemTakeoverRead, kind: userId === OWNER && !guestTurn && !input.shadow ? input.scene?.kind : null, inbox: input.inbox, env: agentToolEnv(app.home, toolBase, "", commandGateDir(app)) });
   if (isolation.box?.isolatedNetwork) { base.hostname = "127.0.0.1"; toolBase = base.origin; }
   const workspace = isolation.box?.plan ?? (account ? mounts(false) : undefined);
   // An overlapping check can write its host-created detached snapshot, alongside the read-only originals.

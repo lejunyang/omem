@@ -1,5 +1,6 @@
 import type { Writable } from "node:stream";
 import { sandboxNpmrc } from "./sandbox-npmrc.ts";
+import { openHomeLayer } from "./sandbox-home.ts";
 import { withPinnedBinds } from "./bwrap-spawn.ts";
 import { commandMounts } from "./command-mounts.ts";
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -72,6 +73,7 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
   const npmrc = account && join(canonical(account.home), ".npmrc");
   const registryFile = npmrc && !opts.sandbox?.borrowed && !opts.ownSandbox?.hidden.some(p => under(npmrc, p)) ? npmrc : undefined;
   let boxed;
+  let layer: ReturnType<typeof openHomeLayer> | undefined;
   if (opts.ownSandbox) {
     const box = opts.ownSandbox;
     const cwd = canonical(opts.cwd);
@@ -81,8 +83,11 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
       if (canonical(dir) !== dir) throw new Error("沙箱状态目录在启动前改变：" + dir);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
+    if (box.homeStore && !plan.ro.includes(box.home)) {
+      layer = openHomeLayer(box.homeStore, [...plan.hide, ...(box.masked ?? [])], [...plan.ro, ...plan.rw]);
+    }
     boxed = { file: sandboxSupport().bwrap!, env: ownSandboxEnv(base, { ...runEnv, PATH: env.PATH, OMEM_RUN_DIR: box.runDir }, box.secretEnv),
-      ...bwrapArgs({ ...plan, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
+      ...bwrapArgs({ ...plan, overlay: layer?.overlay, privateTmp: plan.work.privateTmp, commandMounts: commandMounts(runEnv?.OMEM_COMMAND_GATE, env.PATH), network: box.network, cwd, command: box.network ? canonical(resolved.file) : resolved.file, args: [...resolved.prefix, ...args] }, registryFile) };
   } else boxed = opts.sandbox ? sandboxCommand(resolved, args, { ...runEnv, PATH: env.PATH }, opts.cwd, opts.sandbox, opts.workspace, base, registryFile) : null;
   // The registry snapshot owns fd 3 when present. Pinned mount descriptors follow it.
   const config = boxed?.npmrc ? sandboxNpmrc(boxed.npmrc) : undefined;
@@ -100,6 +105,11 @@ export function launch(command: string, args: string[], opts: LaunchOptions & { 
     return child;
   };
   const child = boxed?.pinned.size ? withPinnedBinds(boxed.args, boxed.pinned, start, config ? 4 : 3) : start(boxed?.args ?? [...resolved.prefix, ...args], []);
+  if (layer) child.once("close", () => {
+    try {
+      if (layer.close()) opts.ownSandbox?.onHomeMerge?.("同一身份有并发 HOME 修改，重叠路径采用后结束运行的改动。");
+    } catch (error) { opts.ownSandbox?.onHomeMerge?.("保存 HOME 层失败：" + (error as Error).message); }
+  });
   child.stdin?.on("error", () => {});
   return child;
 }
