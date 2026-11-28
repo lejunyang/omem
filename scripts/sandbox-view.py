@@ -21,7 +21,8 @@ root = os.open(policy["data"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 home = policy.get("socketsHidden", False)
 owner = not home and policy["spaces"] is None
 spaces = set(policy.get("spaces") or [])
-repos = set(policy.get("repos", []))
+repos = {tuple(path.split("/")): allowed for path, allowed in policy.get("repos", {}).items()}
+repo_dirs = {root[:depth] for root, allowed in repos.items() if allowed for depth in range(1, len(root) + 1)}
 artifacts = set(policy.get("artifacts", []))
 artifact_links = policy.get("artifactLinks", {})
 files = set(policy.get("files", []))
@@ -105,9 +106,18 @@ def visible(path):
     elif area == "repos":
         if not rest:
             return True
-        if not owner and rest[0] not in repos:
-            return False
-        count = 2
+        if parts in repo_dirs:
+            # Only directories can connect a permitted checkout to the view root.
+            try:
+                os.close(open_at(path, os.O_DIRECTORY))
+                return True
+            except OSError:
+                return False
+        for depth in range(len(parts), 1, -1):
+            repo = parts[:depth]
+            if repo in repos:
+                return repos[repo] and "/".join(parts[depth:]) in tracked("/".join(repo))
+        return False
     elif area == "workspaces":
         if rest and not owner and rest[0] not in spaces:
             return False

@@ -1,4 +1,4 @@
-import { basename, dirname, join } from "node:path";
+import { join, relative } from "node:path";
 import { restrictedSourceFilter } from "../auth/visibility.ts";
 import { spacesWithCapability } from "../auth/capabilities.ts";
 import { canReadRun } from "../auth/permissions.ts";
@@ -14,8 +14,15 @@ export function sandboxData(app: App, user: string) {
   const allowed = accessibleSpaces(app, user);
   const known = listSpaces(app);
   const spaces = user === "owner" ? null : known.map(s => s.id).filter(id => !allowed || allowed.includes(id));
-  const repos = known.filter(s => s.rootPath && dirname(canonical(s.rootPath)) === join(data, "repos") &&
-    (!spaces || spaces.includes(s.id))).map(s => basename(s.rootPath!));
+  const roots = new Map<string, boolean>();
+  const repoDir = join(data, "repos");
+  for (const space of known) {
+    if (!space.rootPath) continue;
+    const root = canonical(space.rootPath);
+    if (!root.startsWith(repoDir + "/")) continue;
+    const path = relative(data, root);
+    roots.set(path, !!roots.get(path) || !spaces || spaces.includes(space.id));
+  }
   const grants = all<{ id: string; space_id: string | null; run_id: string }>(app.db,
     "select id, space_id, run_id from run_artifacts" + (spaces ? " where space_id in (select value from json_each(?))" : ""),
     ...(spaces ? [JSON.stringify(spaces)] : []));
@@ -39,5 +46,5 @@ export function sandboxData(app: App, user: string) {
       and (sources.kind != 'doc' or coalesce(json_extract(s.settings,'$.larkAccess'),0)=0)`,
       ...restricted.params, JSON.stringify(spaces.filter(s => !readable || readable.includes(s)))).flatMap(row => row.variant ? [row.name, row.variant] : [row.name]);
   }
-  return { data, spaces, repos, artifacts, artifactLinks: publishedArtifactLinks(app, artifacts), files };
+  return { data, spaces, repos: Object.fromEntries(roots), artifacts, artifactLinks: publishedArtifactLinks(app, artifacts), files };
 }

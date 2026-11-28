@@ -30,6 +30,15 @@ it.skipIf(!support.ok)("只读视图按空间提供代码、知识和已收取�
       execFileSync("git", ["-C", repo, "add", "code.txt", ".env"]);
       createSpace(app, { id, name: id, rootPath: repo });
     }
+    for (const id of ["one", "two"]) {
+      const repo = join(app.home, "repos", "pulled", id + "-rev");
+      file(join(repo, "src", "readme.txt"));
+      file(join(repo, "draft.txt"));
+      execFileSync("git", ["init", "-q", repo]);
+      execFileSync("git", ["-C", repo, "add", "src/readme.txt"]);
+      createSpace(app, { id: "pulled-" + id, name: "pulled-" + id, rootPath: repo });
+    }
+    file(join(app.home, "repos", "pulled", "private-note"));
     file(join(app.home, "artifacts", "published", "example.txt"));
     file(join(app.home, "secrets", "login"));
     file(join(app.runsDir, "old", "context.json"));
@@ -37,15 +46,22 @@ it.skipIf(!support.ok)("只读视图按空间提供代码、知识和已收取�
     app.db.exec("insert into run_artifacts(id,key,run_id,space_id,name,kind,entry,source,created_at) values('published','test','old','two','example.txt','text','example.txt','check','0')");
     createUser(app, { id: "reader", name: "reader" });
     addMember(app, "one", "reader", "reader");
+    addMember(app, "pulled-one", "reader", "reader");
+    createUser(app, { id: "visitor", name: "visitor" });
+    addMember(app, "one", "visitor", "reader");
     app.config.agents.ownSandbox.mode = "require";
     const profile = agentProfileSchema.parse({ id: "fixture", command: "/bin/sh", transport: "acp" });
-    for (const userId of ["owner", "reader"]) {
+    for (const userId of ["owner", "reader", "visitor"]) {
       const { box } = ownRun(app, profile, cwd, false, undefined, { userId });
       const script = [
         'cd "$1"', "test -f repos/checkout-one/code.txt", "test ! -w repos/checkout-one/code.txt",
         "test ! -e repos/checkout-one/.env", "test ! -e repos/checkout-one/untracked", "test ! -e omem.db",
         "test ! -e secrets/login", "test ! -e runs/old/context.json", "test -f library/one/SPACE.md",
-        ...(userId === "owner" ? ["test -r artifacts/published/example.txt", "test -r runs/old/patches/example.patch"]
+        ...(userId === "visitor" ? ["test ! -e repos/pulled", "test ! -e repos/pulled/one-rev/src/readme.txt"]
+          : ['test "$(cat repos/pulled/one-rev/src/readme.txt)" = sample', "test ! -e repos/pulled/one-rev/draft.txt",
+            "test ! -e repos/pulled/private-note"]),
+        ...(userId === "reader" ? ['test "$(ls -A repos/pulled)" = one-rev', "test ! -e repos/pulled/two-rev/src/readme.txt"] : []),
+        ...(userId === "owner" ? ['test "$(cat repos/pulled/two-rev/src/readme.txt)" = sample', "test -r artifacts/published/example.txt", "test -r runs/old/patches/example.patch"]
           : ["test ! -e repos/checkout-two", "test ! -e library/two", "test ! -e artifacts/published", "test ! -e runs/old"]),
       ].join("\n");
       const child = launch("/bin/sh", ["-exc", script, "sh", app.home], { cwd, ownSandbox: box });
