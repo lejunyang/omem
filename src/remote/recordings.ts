@@ -104,6 +104,16 @@ const files = (dir: string, ext: RegExp): string[] =>
     ? readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? files(join(dir, d.name), ext).map((f) => `${d.name}/${f}`) : ext.test(d.name) ? [d.name] : []))
     : [];
 
+export function recordingEndpoints(dir: string) {
+  return endpoints(jsonLines(join(dir, "evidence", "network.jsonl")));
+}
+
+export function recordingStepLabel(dir: string, step: number | null): string {
+  if (!step) return "";
+  const action = jsonLines(join(dir, "steps.jsonl")).find(s => Number(s.id) === step)?.action;
+  return truncate(String(action?.label || action?.name || ""), 80);
+}
+
 /** Counts for the page and the organizing message, from what the recording directory holds. */
 export function recordingSummary(dir: string): Record<string, unknown> {
   const replay = readJson(join(dir, "record.json")) ?? {};
@@ -196,11 +206,11 @@ export function readRecording(app: App, id: string, userId: string, o: { part?: 
   if (part === "steps") {
     const steps = jsonLines(join(r.dir, "steps.jsonl"));
     if (!steps.length) return readRecording(app, id, userId, { part: "replay", from, limit });
-    const noisy = new Set(endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl"))).filter((e) => e.noise).flatMap((e) => e.requests.map((q) => `${q.method} ${q.url}`)));
+    const noisy = new Set(recordingEndpoints(r.dir).filter((e) => e.noise).flatMap((e) => e.requests.map((q) => `${q.method} ${q.url}`)));
     const page = steps.filter((s) => s.id >= from).slice(0, limit);
     return page.map((s) => stepLine({ ...s, network: (s.network ?? []).filter((n: any) => !noisy.has(`${String(n.method ?? "").toUpperCase()} ${n.url ?? ""}`)) }, r.dir)).join("\n") + (steps.some((s) => s.id > (page.at(-1)?.id ?? 0)) ? `\n……from=${(page.at(-1)?.id ?? 0) + 1} 接着看` : "");
   }
-  const list = endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl")));
+  const list = recordingEndpoints(r.dir);
   if (!list.length) return "这次录制没有记下请求。";
   const want = (o.filter ?? "").toLowerCase();
   const matches = (e: Endpoint) => !want || haystack(e).includes(want);
@@ -239,7 +249,7 @@ function endpointText(e: Endpoint, n: number, bodies: boolean): string {
  */
 export function skillFilesOf(app: App, id: string, userId: string, keep?: string[]): Record<string, string> {
   const r = getRecording(app, id, userId);
-  const list = endpoints(jsonLines(join(r.dir, "evidence", "network.jsonl")));
+  const list = recordingEndpoints(r.dir);
   const wanted = keep?.map((k) => k.trim().toLowerCase()).filter(Boolean);
   const chosen = wanted?.length
     ? list.filter((e) => wanted.some((k) => haystack(e).includes(k)))
@@ -260,7 +270,7 @@ export function skillFilesOf(app: App, id: string, userId: string, keep?: string
 
 /** The endpoints a recording called, for the summary: what the task most likely went through. */
 function apiOverview(dir: string): string {
-  const list = endpoints(jsonLines(join(dir, "evidence", "network.jsonl")));
+  const list = recordingEndpoints(dir);
   if (!list.length) return "";
   const kept = ordered(list.filter((e) => !e.noise));
   const skipped = noiseNote(list.filter((e) => e.noise));

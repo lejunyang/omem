@@ -329,7 +329,7 @@ export type CommandRule = z.infer<typeof commandRuleSchema>;
 
 const pattern = z.string().max(2000).refine(s => { try { new RegExp(s); return true; } catch { return false; } }, "无效的正则表达式");
 const names = z.array(z.string().min(1).max(200)).max(200);
-const jsonPattern = z.object({ jsonPath: z.string().max(500).regex(/^\$(?:\.[\w-]+|\[\d+\])*$/), regex: pattern }).strict();
+export const jsonPattern = z.object({ jsonPath: z.string().max(500).regex(/^\$(?:\.[\w-]+|\[\d+\])*$/), regex: pattern }).strict();
 export const operationScopeSchema = z.object({ members: names.optional(), roles: names.optional(), spaces: names.optional(), backends: names.optional() }).strict();
 export const operationRuleSchema = z.object({
   id: z.string().min(1).max(200), revision: z.number().int().positive(), enabled: z.boolean(), title: z.string().max(1000).optional(),
@@ -342,7 +342,8 @@ export const operationRuleSchema = z.object({
     z.object({ kind: z.literal("tool"), server: z.string().optional(), name: z.string().min(1), args: z.array(jsonPattern).max(100).optional() }).strict(),
   ]),
   action: z.enum(["allow","deny","approve","log"]),
-  approval: z.object({ approver: z.string().regex(/^(owner|run|user:.+|lark:.+)$/).optional(), waitSeconds: z.number().int().min(1).max(300).optional(),
+  recording: z.object({ id: z.string(), requestId: z.string(), step: z.number().int().nullable() }).optional(),
+  approval: z.object({ approver: z.string().regex(/^(owner|caller|run|user:.+|lark:.+)$/).optional(), waitSeconds: z.number().int().min(1).max(300).optional(),
     expiresSeconds: z.number().int().min(1).max(604800).optional(), approvers: names.optional(), reuse: z.enum(["once","window"]).optional() }).optional(),
   pack: z.object({ name: z.string(), version: z.string(), ruleId: z.string() }).optional(),
 });
