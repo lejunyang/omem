@@ -322,7 +322,7 @@ export const commandRuleSchema = z
     } catch (e) {
       ctx.addIssue({ code: "custom", path: ["args"], message: `参数模式不是有效的正则：${(e as Error).message}` });
     }
-    if (!/^(owner|run|user:.+|lark:.+)$/.test(r.approver)) ctx.addIssue({ code: "custom", path: ["approver"], message: "审批人要写 owner、run、user:<用户 id> 或 lark:<名字或邮箱>" });
+    if (!/^(owner|caller|run|user:.+|lark:.+)$/.test(r.approver)) ctx.addIssue({ code: "custom", path: ["approver"], message: "审批人要写 owner、caller、run、user:<用户 id> 或 lark:<名字或邮箱>" });
     for (const a of r.approvers) if (!/^(owner|user:.+|lark:.+)$/.test(a)) ctx.addIssue({ code: "custom", path: ["approvers"], message: `名单里的「${a}」要写 owner、user:<用户 id> 或 lark:<名字或邮箱>` });
   });
 export type CommandRule = z.infer<typeof commandRuleSchema>;
@@ -342,7 +342,7 @@ export const operationRuleSchema = z.object({
     z.object({ kind: z.literal("tool"), server: z.string().optional(), name: z.string().min(1), args: z.array(jsonPattern).max(100).optional() }).strict(),
   ]),
   action: z.enum(["allow","deny","approve","log"]),
-  approval: z.object({ approver: z.string().regex(/^(owner|run|user:.+|lark:.+)$/).optional(), waitSeconds: z.number().int().min(1).max(300).optional(),
+  approval: z.object({ approver: z.string().regex(/^(owner|caller|run|user:.+|lark:.+)$/).optional(), waitSeconds: z.number().int().min(1).max(300).optional(),
     expiresSeconds: z.number().int().min(1).max(604800).optional(), approvers: names.optional(), reuse: z.enum(["once","window"]).optional() }).optional(),
   pack: z.object({ name: z.string(), version: z.string(), ruleId: z.string() }).optional(),
 });

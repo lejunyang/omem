@@ -17,8 +17,8 @@ import { delimiter, join } from "node:path";
 import type { App } from "../core/app.ts";
 import type { CommandRule } from "../core/config.ts";
 import { all, one, run } from "../core/db.ts";
-import { COMMAND_OUTPUT_LIMIT, COMMAND_TIMEOUT_SEC, now, truncate, webLink } from "../core/util.ts";
-import { findUser, listUsers, OWNER, userName } from "../core/users.ts";
+import { COMMAND_OUTPUT_LIMIT, COMMAND_TIMEOUT_SEC, HttpError, now, truncate, webLink } from "../core/util.ts";
+import { activeUser, findUser, listUsers, OWNER, userName } from "../core/users.ts";
 import { audit } from "../auth/permissions.ts";
 import { addRunEvent } from "./runs.ts";
 import { cancelAsk, createAsk, getAsk, markAskSent, registerAskHandler, type Ask } from "./asks.ts";
@@ -470,7 +470,11 @@ async function resolveEntry(app: App, entry: string, why: string): Promise<Appro
   }
 }
 
-async function approverFor(app: App, rule: CommandRule, nominated: string | undefined): Promise<Approver> {
+async function approverFor(app: App, rule: CommandRule, nominated: string | undefined, caller: string): Promise<Approver> {
+  if (rule.approver === "caller") {
+    if (caller !== OWNER && !activeUser(findUser(app, caller))) throw new HttpError(403, "运行调用者没有有效的成员身份");
+    return resolveEntry(app, caller === OWNER ? "owner" : "user:" + caller, "这次运行的调用者");
+  }
   if (rule.approver !== "run") return resolveEntry(app, rule.approver, "规则指定的审批人");
   if (!nominated?.trim()) return resolveEntry(app, "owner", "运行没有用 OMEM_APPROVER 提名审批人，改由本人批准");
   const entry = rule.approvers.find((e) => entryMatches(app, e, nominated));
@@ -506,6 +510,7 @@ type GateContext = Partial<OperationGrant> & {
   approverName: string;
   approverWhy: string;
   lark: Approver["lark"];
+  callerOnly?: boolean;
   ownerLark: string | null;
   /** Until when the card can be answered. */
   expiresAt: string;
@@ -563,6 +568,8 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   const evaluate = egress?.evaluate ?? (() => decide(app, op, who));
   const decision = evaluate();
   const policy = decision.rule;
+  if (policy?.approval?.approver === "caller" && (ctx.role === "guest" || ctx.commandHomeUser === null))
+    return { decision: "deny", message: "访客运行没有调用者审批权限" };
   auditOperation(app, op, who, policy, decision.action, "策略判定");
   if (decision.action === "deny") return { decision: "deny", message: `omem 的${op.kind === "command" ? "命令规则" : "操作规则"}「${policy?.title || policy?.id}」不允许 Agent 执行这项操作。` };
   if (!policy || decision.action !== "approve") return { decision: "allow" };
@@ -611,7 +618,7 @@ export async function gateOperation(app: App, ctx: ToolContext, op: Operation, r
   let ask = pending();
   let approverName: string;
   if (!ask) {
-    const approver = await approverFor(app, rule, req.approver);
+    const approver = await approverFor(app, rule, req.approver, who.member);
     if (egress?.signal?.aborted) return { decision: "deny", message: "出网入口已关闭" };
     approverName = approver.name;
     ask = pending() ?? await openAsk(app, { runId, key, chain, command, args, cwd, rule, index, approver, reason: safeReason(req.reason),
@@ -679,7 +686,8 @@ async function openAsk(
     approverName: c.approver.name,
     approverWhy: c.approver.why,
     lark: c.approver.lark,
-    ownerLark: larkOwnerOpenId(app, "main") ?? null,
+    callerOnly: c.rule.approver === "caller",
+    ownerLark: c.rule.approver === "caller" ? null : larkOwnerOpenId(app, "main") ?? null,
     expiresAt,
   };
   const line = commandLine(c.command, c.args);
@@ -826,7 +834,7 @@ registerAskHandler("command-gate", async (app, ask, context) => {
     }
     const reuse = ask.answeredBy === OWNER && ask.choice === null ? c.reuse : "once";
     run(app.db, "update asks set context=json_set(context,'$.scope',?,'$.grantUntil',?,'$.reuse',?) where id=?", scope,new Date(Date.now() + c.expireHours * 3600_000).toISOString(),reuse,ask.id);
-    audit(app, ask.answeredBy!, "operation.approve", c.command, {kind:c.kind, ruleId:c.ruleId, revision:c.revision, member:c.member, runId:ask.runId, approver:ask.answeredBy, scope, result:"批准",argsHash:c.argsHash});
+    audit(app, ask.answeredBy!, "operation.approve", c.command, {kind:c.kind, ruleId:c.ruleId, revision:c.revision, member:c.member, runId:ask.runId, approver:ask.answeredBy, approverWhy:c.approverWhy, scope, result:"批准",argsHash:c.argsHash});
   }
   record(app, ask.runId, ask.answeredBy ?? "", ask.approved ? "command.approve" : "command.reject", { command: c.command, args: c.args, cwd: c.cwd, approver: by, result: ask.approved ? `${by} 批准` : `${by} 拒绝${ask.answer ? `：${truncate(ask.answer, 200)}` : ""}`, rule: c.rule, askId: ask.id });
   const fresh = getAsk(app, ask.id);
@@ -844,6 +852,7 @@ registerAskHandler("command-gate", async (app, ask, context) => {
   );
 }, (app, ask, context, by, answer) => {
   const c = context as GateContext;
+  if (c.callerOnly && by !== ask.userId) throw new HttpError(403, "只有这次运行的调用者能批准");
   if (c.expiresAt <= now()) throw new Error("审批卡片已过期");
   if ((answer.choice ?? 0) > 0) {
     if (by !== OWNER || !c.ownerChoices) throw new Error("只有本人能扩大授权范围");

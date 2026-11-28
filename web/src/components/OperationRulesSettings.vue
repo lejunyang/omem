@@ -66,7 +66,7 @@ const DEFAULTS: Record<Kind, () => Match> = {
   tool: () => ({ kind: "tool", name: "" }),
 };
 const WAITS = [30, 60, 90, 120, 180, 300].map((n) => ({ value: n, label: n < 60 ? `${n} 秒` : `${n / 60} 分钟`.replace(".5 分钟", " 分半") }));
-const pickOptions = computed(() => [...scopeChoices.approvers, { value: "lark", label: "飞书用户（填名字或邮箱）" }, { value: "run", label: "由运行提名（从名单里选）" }]);
+const pickOptions = computed(() => [...scopeChoices.approvers, { value: "caller", label: "这次运行的调用者" }, { value: "lark", label: "飞书用户（填名字或邮箱）" }, { value: "run", label: "由运行提名（从名单里选）" }]);
 const toolOptions = (current: string) => (current && !scopeChoices.tools.some((t) => t.value === current) ? [{ value: current, label: current }, ...scopeChoices.tools] : scopeChoices.tools);
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
