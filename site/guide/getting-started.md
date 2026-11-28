@@ -1,125 +1,143 @@
 # 安装与第一次使用
 
-## 准备
+只要 **5 分钟**，你就可以在本机或常驻服务器上跑起 omem：装好一个 Agent、运行一次交互式向导 `omem setup`、打开网页或连上飞书即可开始。
 
-- Node.js 22.18 以上（推荐 24）；
-- 至少一个已登录的 Agent。支持 [Agent Client Protocol](https://agentclientprotocol.com) 的 Agent 装在 PATH 里就会被识别：
+## 1. 准备环境
 
-| Agent | 安装 | 配置 id |
+你需要两样东西：
+1. **Node.js 22.18 以上**（推荐 Node 24）。
+2. **至少一个可用的 AI Agent**（或者一个 OpenAI / Anthropic / 火山方舟等兼容的 API Key）。
+
+任何支持 [Agent Client Protocol (ACP)](https://agentclientprotocol.com) 的 Agent 装在 `PATH` 里都会被自动识别：
+
+| Agent | 安装命令 | 配置 ID |
 | --- | --- | --- |
-| Codex | `npm i -g @agentclientprotocol/codex-acp` | `codex` |
-| Claude Code | `npm i -g @agentclientprotocol/claude-agent-acp` | `claude` |
-| Gemini CLI | `npm i -g @google/gemini-cli` | `gemini` |
-| GitHub Copilot CLI | `npm i -g @github/copilot` | `copilot` |
-| Qwen Code | `npm i -g @qwen-code/qwen-code` | `qwen` |
-| OpenCode | `npm i -g opencode-ai` | `opencode` |
-| 其他（Cursor、Kimi、goose、Cline……） | 见 `omem agents --all` | 同名 |
-| Claude / Codex 命令行（没有 ACP 时的后备） | `claude` 或 `codex` 在 PATH 中 | `claude-cli` / `codex-cli` |
-| 豆包 CLI | `npm i -g @bytedance/doubao-cli`，再 `doubao login` | `doubao-cli` |
+| **Codex** | `npm i -g @agentclientprotocol/codex-acp` | `codex` |
+| **Claude Code** | `npm i -g @agentclientprotocol/claude-agent-acp` | `claude` |
+| **Gemini CLI** | `npm i -g @google/gemini-cli` | `gemini` |
+| **Antigravity CLI** | 按[官方说明](https://antigravity.google/docs/getting-started?tab=cli)安装 `agy`，再 `agy acp --login` | `antigravity` |
+| **GitHub Copilot CLI** | `npm i -g @github/copilot` | `copilot` |
+| **Qwen Code / OpenCode** | `npm i -g @qwen-code/qwen-code` / `npm i -g opencode-ai` | `qwen` / `opencode` |
+| **豆包 CLI** | `npm i -g @bytedance/doubao-cli`，再 `doubao login` | `doubao-cli` |
+| **其他 20+ 种 Agent** | Cursor、Kimi、goose、Cline、TraeX 等，运行 `omem agents --all` 查看 | 同名 |
+| **原生 CLI 兜底** | `claude`、`codex` 或 `traex` 在 PATH 中（无 ACP 时的后备） | `claude-cli` / `codex-cli` / `traex-cli` |
 
-每个 Agent 第一次用之前要登录一次。Codex、TraeX、Claude Code、GitHub Copilot CLI、豆包 CLI 可以在 设置 → 后端与模型 展开后端，在“这台机器的登录”里点“登录”，按页面上的链接和验证码（Claude Code 是把授权页给的授权码贴回来）完成，不用到机器上操作；其他 Agent 在终端里直接运行一次完成登录。用 npm 装的 ACP 适配器（如 codex-acp）在 设置 → 后端与模型 里展开那个后端能看到版本，有新版时可以直接点“升级”；“其他支持的 Agent”里有 npm 包的也可以直接点“安装”（有 osdk 时用 osdk 装）。从 ACP 注册表下载或用 npx 添加的 Agent，注册表出了新版时同样在这里升级。这些操作都在后台进行，带原生程序的包可能要装好几分钟，可以离开页面，回来还能看到进度。新模型出来以后，如果检测到的模型没有思考强度，多半是适配器太旧，升级后会自动重新检测。豆包 CLI 按 PATH 中的 `doubao` 命令识别；已有其他发行包提供同名命令时可以直接用，无需重装。
+> **登录提示**：每个 Agent 第一次使用前需要登录一次。Codex、Claude Code、TraeX、Copilot、豆包 CLI 和 Antigravity 都支持直接在 omem 网页的 **设置 → 后端与模型** 里点“登录”（通过链接+验证码或粘贴授权码完成，不用登到服务器终端）；也可以直接在 **设置 → 后端与模型 → API key** 里填 API Key 生成按量计费的后端。
 
-## 安装
+## 2. 安装 omem
+
+按你的使用场景选择一种安装方式：
+
+### 方式 A：从 npm 安装发布版（推荐日常使用）
+
+```bash
+npm install -g @omem-ai/app
+```
+
+### 方式 B：从源码构建运行
 
 ```bash
 git clone https://github.com/lejunyang/omem.git
 cd omem
 pnpm install
 pnpm run build
-npm install -g .          # 把 omem 命令链接到这个仓库（可选）
+npm install -g .          # 可选：把全局 omem 命令链接到当前仓库
 ```
 
-也可以直接装 npm 上的发布版（包名 @omem-ai/app，命令是 omem）：
+如果机器上装了 `osdk`，也可以让 `osdk` 统一管理 Node、pnpm 和本地模型：
 
 ```bash
-npm install -g @omem-ai/app
+osdk install && osdk deps --frozen
+osdk run dev              # 开发模式：API :4317 + 网页 :5173，数据在 ./.omem
 ```
 
-只用别人（或常驻服务器）的 omem、不在本机运行服务时，装轻量命令行就够了（单文件、无依赖，命令也是 omem，只有 `login`、`tool`、`mcp`、`open`、`remote`）：
+### 方式 C：只连别人的或常驻服务器的 omem（轻量客户端）
+
+如果服务端跑在另一台机器上，本机只需要用命令行或给本机 Claude Code / Codex 接 MCP，装单文件、零依赖的轻量包即可（命令同样是 `omem`）：
 
 ```bash
 npm install -g @omem-ai/cli
 ```
 
-用 osdk 管理 Node、pnpm 和可选的本地模型时：
+## 3. 运行设置向导与启动
 
-```bash
-osdk install && osdk deps --frozen
-osdk run dev              # API :4317 + 网页 :5173，数据在 ./.omem
-```
-
-## 设置向导
+第一次使用时运行交互式向导：
 
 ```bash
 omem setup
 ```
 
-交互式选择：Agent 后端与模型、向量检索模型和重排模型（可选）、PDF / DOCX 解析、桌面与浏览器控制（可选，让 Agent 操作电脑上的程序和网页）、飞书 / Telegram / QQ·微信渠道、会话与并发、定时任务。每一项先显示本机装了什么、各选项的代价，缺的经 osdk 装好。最后可以直接启动后台服务。
+向导会先检测本机已安装的工具、说明各选项的资源开销，再带你一步步选好：
+- **Agent 后端与默认模型**
+- **向量检索与重排模型**（可选，经 `osdk` 下载锁定，也可在网页里配云端 API）
+- **文档解析**（PDF / DOCX 解析器 Docling）与 **桌面/浏览器控制**（可选，`ai-auto-desktop`）
+- **飞书 / Telegram / QQ·微信渠道**（飞书支持扫码一步创建机器人应用并开启个人只读采集）
+- **定时任务与后台服务**
 
-## 启动
+设置完成后可以直接在向导末尾启动服务，或随时用命令管理：
 
 ```bash
-omem serve                # 前台运行，http://127.0.0.1:4317
-omem service start        # 后台常驻（崩溃自动重启）；stop / restart / status / logs
-omem service enable       # 开机自启
+omem serve                # 前台启动，默认打开 http://127.0.0.1:4317
+omem service start        # 后台常驻运行（自带独立 PM2，崩溃自动重启）
+omem service enable       # 设置开机自启（macOS LaunchAgent / Linux systemd / Windows 启动项，无需管理员权限）
 ```
 
-数据目录默认 `~/.omem`（`--home` 或 `OMEM_HOME` 可改）：`config.json` 是配置，`omem.db` 是索引与记录，`library/` 是 Wiki 的 Git 仓库，`files/` 存原始文件，`runs/` 存交办编码的工作区和补丁。各部分占了多少（附件按图片、视频等类型和来源分开，数据库按模块和表分开）在 **设置 → 占用** 里统计；图片和视频占得多时，同一页的“压缩附件”用 ffmpeg 把它们转成 WebP、AV1、Opus（有损或无损可选），原来的引用照常能打开。
+## 4. 打开网页后的前五步
 
-默认监听所有网卡，方便其他设备配对；本机请求不需要令牌，其他机器必须带令牌。只想本机访问，在配置里写 `"host": "localhost"`。
+浏览器打开 `http://127.0.0.1:4317`：
 
-### 从别的电脑打开：HTTPS 与 HTTP/2（可选）
+1. **确认后端可用**：在 **设置 → 后端与模型** 确认至少一个后端显示“已安装”。在 **Agent → 档案** 里可以为不同内置角色（如主助手、编码、评审、把关）选不同的模型与思考强度。
+2. **创建空间或接入代码仓库**：在问答里对助手说“创建一个项目空间”或“关联这个本地仓库 / Git 链接”，或在 **设置 → 空间** 新建。输入框会自动识别本地绝对路径和 `HTTP(S) / SSH` Git 地址。
+3. **生成第一套 Wiki**：进 **Wiki → 规划并生成 Wiki**，或直接对助手说“结合代码和文档生成 Wiki”。
+4. **开始交代工作**：在 **工作 / 问答** 页直接提问或交代事情——“记住：周四下午三点和小王同步项目 A”“不对，预算改成 120 了”“帮我盯着项目 A 群里的需求变化”。
+5. **随时检索与保存**：在任何页面按 <kbd>Ctrl K</kbd> 搜索或提问，按 <kbd>Ctrl J</kbd> 保存材料（粘贴文本、网址、飞书文档链接或拖入文件）。
 
-网页的每个标签页有一条实时连接（运行进度、通知）。用 `http://` 地址打开时，浏览器对同一个地址最多同时开 6 条连接；同时开着很多 omem 页面，新的请求（比如一个分享链接）会在浏览器里排队，看起来像一直在加载。现在后台标签页隐藏 45 秒后会自己断开实时连接，回到前台再连上并刷新；分享页和登录页不建实时连接。
+## 补充说明与日常维护
 
-还想彻底不受这个限制，就给 omem 加一个 HTTPS 端口：浏览器只在 HTTPS 上用 HTTP/2，所有标签页共用一条连接。在 `config.json` 里加：
+### 数据目录与磁盘空间管理
 
-```json
-{
-  "https": { "port": 4443, "cert": "~/certs/omem.crt", "key": "~/certs/omem.key" }
-}
+数据默认存放在 `~/.omem`（可通过 `--home` 或环境变量 `OMEM_HOME` 修改）：
+
+| 路径 | 存放内容 |
+| --- | --- |
+| `config.json` / `omem.db` | 配置文件 / SQLite 数据库（原件切块、FTS 索引、向量、记忆、事项、运行记录） |
+| `library/` | 知识库 Git 仓库（各空间的 Wiki Markdown 页面、自定义 Agent 档案 `_agents/`、技能 `_skills/`） |
+| `files/` / `repos/` | 导入与采集的原始附件 / 克隆的 Git 仓库 |
+| `runs/` / `workspaces/` | 交办编码的补丁记录 / 复用的 Git worktree 工作区（保留 `node_modules` 免重复装依赖） |
+| `secrets/` / `service/` | 仅本人可读（`0600`）的密钥与令牌 / 后台 PM2 进程数据与轮换日志 |
+
+- **查看占用与压缩附件**：在 **设置 → 占用** 点击“开始统计”，可以按模块、表和附件类型查看空间占比。图片和音视频占满磁盘时，可在同一页点“压缩附件”（调用 `ffmpeg` 转为 WebP / AV1 / Opus，有损或无损可选），聊天和文档里的原引用会自动指向压缩后的文件。
+
+### 把 omem 作为 MCP 服务给外部 Agent 用
+
+你可以让你平时在终端或 IDE 里直接使用的 Claude Code、Codex 接入 omem 的知识库：
+
+```bash
+omem mcp                  # 作为 stdio MCP 服务启动（只读模式加 --read-only）
 ```
 
-- `cert` / `key` 是证书和私钥的路径（相对路径从数据目录算起）。没有现成证书时写 `"selfSigned": true`，omem 用 `openssl` 在数据目录的 `tls/` 下生成一张自签名证书，覆盖本机名、各网卡地址、`webUrl` 的主机名和 `hosts` 里另写的名字；地址变了会重新生成。
-- 重启后打开 `https://<地址>:4443`。原来的 `http://…:4317` 照常可用，本机的 Agent、命令行和配对设备继续走它。
-- 自签名证书浏览器会提示“不安全”，要在每台电脑上信任一次（启动日志里有证书指纹，可以核对）。飞书卡片里的链接、飞书网页应用要求证书可信，用自签名证书时 `webUrl` 先保留 `http://` 地址，有了正式证书（内网 CA 或反向代理上的证书）再把 `webUrl` 换成 `https://` 地址。
-- 前面已经有 Nginx 等反向代理时，也可以在代理上开 HTTPS 和 HTTP/2，不必用这一项。
+能跑 Shell 的 Agent 也可以不配 MCP，直接调用命令行：
 
-## 打开网页之后
+```bash
+omem tool help memory                # 查看某个分组的工具用法说明
+omem tool search query="退款 幂等"     # 直接调用工具（传 键=值 或 JSON）
+```
 
-1. **设置 → 后端与模型**：确认至少一个后端显示“已安装”。在 **Agent → 档案** 里给内置角色选默认后端、模型和思考强度。
-2. 在问答里说“创建一个项目空间”或“关联这个本地仓库”，也可以在 **设置 → 空间** 新建。网页选择“代码仓库”后，直接填目录或 HTTP(S)/SSH Git 地址，自动识别；本地路径必须是运行 omem 的机器上的目录。Git 地址会克隆到数据目录的 `repos/`，私有仓库使用服务器已有的 Git/SSH 凭据，链接里不要填密码或令牌。
-3. **Wiki → 规划并生成 Wiki**，或直接对助理说“生成 Wiki”。
-4. **工作 / 问答**：直接提问或交代事情，比如“记住：周四下午三点和小王同步项目 A”“不对，预算改成 120 了”“下周一提醒我交报销单”。
-5. <kbd>Ctrl K</kbd> 搜索或提问，<kbd>Ctrl J</kbd> 保存材料（文本、网址、飞书文档、拖入文件）。
+omem 共有约 100 个工具；为了不挤占上下文，MCP 默认只直接列出最常用的 20 来个核心工具，其余通过 `omem_help` 和 `omem_call` 按需调用。
 
-## 更新
+### 升级版本
+
+源码安装的用户在仓库目录下运行一条命令即可拉取最新代码、安装依赖、构建并重启服务：
 
 ```bash
 osdk run upgrade --restart    # 或 node scripts/upgrade.ts --restart
 ```
 
-拉最新代码、装依赖、构建、链接全局命令，并重启后台服务。
+### 局域网访问、HTTPS 与通知节奏
 
-## 给其他 Agent 用
-
-在 Claude Code、Codex 里把 omem 配成 MCP 服务：
-
-```bash
-omem mcp                  # 只读用 --read-only
-```
-
-它们就能检索你的知识库、读原文、记记忆和事项。仓库里的 `skills/omem/` 是给这些 Agent 的使用说明（`SKILL.md` 概览，`references/` 按分组），可以整个放进它们的技能目录。能跑 shell 的 Agent 也可以直接用命令行：
-
-```bash
-omem tool help memory                      # 记忆类工具的做法
-omem tool search query="退款 幂等"           # 调用一个工具，键=值 或一个 JSON 对象
-```
-
-常用的工具直接列出，其余的经 `omem_help`（看说明）和 `omem_call`（调用）使用，不会一次把一百个工具的说明塞进 Agent 的上下文。
-
-## 调整提醒与工具审批
-
-这些时间和定时任务、网页上显示的时间一样，按 **设置 → 定时任务 → 时区** 算（默认是服务器所在的时区，服务器在别的时区时在这里改）。设置 → 通知与打扰 → 通知时间 可以改免打扰和“不急的通知什么时候一起发”。默认在 09:30、13:30、18:30 发后台进展，超过两条合成清单；删除全部时点后新通知立即发。数据页“omem 自己”一栏的“提醒”一节在通知满 48 小时后统计近 30 天的反应，可查看哪些会话一直没有帮上忙，并确认后设为免提醒，保留点名和限时例外。
-
-设置 → 安全 → 工具审批 选每次问你、做完告诉你或不用问。连续批准默认 10 次后会提议一次改成做完告知，只有你点同意才改；门槛填 0 就不提议。做完的告知也一起发，随时可改回。机器点击和输入类插件工具仍需每次批准。
+- **监听与鉴权**：服务默认监听 `0.0.0.0:4317` 以便其他设备配对。本机浏览器通过 `localhost` / `127.0.0.1` 访问免令牌（校验 `Host` 与 `Origin`，防止其他网页跨站借用）；从其他机器访问必须携带配对码或 `omem link` 生成的令牌。若只允许本机访问，在 `config.json` 中设 `"host": "localhost"`。
+- **开启 HTTPS / HTTP/2（可选）**：同时打开很多标签页时，为突破浏览器对单个 HTTP/1.1 地址 6 条并发连接的限制，可在 `config.json` 中配置 `"https": { "port": 4443, "selfSigned": true }`（或指定自有证书 `cert` / `key`），启用 HTTP/2 多路复用。
+- **时区、通知汇合与工具审批**：
+  - 在 **设置 → 定时任务 → 时区** 设定你的日常时区。
+  - 在 **设置 → 通知与打扰 → 通知时间** 可配置“不急的后台进展何时一起发”（默认 `09:30`、`13:30`、`18:30` 合并推送，离开飞书会议时也会立即放出）。
+  - 在 **设置 → 安全 → 工具审批** 可为每个工具设定“每次问我 / 做完告诉我 / 不用问”。连续批准满 10 次会询问是否改为“做完告诉我”；对汇报点个负面表情即刻退回“每次问我”。

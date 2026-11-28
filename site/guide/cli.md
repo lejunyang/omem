@@ -1,113 +1,157 @@
 # 命令行
 
-网页能做的大多数事也有命令；`omem --help` 列出全部。
+网页和飞书里能做的大多数操作，在终端里都有对应的 `omem` 命令。运行 `omem --help` 可随时查看完整列表。
 
-## 服务
+> **两个安装包的区别**：
+> - `@omem-ai/app`：完整版（含服务端、数据库、网页与全部 CLI 命令）。
+> - `@omem-ai/cli`：单文件零依赖的轻量客户端，只含连接远程 omem 的 5 个命令（`login`、`tool`、`mcp`、`open`、`remote`），适合装在不跑服务端的个人笔记本上。
 
-```bash
-omem serve                          # 前台启动
-omem service start|stop|restart|status|logs
-omem service enable|disable         # 开机自启（macOS LaunchAgent、Linux systemd 用户服务、Windows 启动文件夹）
-omem setup                          # 设置向导
-omem setup embeddings --model bge-small-zh   # 只开启向量检索
-omem setup rerank [--threads 16]    # 开启重排（经 osdk 下载 bge-reranker-v2-m3）；--off 关闭
-omem setup desktop                  # 安装或更新桌面与浏览器控制（aad），并做环境检查
-omem setup ffmpeg                   # 经 osdk 安装 ffmpeg，用来压缩附件
-omem setup ffmpeg --concurrency 4 --auto lossy   # 同时压 4 个；新下载的附件自动压缩（off 关掉）
-```
+## 最常用的核心命令
 
-## 材料与检索
+### 1. 服务管理与初始化
 
 ```bash
-omem space add shop --path ~/code/shop          # 代码仓库空间
-omem space add demo --init                      # 新建空仓库（数据目录 repos/demo）并建空间
-omem space add 商城前端 --path ~/code/shop-web --parent shop   # 挂到业务空间下的仓库
-omem space parent shop-api shop                  # 已有的仓库归到业务空间下（不写业务空间就是移出）
-omem space relate shop-web shop-api -n "调用订单接口"
-omem space sync shop --exclude docs/archive
-omem add notes.md -s personal                   # 保存文件、目录、网址、飞书文档（- 读标准输入）
-omem search "预算 约定"                          # 检索原件、页面、记忆
-omem search --space shop-api --branch feature/refund "退款金额"
-omem ask "项目 A 的预算之前是多少，现在是多少？"
-omem digest proj --mode triage --goal "…"       # 整理一大批存量材料：分级 / 精读
+omem setup                                  # 交互式设置向导（后端、模型、解析器、渠道、定时任务）
+omem serve                                  # 前台启动服务（默认 http://127.0.0.1:4317）
+omem service start|stop|restart|status|logs # 后台常驻服务管理（独立 PM2，崩溃自动重启）
+omem service enable|disable                 # 设置或取消开机自启
+omem db                                     # 查看数据库大小、空闲页与向量 int8 紧凑化进度（omem db vacuum 回收磁盘）
 ```
 
-## Wiki、记忆、事项
+### 2. 空间、材料与问答
 
 ```bash
-omem wiki plan shop -f "用户是新加入的后端开发"   # 规划并逐页生成
-omem wiki lint shop                              # 原件变了之后修正受影响的页面
-omem wiki export shop .repo-review/wiki          # 导出成仓库里可读的 Markdown
-omem items
-omem todo "交报销单" --remind 2026-10-19T09:00+08:00
-omem memories stats|check|prune|rejections       # 记忆质量
+# 空间管理
+omem space add shop --path ~/code/shop                  # 把本地代码仓库加为空间
+omem space add 商城前端 --path ~/code/shop-web --parent shop  # 挂到业务空间 shop 下
+omem space add demo --init                              # 新建空 Git 仓库并建空间
+omem space parent shop-api shop                         # 把已有仓库归到业务空间下
+omem space relate shop-web shop-api -n "调用订单接口"     # 关联两个相关空间（--remove 取消）
+omem space sync shop --exclude docs/archive             # 同步仓库文件并排除指定路径
+
+# 保存材料、检索与提问
+omem add notes.md -s personal                           # 保存文件、目录、网址或飞书文档（- 读标准输入）
+omem search "预算 约定"                                  # 检索原件、Wiki 页面与记忆
+omem search --space shop-api --branch feature/refund "退款金额"  # 按指定分支检索代码
+omem ask "项目 A 的预算之前是多少，现在是多少？"            # 让主助手调查并带依据回答
 ```
 
-## 编码与评审
+### 3. Wiki、记忆与事项
 
 ```bash
-omem delegate shop "订单页显示退款状态" --check "pnpm test"
-omem delegate shop "订单页显示退款状态" --repos shop-web,shop-api   # 几个仓库一起改
-omem review-branch shop-api feature/refund --task "只退未发货的行"   # 评审已有分支
-omem branches shop-api [--fetch] [--index <分支>]
+# Wiki 生成与维护
+omem wiki plan shop -f "读者是新加入的后端开发"            # 先规划目录、再逐页生成 Wiki
+omem wiki lint shop                                     # 原件变化后检查并修正受影响的页面
+omem wiki organize shop                                 # 把顶层散落或过满目录里的页面整理进子目录
+omem wiki move shop cases/ kb/cases/                    # 移动页面或目录（旧路径自动保留为别名）
+omem wiki export shop .repo-review/wiki                 # 导出为仓库内可直接阅读的 Markdown
+
+# 事项与记忆
+omem items                                              # 列出当前事项
+omem todo "交报销单" --remind 2026-10-19T09:00+08:00     # 新建带提醒的待办事项
+omem memories stats|check|prune|rejections              # 按模型统计记忆质量、检查旧记忆、清理或查看被拒写入
+omem digest proj --mode triage --goal "…"               # 批量整理存量材料（triage 分级 / digest 精读）
 ```
 
-## Agent 与角色
+### 4. 编码交办与分支评审
 
 ```bash
-omem agents [--all]                 # 已识别的 Agent（--all 含未安装的和安装方式）
-omem agents registry                # 官方 ACP 注册表
-omem agents add gemini --via npx
-omem roles [list|customize|reset|merge] <名>   # 内置角色：自定义、恢复、合并源码更新
-omem replay [list]                              # 夜间复盘：状态和最近的结论
-omem replay run [--run <运行id>] [--axis M1]    # 立即复盘（先给 replay-judge 选模型）
-omem mcp [--read-only] [--space <id>]           # 作为 MCP 服务给其他 Agent 用
-omem tool [工具名] [JSON | 键=值 … | -f 文件]     # 在终端里调用 omem 工具；omem tool help [工具名|分组] 看说明
-omem tool --peer <设备> [工具名] [参数…]         # 在设备上调用（用本机的模型整理它的库），mcp 也有 --peer；--model / --effort 登记用的模型
-omem login https://omem.example.com             # 连别人的 omem：浏览器里确认，拿到只属于你的令牌
-omem mcp --remote <名字> / --url <地址>           # 以你的身份用远程 omem 的工具；tool 同样；也认 OMEM_TOKEN、OMEM_AUTH_CMD
-omem remote add|list|default|rm                 # 记下的远程地址；omem open [页面] 在浏览器里登录它
-                                                # 只用这几个远程命令时装轻量的 @omem-ai/cli（npm i -g @omem-ai/cli）
-omem hook claude|codex                          # 把编码 Agent 的会话记进知识库
+omem delegate shop "订单页显示退款状态" --check "pnpm test"                 # 交办单仓库编码
+omem delegate shop "订单页显示退款状态" --repos shop-web,shop-api           # 一次交办跨多个仓库一起改
+omem review-branch shop-api feature/refund --task "只退未发货的行"           # 独立评审已有分支（只出意见不改代码）
+omem branches shop-api [--fetch] [--index <分支>] [--drop <分支>]           # 查看分支列表与管理分支叠加索引
 ```
 
-## 飞书
+### 5. Agent、技能与外部 MCP 接入
 
 ```bash
-omem lark backfill --name 报警 --days 0         # 回溯会话历史
-omem lark fill-files --all                      # 补拉缺的图片和附件
-omem lark wiki-crawl <知识库页面链接> --depth 3   # 按目录树读飞书知识库
-omem lark kb list | discover | read [--limit 30]  # 能看到的飞书知识库：建议、发现、每晚的读取
-omem lark kb map <知识库 id> accept|map|create|ignore|pause …  # 处理一个知识库的归属
-omem lark docs-refresh | docs-missing | docs-check
-omem lark user-permissions [--grant] | bot-permissions [--scan]
+# Agent 与角色管理
+omem agents [--all]                                     # 查看已识别的 Agent（--all 含安装方法）
+omem agents registry                                    # 浏览官方 ACP 注册表中的全部 Agent
+omem agents add gemini --via npx                        # 一键添加 Agent（npx / uvx / binary）
+omem roles [list|customize|reset|merge] <角色名>         # 自定义内置角色说明、恢复源码版或三方合并更新
+omem skills [take-over [--dry-run] [--on]|restore|group <技能> <分组>] # 接管并按分组整理 Agent 自带技能目录
+
+# 作为 MCP 或工具给外部 Agent 调用
+omem mcp [--read-only] [--space <id>]                   # 启动 stdio MCP 服务供 Claude Code / Codex 接入
+omem tool [工具名] [JSON | 键=值 … | -f 文件]             # 在终端直接调用 omem 工具
+omem tool help [工具名|分组]                             # 查看工具分组说明
+omem hook claude|codex                                  # 在 Claude Code / Codex 钩子中记录会话到知识库
 ```
 
-## 多人与多台设备
+## 渠道、插件与高级运维命令
+
+### 飞书采集与知识库命令
 
 ```bash
-omem user add 小王 --id wang --lark ou_xxx --space team
-omem user add 小周 --email zhou@example.com --space team   # 按邮箱预建，之后用这个邮箱来的人对应到它
-omem user token wang
-omem user approve <id>              # 批准用登录建好的账号
-omem user invite --space team       # 邀请链接：用它登录的人直接建好账号
-omem space share project-a wang [--edit]
-omem peer invite --label laptop     # 打印配对码
-omem peer add <配对码> [--via <中间那台>]
-omem peer back <设备> on|off       # 反向连接：本机一直连着它，它连不到本机时也能调用本机
-omem diag <设备>
-omem peer call <设备> update
-omem peer pull <设备>              # 在终端里选拉哪些、拉进哪个数据目录
-omem peer pull <设备> --only library,files --to ~/omem-copy -y
-omem peer pull <设备> --dry-run
-omem peer pull <设备> --prefer-remote  # 页面两边都改过时用对方的版本；自动备份这样拉
-omem peer pull <设备> --overwrite  # 先停本机服务；旧数据留备份
-omem peer open <设备>
-omem link
+omem lark backfill [--name 报警 | --kind group | --all] [--days 0] # 回溯历史聊天消息
+omem lark fill-files [--name … | --all]                 # 补拉已保存消息中缺失的图片与附件
+omem lark wiki-crawl <知识库页面链接> --depth 3 --max 500 --batch 100 # 按目录树分批爬取飞书知识库
+omem lark kb list | discover | read [--limit 30]        # 查看飞书知识库列表、触发 kb-scout 发现建议、立即读一批
+omem lark kb map <id> accept|map|create|ignore|pause …  # 处理某个飞书知识库的空间归属建议
+omem lark docs-refresh | docs-dedupe [--apply] | docs-missing | docs-check # 刷新文档素材、合并重复原件、重试缺失、检查更新
+omem lark user-permissions [--grant] | bot-permissions [--scan] # 检查并补齐个人 lark-cli 或机器人的飞书权限
+omem doubao status | login [--app <appId>] | send-test  # 查看豆包权限、设备码授权、给自己试发一条私聊并核对
 ```
 
-`pull` 是手动单向合并：原件、记忆、事项和提醒时间、运行与评审问题、原件标注和归档、规则与学习记录都会拉取；Wiki、档案和技能随知识库合并，附件传整个文件目录。SSH 主机和已配对设备使用相同快照。两端升级后还能传仓库的 Git 历史、分支、暂存与未暂存改动、非忽略的未跟踪文件、已检出子模块，以及编码 worktree 和补丁。
+### 插件、复盘与可选组件安装
 
-两边各自新增的记录保留；同一记录按更新时间处理。聊天追加远端缺少的行，保留本机行号并换算远端引用。知识库文件冲突留本地，远端另存 `.remote.md`；物理删除不传播。新仓库保存到数据目录并关联空间；已有仓库只在干净、同分支且可快进时更新，本机改动和分叉保留，远端分支与工作区另存。
+```bash
+# 可选模型与组件安装（经 osdk）
+omem setup embeddings --model bge-small-zh              # 开启本地向量检索（可选 bge-base-zh / bge-m3）
+omem setup rerank [--threads 16]                        # 开启本地重排模型 bge-reranker-v2-m3（--off 关闭）
+omem setup desktop                                      # 安装或更新桌面与浏览器控制组件（aad）
+omem setup ffmpeg [--concurrency 4 --auto lossy]        # 安装 ffmpeg 并配置附件自动压缩
 
-配置、密钥、令牌、采集游标、模型和服务日志留在本机。新导入的任务规则和定时任务先停用，存量整理任务暂停，远端排队或运行中的任务取消，不恢复另一台的 Agent 进程。覆盖前停掉本机服务；旧数据库、附件、知识库、运行和托管仓库会备份，恢复失败时回滚。覆盖后同样需要按需启用任务。
+# 插件与场景包
+omem plugin list|install|remove|enable|disable          # 管理插件（支持本地目录、npm:包@版本、github:owner/repo#tag）
+omem plugin link <目录> / unlink <id>                    # 开发插件：直接链接本地目录并热重载
+omem plugin pack --id projecta --name "项目 A" --agents helper --skills project-guide # 导出场景包
+omem plugin failed-events | replay                      # 查看或重放失败的插件事件订阅
+
+# 夜间复盘、决策评测与云端只读探测
+omem replay [list] | omem replay run [--run <id>] [--axis K1] # 查看夜间复盘结论或立即对某题回放盲评
+omem decision report [--days N]                         # 查看各决策场景的门槛表现与 AI 组选型完成率
+omem decision replay --scene <scene> --model <提供方>:<模型> # 用其他模型离线回放对比决策记录
+omem cloud-tools probe <后端档案>                        # 探测云端后端通过 HTTPS 调用本机只读工具的连通性
+```
+
+### 多人协作与多设备同步（Peer / Remote）
+
+```bash
+# 多用户管理
+omem user add 小王 --id wang --lark ou_xxx --space team  # 登记同事账号并绑定飞书身份与空间
+omem user add 小周 --email zhou@example.com --space team # 按邮箱预建账号（首次登录或找机器人时自动对应）
+omem user approve <id> | omem user token <id>           # 批准待审账号 / 签发 API 令牌
+omem user invite --space team [--edit project-a]        # 生成一次性邀请链接
+omem space share project-a wang [--edit]                # 向成员开放空间读取或编辑权限
+
+# 远程客户端登录（不配对，适合团队成员连常驻服务器）
+omem login https://omem.example.com                     # 在浏览器确认登录，获取个人专属令牌
+omem remote add|list|default|rm                         # 管理已保存的远程服务地址
+omem open [页面]                                         # 用命令行身份直接在浏览器打开远程 omem
+omem mcp --remote <名字> / --url <地址>                   # 以个人身份把远程 omem 作为本机 MCP 服务（tool 同理）
+
+# 本人多台设备配对与互操作
+omem peer invite --label laptop                         # 在常驻机器打印配对码（含所有网卡地址与令牌）
+omem peer add <配对码> [--via <中间设备>]                 # 在另一台机器添加配对设备（支持经中间节点转发）
+omem peer back <设备> on|off                             # 开启反向连接：让连不到本机的常驻服务器也能反过来调用本机
+omem peer open <设备>                                    # 在本机浏览器免令牌打开对方网页（并按原端口号转发交办预览）
+omem link                                               # 打印带令牌的局域网访问链接
+omem diag [<设备>]                                       # 查看本机或配对设备的健康诊断、耗时与事件循环卡顿
+omem peer call <设备> <命令> ['{"参数":…}']               # 在配对设备上执行白名单远程命令（如 update、logs、sql 等）
+omem tool --peer <设备> <工具名> [参数…]                  # 用本机的 Agent 模型读写和整理配对设备上的知识库（mcp 同样支持 --peer）
+
+# 跨服务空间共享与单向数据拉取
+omem peer share <名字> --space 空间:query|sync[:内容]     # 向别人的 omem 服务开放指定空间（只检索或可同步）
+omem peer subscribe <设备> <空间> [--sync]               # 订阅别人共享的空间（--sync 每半小时同步到本机只读镜像）
+omem peer backup <设备> --to <目录> [--at 00:00]         # 后台定时把常驻设备的完整数据备份到本机指定目录
+omem peer pull <设备> [--only library,files] [--to <目录>] [--dry-run] [--prefer-remote] [--overwrite]
+```
+
+### 补充：`omem peer pull` 的合并规则
+
+`omem peer pull` 用于把常驻设备（或 SSH 主机）上的数据单向拉取合并到本机：
+- **合并范围**：数据库（原件、记忆、事项、会话、运行、评审、规则等）必拉；知识库（`library/`）、原始附件（`files/`）、Git 代码仓库与交办工作区可按需勾选。
+- **增量与冲突处理**：双方各自新增的记录都会保留，同一记录按更新时间取较新版；聊天原件追加缺失行并自动换算引用行号；Wiki 与技能走 Git 合并，冲突时保留本机版本并将远端另存为 `.remote.md`；物理删除不跨机传播。
+- **安全隔离**：本机配置、密钥、API 令牌、采集游标和本地模型不会被打乱；检索索引与向量在本机按原件重新构建。新拉过来的定时任务和任务规则默认停用，避免两台机器重复执行或重复发消息。
