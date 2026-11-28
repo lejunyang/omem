@@ -32,7 +32,7 @@ describe("operation rules", () => {
     const r = rule({ kind: "command", executable: "acme", subcommand: ["mr", "show"] });
     for (const action of ["deny", "approve", "allow", "log"] as const) {
       const match = run(op, { ...r, action }).rule;
-      expect(!!match).toBe(action === "deny" || action === "approve" ? possible : certain);
+      expect(!!match).toBe(action === "allow" ? certain : possible);
     }
   });
   it("continues past an ambiguous read exception and checks the original argv for approval", () => {

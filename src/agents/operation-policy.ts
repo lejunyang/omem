@@ -69,7 +69,7 @@ type CommandConditions = Pick<OperationRule, "action"> & Pick<Extract<OperationR
 /** Also embedded in the offline PATH wrapper. Keep this function self-contained. */
 export function commandArgsMatch(m: CommandConditions, args: string[], test: (pattern: string, input: string) => boolean) {
   function matchesPrefix(prefix: string[]) {
-    const restrictive = m.action === "deny" || m.action === "approve";
+    const requireAll = m.action === "allow";
     let options = true;
     let mayBeValue = false;
     // Track distinct unfinished prefix lengths, without enumerating combinations of option values.
@@ -87,14 +87,14 @@ export function commandArgsMatch(m: CommandConditions, args: string[], test: (pa
       const next = mayBeValue ? new Set(positions) : new Set<number>();
       for (const pos of positions) {
         if (arg !== prefix[pos]) {
-          if (!restrictive) return false;
+          if (requireAll) return false;
         } else if (pos + 1 === prefix.length) {
-          if (restrictive) return true;
+          if (!requireAll) return true;
         } else {
           next.add(pos + 1);
         }
       }
-      if (!next.size) return !restrictive;
+      if (!next.size) return requireAll;
       positions = next;
       mayBeValue = false;
     }
